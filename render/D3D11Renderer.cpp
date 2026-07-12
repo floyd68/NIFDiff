@@ -22,18 +22,46 @@ namespace
     struct CBPerObjectLit
     {
         float world[16];
-        float tint[4];          // emissive rgb (already * emissiveMultiple) + alpha
+        float glowColor[4];     // lighting: emissive rgb (already * emissiveMultiple) + material alpha
+                                 // effect:   Base Color rgba
         float spec[4];           // specular color (rgb) + glossiness (a)
-        float specStrength;
-        std::int32_t hasTexture;
-        std::int32_t hasNormalMap;
-        std::int32_t hasGlowMap;
+        float uvTransform[4];    // UV Scale (xy) + UV Offset (zw)
+        float tintColor[4];      // skin/hair tint rgb + multilayer outer reflection strength (w)
+        float params[4];         // specStrength|baseColorScale, lightingEffect1, lightingEffect2, envReflection
+        float innerParams[4];    // multilayer: inner scale xy, inner thickness, outer refraction
+        float falloffParams[4];  // effect: start angle, stop angle, start opacity, stop opacity
+        std::uint32_t flags;     // feature bitmask - see Shaders.h's table / kLit* below
+        float pad[3];
     };
     struct CBPerFrameUnlit { float viewProj[16]; };
     struct CBPerObjectUnlit { float world[16]; };
 
     static_assert(sizeof(CBPerFrameLit) == 96, "CBPerFrameLit must match Shaders.h PerFrame layout");
-    static_assert(sizeof(CBPerObjectLit) == 112, "CBPerObjectLit must match Shaders.h PerObject layout");
+    static_assert(sizeof(CBPerObjectLit) == 192, "CBPerObjectLit must match Shaders.h PerObject layout");
+
+    // gFlags bits - keep in sync with Shaders.h's kLitShaderHLSL table.
+    constexpr std::uint32_t kLitHasDiffuse        = 1;
+    constexpr std::uint32_t kLitHasNormalMap      = 2;
+    constexpr std::uint32_t kLitHasGlowMap        = 4;
+    constexpr std::uint32_t kLitHasEmit           = 8;
+    constexpr std::uint32_t kLitHasSoftlight      = 16;
+    constexpr std::uint32_t kLitHasRimlight       = 32;
+    constexpr std::uint32_t kLitHasBacklight      = 64;
+    constexpr std::uint32_t kLitHasCubeMap        = 128;
+    constexpr std::uint32_t kLitHasEnvMask        = 256;
+    constexpr std::uint32_t kLitHasHeightMap      = 512;
+    constexpr std::uint32_t kLitHasTintColor      = 1024;
+    constexpr std::uint32_t kLitHasSpecular       = 2048;
+    constexpr std::uint32_t kLitModelSpaceNormals = 4096;
+    constexpr std::uint32_t kLitHasSpecularMap    = 8192;    // t7 = MSN specular map (not backlight)
+    constexpr std::uint32_t kLitHasDetailMask     = 16384;   // t3 = face detail mask (not height)
+    constexpr std::uint32_t kLitHasTintMask       = 32768;   // t8 = face tint mask
+    constexpr std::uint32_t kLitMultiLayer        = 65536;   // t8 = multilayer inner map
+    constexpr std::uint32_t kLitIsEffect          = 131072;  // sk_effectshader path; t8 = greyscale palette
+    constexpr std::uint32_t kLitEffectUseFalloff  = 262144;
+    constexpr std::uint32_t kLitEffectGreyscaleColor = 524288;
+    constexpr std::uint32_t kLitEffectGreyscaleAlpha = 1048576;
+    constexpr std::uint32_t kLitEffectWeaponBlood = 2097152;
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
@@ -82,22 +110,28 @@ bool D3D11Renderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* contex
     m_cbPerFrameUnlit = CreateDynamicCB(m_device.Get(), sizeof(CBPerFrameUnlit));
     m_cbPerObjectUnlit = CreateDynamicCB(m_device.Get(), sizeof(CBPerObjectUnlit));
 
-    // 1x1 white texture: fallback SRV for meshes/materials with no resolved
-    // diffuse texture (so the lit shader's Sample() call always has a valid
-    // resource bound, even before any texture ever loads successfully).
+    // 1x1 fallback textures, mirroring the defaults NifSkope's renderer
+    // binds per sampler (renderer.cpp's white/black/gray/default_n): every
+    // Sample() call in the lit shader always has a valid resource bound,
+    // even before any texture ever loads successfully.
     {
-        std::uint32_t whitePixel = 0xFFFFFFFFu;
-        const D3D11_TEXTURE2D_DESC td {
-            .Width = 1, .Height = 1, .MipLevels = 1, .ArraySize = 1,
-            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-            .SampleDesc = { .Count = 1 },
-            .Usage = D3D11_USAGE_IMMUTABLE,
-            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+        auto makeSolid = [this](std::uint32_t rgba, ComPtr<ID3D11ShaderResourceView>& out)
+        {
+            const D3D11_TEXTURE2D_DESC td {
+                .Width = 1, .Height = 1, .MipLevels = 1, .ArraySize = 1,
+                .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+                .SampleDesc = { .Count = 1 },
+                .Usage = D3D11_USAGE_IMMUTABLE,
+                .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+            };
+            const D3D11_SUBRESOURCE_DATA sd { .pSysMem = &rgba, .SysMemPitch = sizeof(rgba) };
+            ComPtr<ID3D11Texture2D> tex;
+            if (SUCCEEDED(m_device->CreateTexture2D(&td, &sd, &tex)))
+                m_device->CreateShaderResourceView(tex.Get(), nullptr, &out);
         };
-        const D3D11_SUBRESOURCE_DATA sd { .pSysMem = &whitePixel, .SysMemPitch = sizeof(whitePixel) };
-        ComPtr<ID3D11Texture2D> tex;
-        if (SUCCEEDED(m_device->CreateTexture2D(&td, &sd, &tex)))
-            m_device->CreateShaderResourceView(tex.Get(), nullptr, &m_whiteTexSRV);
+        makeSolid(0xFFFFFFFFu, m_whiteTexSRV);      // diffuse/env-mask default
+        makeSolid(0xFF000000u, m_blackTexSRV);       // glow/backlight default (no contribution)
+        makeSolid(0xFFFF8080u, m_flatNormalSRV);     // (0.5,0.5,1,1) ABGR: flat normal + full spec mask; also NifSkope's default_n LightMask stand-in
     }
 
     BuildGridAndAxesGeometry();
@@ -199,6 +233,10 @@ bool D3D11Renderer::CreateStateObjects()
     };
     m_device->CreateRasterizerState(&rasterSolid, &m_rasterSolid);
 
+    D3D11_RASTERIZER_DESC rasterNoCull = rasterSolid;
+    rasterNoCull.CullMode = D3D11_CULL_NONE; // SLSF2_Double_Sided materials
+    m_device->CreateRasterizerState(&rasterNoCull, &m_rasterSolidNoCull);
+
     D3D11_RASTERIZER_DESC rasterWire = rasterSolid;
     rasterWire.FillMode = D3D11_FILL_WIREFRAME;
     rasterWire.CullMode = D3D11_CULL_NONE;
@@ -214,7 +252,7 @@ bool D3D11Renderer::CreateStateObjects()
     };
     m_device->CreateSamplerState(&sampDesc, &m_sampler);
 
-    return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterWireframe && m_sampler;
+    return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterSolidNoCull && m_rasterWireframe && m_sampler;
 }
 
 bool D3D11Renderer::Resize(UINT width, UINT height)
@@ -468,63 +506,142 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             if (!gpu || !gpu->vertexBuffer || gpu->indexCount == 0)
                 continue;
 
+            const NifMaterial& mat = mesh.material;
+
             CBPerObjectLit cbObj {};
             std::memcpy(cbObj.world, mesh.worldTransform.data(), sizeof(cbObj.world));
-            cbObj.tint[0] = mesh.material.emissiveColor[0] * mesh.material.emissiveMultiple;
-            cbObj.tint[1] = mesh.material.emissiveColor[1] * mesh.material.emissiveMultiple;
-            cbObj.tint[2] = mesh.material.emissiveColor[2] * mesh.material.emissiveMultiple;
-            cbObj.tint[3] = mesh.material.alpha;
-            cbObj.spec[0] = mesh.material.specularColor[0];
-            cbObj.spec[1] = mesh.material.specularColor[1];
-            cbObj.spec[2] = mesh.material.specularColor[2];
-            cbObj.spec[3] = mesh.material.glossiness;
-            cbObj.specStrength = mesh.material.specularStrength;
-
-            ID3D11ShaderResourceView* diffuseSrv = m_whiteTexSRV.Get();
-            cbObj.hasTexture = 0;
-            if (textures && !mesh.material.diffuseTexture.empty())
+            cbObj.glowColor[0] = mat.emissiveColor[0] * mat.emissiveMultiple;
+            cbObj.glowColor[1] = mat.emissiveColor[1] * mat.emissiveMultiple;
+            cbObj.glowColor[2] = mat.emissiveColor[2] * mat.emissiveMultiple;
+            cbObj.glowColor[3] = mat.alpha;
+            cbObj.spec[0] = mat.specularColor[0];
+            cbObj.spec[1] = mat.specularColor[1];
+            cbObj.spec[2] = mat.specularColor[2];
+            cbObj.spec[3] = mat.glossiness;
+            cbObj.uvTransform[0] = mat.uvScale[0];
+            cbObj.uvTransform[1] = mat.uvScale[1];
+            cbObj.uvTransform[2] = mat.uvOffset[0];
+            cbObj.uvTransform[3] = mat.uvOffset[1];
+            cbObj.tintColor[0] = mat.tintColor[0];
+            cbObj.tintColor[1] = mat.tintColor[1];
+            cbObj.tintColor[2] = mat.tintColor[2];
+            cbObj.tintColor[3] = mat.outerReflectionStrength;
+            cbObj.params[0] = mat.specularStrength;
+            cbObj.params[1] = mat.lightingEffect1;
+            cbObj.params[2] = mat.lightingEffect2;
+            cbObj.params[3] = mat.environmentReflection;
+            cbObj.innerParams[0] = mat.innerTextureScale[0];
+            cbObj.innerParams[1] = mat.innerTextureScale[1];
+            cbObj.innerParams[2] = mat.innerThickness;
+            cbObj.innerParams[3] = mat.outerRefractionStrength;
+            cbObj.falloffParams[0] = mat.falloffStartAngle;
+            cbObj.falloffParams[1] = mat.falloffStopAngle;
+            cbObj.falloffParams[2] = mat.falloffStartOpacity;
+            cbObj.falloffParams[3] = mat.falloffStopOpacity;
+            if (mat.isEffectShader)
             {
-                if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(mesh.material.diffuseTexture))
-                {
-                    diffuseSrv = loaded;
-                    cbObj.hasTexture = 1;
-                }
+                // Effect shader repurposes gGlowColor as Base Color (rgba)
+                // and gParams.x as Base Color Scale - see Shaders.h.
+                cbObj.glowColor[0] = mat.emissiveColor[0];
+                cbObj.glowColor[1] = mat.emissiveColor[1];
+                cbObj.glowColor[2] = mat.emissiveColor[2];
+                cbObj.glowColor[3] = mat.effectEmissiveAlpha;
+                cbObj.params[0] = mat.emissiveMultiple;
             }
 
-            // Normal map alpha channel doubles as the specular mask
-            // (Bethesda convention - see Shaders.h's PSMain), so
-            // gHasNormalMap gates both effects together.
-            ID3D11ShaderResourceView* normalSrv = m_whiteTexSRV.Get();
-            cbObj.hasNormalMap = 0;
-            if (textures && !mesh.material.normalTexture.empty())
+            // Texture bindings + flag bits. The material's derived has*
+            // booleans (see NifMaterial's struct comment) say what the
+            // shader flags REQUEST; a texture-backed feature's bit is only
+            // set once its texture actually resolves, so a failed load
+            // degrades to the un-textured shading path instead of sampling
+            // a fallback pretending to be real data.
+            auto resolve = [&](const std::string& path, ID3D11ShaderResourceView* fallback) -> std::pair<ID3D11ShaderResourceView*, bool>
             {
-                if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(mesh.material.normalTexture))
-                {
-                    normalSrv = loaded;
-                    cbObj.hasNormalMap = 1;
-                }
-            }
+                if (textures && !path.empty())
+                    if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(path))
+                        return { loaded, true };
+                return { fallback, false };
+            };
+            const std::string kNone;
 
-            ID3D11ShaderResourceView* glowSrv = m_whiteTexSRV.Get();
-            cbObj.hasGlowMap = 0;
-            if (textures && !mesh.material.glowTexture.empty())
+            auto [diffuseSrv, hasDiffuse] = resolve(mat.diffuseTexture, m_whiteTexSRV.Get());
+            auto [normalSrv, hasNormal] = resolve(mat.normalTexture, m_flatNormalSRV.Get());
+            auto [cubeSrv, hasCube] = resolve(mat.hasCubeMap ? mat.cubeTexture : kNone, nullptr);
+            auto [envMaskSrv, hasEnvMask] = resolve(mat.useEnvironmentMask ? mat.envMaskTexture : kNone, m_whiteTexSRV.Get());
+
+            // t3 is dual-purpose: the parallax height map (shader type 3) or
+            // the face detail mask (type 4) - mutually exclusive by type.
+            auto [heightSrv, hasHeight] = resolve(
+                (mat.hasHeightMap || mat.hasDetailMask) ? mat.heightTexture : kNone, m_blackTexSRV.Get());
+
+            // t7 likewise: the backlight map, or - for MSN materials without
+            // backlight - the external specular map (NifSkope renderer.cpp
+            // line 779's exact condition).
+            const bool wantsSpecMap = mat.hasModelSpaceNormals && mat.hasSpecularMap && !mat.hasBacklight;
+            auto [backlightSrv, hasBacklightTex] = resolve(
+                (mat.hasBacklight || wantsSpecMap) ? mat.backlightTexture : kNone, m_blackTexSRV.Get());
+
+            // Slot 2 is dual-purpose (see NifMaterial): the glow map when
+            // hasGlowMap, the rim/soft LightMask otherwise. NifSkope's
+            // LightMask fallback is default_n - flat normal color - which
+            // m_flatNormalSRV reproduces.
+            auto [glowSrv, hasGlowTex] = resolve(mat.hasGlowMap ? mat.glowTexture : kNone, m_blackTexSRV.Get());
+            auto [lightMaskSrv, lightMaskLoaded] = resolve(!mat.hasGlowMap ? mat.glowTexture : kNone, m_flatNormalSRV.Get());
+            (void)lightMaskLoaded; // rim/soft stay enabled with the fallback mask, like NifSkope
+
+            // t8 is the per-family auxiliary slot: effect greyscale palette,
+            // multilayer inner map, or face tint mask.
+            const std::string& auxPath = mat.isEffectShader ? mat.greyscaleTexture
+                : (mat.hasMultiLayerParallax || mat.hasTintMask) ? mat.innerTexture
+                : kNone;
+            auto [auxSrv, hasAux] = resolve(auxPath, m_whiteTexSRV.Get());
+
+            std::uint32_t flags = 0;
+            if (hasDiffuse)                           flags |= kLitHasDiffuse;
+            if (hasNormal)                            flags |= kLitHasNormalMap;
+            if (mat.hasGlowMap && hasGlowTex)         flags |= kLitHasGlowMap;
+            if (mat.hasEmittance)                     flags |= kLitHasEmit;
+            if (mat.hasSoftlight)                     flags |= kLitHasSoftlight;
+            if (mat.hasRimlight)                      flags |= kLitHasRimlight;
+            if (mat.hasBacklight && hasBacklightTex)  flags |= kLitHasBacklight;
+            if (mat.hasCubeMap && hasCube)            flags |= kLitHasCubeMap;
+            if (mat.useEnvironmentMask && hasEnvMask) flags |= kLitHasEnvMask;
+            if (mat.hasHeightMap && hasHeight)        flags |= kLitHasHeightMap;
+            if (mat.hasTintColor)                     flags |= kLitHasTintColor;
+            if (mat.hasSpecular)                      flags |= kLitHasSpecular;
+            if (mat.hasModelSpaceNormals)             flags |= kLitModelSpaceNormals;
+            if (wantsSpecMap && hasBacklightTex)      flags |= kLitHasSpecularMap;
+            if (mat.hasDetailMask && hasHeight)       flags |= kLitHasDetailMask;
+            if (mat.hasTintMask && hasAux)            flags |= kLitHasTintMask;
+            if (mat.hasMultiLayerParallax && hasAux)  flags |= kLitMultiLayer;
+            if (mat.isEffectShader)
             {
-                if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(mesh.material.glowTexture))
-                {
-                    glowSrv = loaded;
-                    cbObj.hasGlowMap = 1;
-                }
+                flags |= kLitIsEffect;
+                if (mat.useFalloff)                   flags |= kLitEffectUseFalloff;
+                if (mat.greyscaleColor && hasAux)     flags |= kLitEffectGreyscaleColor;
+                if (mat.greyscaleAlpha && hasAux)     flags |= kLitEffectGreyscaleAlpha;
+                if (mat.hasWeaponBlood)               flags |= kLitEffectWeaponBlood;
             }
+            cbObj.flags = flags;
 
-            ID3D11ShaderResourceView* srvs[3] = { diffuseSrv, normalSrv, glowSrv };
-            m_context->PSSetShaderResources(0, 3, srvs);
+            ID3D11ShaderResourceView* srvs[9] = {
+                diffuseSrv, normalSrv, glowSrv, heightSrv,
+                // t4 is a TextureCube; when no cube resolved, bind null with
+                // the cube flag cleared (a 2D SRV on a cube slot would be a
+                // type mismatch the debug layer flags).
+                hasCube ? cubeSrv : nullptr,
+                envMaskSrv, lightMaskSrv, backlightSrv, auxSrv,
+            };
+            m_context->PSSetShaderResources(0, 9, srvs);
 
             UploadDynamicCB(m_context.Get(), m_cbPerObject.Get(), &cbObj, sizeof(cbObj));
             ID3D11Buffer* objCb = m_cbPerObject.Get();
             m_context->VSSetConstantBuffers(1, 1, &objCb);
             m_context->PSSetConstantBuffers(1, 1, &objCb);
 
-            m_context->OMSetBlendState(mesh.material.hasAlphaBlend ? m_blendAlpha.Get() : m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
+            m_context->OMSetBlendState(mat.hasAlphaBlend ? m_blendAlpha.Get() : m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
+            if (!settings.wireframe)
+                m_context->RSSetState(mat.isDoubleSided ? m_rasterSolidNoCull.Get() : m_rasterSolid.Get());
 
             UINT stride = sizeof(Vertex), offset = 0;
             ID3D11Buffer* vb = gpu->vertexBuffer.Get();

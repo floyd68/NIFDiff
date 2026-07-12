@@ -17,13 +17,27 @@ namespace
         return s;
     }
 
+    // Row pitch of one mip level, honoring block compression.
+    UINT GliLevelPitch(const gli::texture& tex, std::size_t level)
+    {
+        gli::ivec3 blockExtent = gli::block_extent(tex.format());
+        std::size_t blockSize = gli::block_size(tex.format());
+        std::size_t blocksWide = static_cast<std::size_t>((tex.extent(level).x + blockExtent.x - 1) / blockExtent.x);
+        if (blocksWide == 0) blocksWide = 1;
+        return static_cast<UINT>(blocksWide * blockSize);
+    }
+
     ID3D11ShaderResourceView* UploadGli(
         ID3D11Device* device,
         gli::texture tex,
         std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>& cache,
         const std::string& cacheKey)
     {
-        if (!device || tex.empty() || tex.target() != gli::TARGET_2D)
+        // TARGET_CUBE covers environment cube maps (BSShaderTextureSet slot
+        // 4, sampled by the lit shader's TextureCube) - see the cube branch
+        // below. Anything else (3D/array) has no consumer in this renderer.
+        const bool isCube = tex.target() == gli::TARGET_CUBE;
+        if (!device || tex.empty() || (tex.target() != gli::TARGET_2D && !isCube))
             return nullptr;
 
         gli::dx dxTranslator;
@@ -32,30 +46,32 @@ namespace
         if (dxgiFormat == DXGI_FORMAT_UNKNOWN)
             return nullptr;
 
-        gli::texture2d tex2d(tex);
+        const UINT mipLevels = static_cast<UINT>(tex.levels());
+        const UINT faces = isCube ? 6u : 1u;
         const D3D11_TEXTURE2D_DESC desc {
-            .Width = static_cast<UINT>(tex2d.extent(0).x),
-            .Height = static_cast<UINT>(tex2d.extent(0).y),
-            .MipLevels = static_cast<UINT>(tex2d.levels()),
-            .ArraySize = 1,
+            .Width = static_cast<UINT>(tex.extent(0).x),
+            .Height = static_cast<UINT>(tex.extent(0).y),
+            .MipLevels = mipLevels,
+            .ArraySize = faces,
             .Format = dxgiFormat,
             .SampleDesc = { .Count = 1 },
             .Usage = D3D11_USAGE_IMMUTABLE,
             .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+            .MiscFlags = isCube ? UINT(D3D11_RESOURCE_MISC_TEXTURECUBE) : 0u,
         };
 
-        std::vector<D3D11_SUBRESOURCE_DATA> subresources(desc.MipLevels);
-        for (UINT level = 0; level < desc.MipLevels; ++level)
+        // D3D11 subresource order: face-major (face0 mip0..N, face1 mip0..N,
+        // ...). gli's cube accessor is data(layer, face, level).
+        std::vector<D3D11_SUBRESOURCE_DATA> subresources(static_cast<std::size_t>(mipLevels) * faces);
+        for (UINT face = 0; face < faces; ++face)
         {
-            gli::extent2d extent = tex2d.extent(level);
-            gli::ivec3 blockExtent = gli::block_extent(tex2d.format());
-            std::size_t blockSize = gli::block_size(tex2d.format());
-            std::size_t blocksWide = static_cast<std::size_t>((extent.x + blockExtent.x - 1) / blockExtent.x);
-            if (blocksWide == 0) blocksWide = 1;
-
-            subresources[level].pSysMem = tex2d.data(0, 0, level);
-            subresources[level].SysMemPitch = static_cast<UINT>(blocksWide * blockSize);
-            subresources[level].SysMemSlicePitch = static_cast<UINT>(tex2d.size(level));
+            for (UINT level = 0; level < mipLevels; ++level)
+            {
+                D3D11_SUBRESOURCE_DATA& sub = subresources[static_cast<std::size_t>(face) * mipLevels + level];
+                sub.pSysMem = tex.data(0, face, level);
+                sub.SysMemPitch = GliLevelPitch(tex, level);
+                sub.SysMemSlicePitch = static_cast<UINT>(tex.size(level));
+            }
         }
 
         Microsoft::WRL::ComPtr<ID3D11Texture2D> d3dTex;

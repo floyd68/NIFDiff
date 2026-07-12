@@ -60,18 +60,95 @@ constexpr std::int32_t kNoRef = -1;
 
 // A textured/tinted material resolved from BSLightingShaderProperty +
 // BSShaderTextureSet (Skyrim/SE/FO4) or NiMaterialProperty (legacy path).
+//
+// The has*/is* booleans below are DERIVED state, computed in
+// buildHierarchyAndRoots() once the referenced BSShaderTextureSet has been
+// resolved (several of them require knowing whether a texture slot is
+// non-empty, and the set block may appear after the property block in file
+// order) - mirroring NifSkope's BSLightingShaderProperty::updateParams()
+// (src/gl/glproperty.cpp lines 1141-1256, the Skyrim/SE stream<130 branch).
 struct NifMaterial
 {
-    std::string diffuseTexture;   // Textures[0] from BSShaderTextureSet, backslashes normalized to '/'.
-    std::string normalTexture;    // Textures[1]
-    std::string glowTexture;      // Textures[2] (glow/skin/detail map, used here as the glow mask)
+    // BSShaderTextureSet slots (backslashes normalized to '/'). Several
+    // slots are dual-purpose per NifSkope: slot 2 is the glow map when
+    // hasGlowMap, otherwise the rim/soft-light LightMask; slot 3 is the
+    // parallax height map (shader type 3) or the face detail mask (type 4);
+    // slot 6 is the face tint mask (type 4) or the multilayer inner map
+    // (type 11); slot 7 is the back-lighting map or, for model-space-normal
+    // materials without backlight, the external specular map. The renderer
+    // binds each to the register matching the material's derived flags.
+    std::string diffuseTexture;   // Textures[0]
+    std::string normalTexture;    // Textures[1] (tangent- or model-space normal; alpha = specular mask)
+    std::string glowTexture;      // Textures[2] (glow map OR rim/soft LightMask - see above)
+    std::string heightTexture;    // Textures[3] (parallax height map OR face detail mask)
+    std::string cubeTexture;      // Textures[4] (environment cube map)
+    std::string envMaskTexture;   // Textures[5] (environment map mask)
+    std::string innerTexture;     // Textures[6] (face tint mask OR multilayer inner map)
+    std::string backlightTexture; // Textures[7] (back-lighting map OR MSN specular map)
+
     Color3 emissiveColor { 0.0f, 0.0f, 0.0f };
     float emissiveMultiple = 1.0f;
     Color3 specularColor { 1.0f, 1.0f, 1.0f };
     float specularStrength = 1.0f;
     float glossiness = 80.0f;     // BSLightingShaderProperty's default (nif.xml line 6610)
     float alpha = 1.0f;
-    bool hasAlphaBlend = false;
+
+    Vector2 uvOffset { 0.0f, 0.0f };
+    Vector2 uvScale { 1.0f, 1.0f };
+    float lightingEffect1 = 0.3f; // soft-light wrap strength (nif.xml line 6614)
+    float lightingEffect2 = 2.0f; // rim-light power (nif.xml line 6615)
+    float environmentReflection = 1.0f; // Environment Map Scale / Eye Cubemap Scale
+    Color3 tintColor { 1.0f, 1.0f, 1.0f }; // Skin/Hair Tint Color (shader type 5/6)
+
+    // Multilayer parallax (shader type 11 / SLSF2_Multi_Layer_Parallax) -
+    // nif.xml lines 6641-6644.
+    Vector2 innerTextureScale { 1.0f, 1.0f };
+    float innerThickness = 0.0f;
+    float outerRefractionStrength = 0.0f;
+    float outerReflectionStrength = 1.0f;
+
+    // BSEffectShaderProperty (isEffectShader true) - nif.xml lines 6651-6691.
+    // diffuseTexture holds Source Texture and emissiveColor/emissiveMultiple
+    // hold Base Color rgb / Base Color Scale; the fields below are the rest.
+    std::string greyscaleTexture;      // Greyscale Texture (palette for the greyscale* lookups)
+    float effectEmissiveAlpha = 1.0f;  // Base Color alpha
+    float falloffStartAngle = 1.0f;    // Falloff Start/Stop Angle+Opacity, used when useFalloff
+    float falloffStopAngle = 1.0f;
+    float falloffStartOpacity = 0.0f;
+    float falloffStopOpacity = 0.0f;
+
+    // Raw BSLightingShaderProperty identity, kept for derivation/debugging.
+    std::uint32_t shaderType = 0;   // SkyrimShaderType (0=Default, 1=EnvMap, 2=Glow, 3=Parallax, 5=SkinTint, 6=HairTint, 16=EyeEnvmap, ...)
+    std::uint32_t shaderFlags1 = 0; // SkyrimShaderPropertyFlags1
+    std::uint32_t shaderFlags2 = 0; // SkyrimShaderPropertyFlags2
+
+    // Derived per updateParams() - see the struct comment.
+    bool hasSpecular = true;        // SLSF1_Specular (bit 0); off -> specular contribution is zero
+    bool hasEmittance = false;      // SLSF1_Own_Emit (bit 22); off -> no emissive tint at all
+    bool hasGlowMap = false;        // glow shader type + SLSF2_Glow_Map (bit 6) + slot 2 non-empty
+    bool hasHeightMap = false;      // parallax shader type + SLSF1_Parallax (bit 11) + slot 3 non-empty
+    bool hasBacklight = false;      // SLSF2_Back_Lighting (bit 27, Skyrim/SE only)
+    bool hasRimlight = false;       // SLSF2_Rim_Lighting (bit 26, Skyrim/SE only)
+    bool hasSoftlight = false;      // SLSF2_Soft_Lighting (bit 25, Skyrim/SE only)
+    bool hasEnvironmentMap = false; // env/eye shader type + matching SLSF1 mapping flag
+    bool hasCubeMap = false;        // hasEnvironmentMap + slot 4 non-empty
+    bool useEnvironmentMask = false;// hasEnvironmentMap + slot 5 non-empty (else normal map alpha masks)
+    bool hasTintColor = false;      // shader type 5 (skin) or 6 (hair)
+    bool isDoubleSided = false;     // SLSF2_Double_Sided (bit 4)
+    bool hasAlphaBlend = false;     // from the shape's NiAlphaProperty (not this block)
+
+    bool hasModelSpaceNormals = false;  // SLSF1_Model_Space_Normals (bit 12) - sk_msn.frag path
+    bool hasSpecularMap = false;        // SLSF1_Specular + slot 7 non-empty (MSN external spec mask)
+    bool hasTintMask = false;           // shader type 4 (FaceTint) - slot 6 overlay
+    bool hasDetailMask = false;         // shader type 4 (FaceTint) - slot 3 overlay
+    bool hasMultiLayerParallax = false; // SLSF2_Multi_Layer_Parallax (bit 24) - sk_multilayer.frag path
+
+    // BSEffectShaderProperty-derived (sk_effectshader.frag path).
+    bool isEffectShader = false;
+    bool useFalloff = false;        // SLSF1_Use_Falloff (bit 6)
+    bool greyscaleColor = false;    // SLSF1_Greyscale_To_PaletteColor (bit 4)
+    bool greyscaleAlpha = false;    // SLSF1_Greyscale_To_PaletteAlpha (bit 5)
+    bool hasWeaponBlood = false;    // SLSF2_Weapon_Blood (bit 17, Skyrim/SE only)
 };
 
 // Raw (un-transformed) triangle mesh geometry as read from NiTriShapeData /
@@ -239,6 +316,7 @@ private:
     void parseNiTriStripsData(class NifIStream& in, int blockIndex);
     void parseBSTriShape(class NifIStream& in, int blockIndex);
     void parseBSLightingShaderProperty(class NifIStream& in, int blockIndex);
+    void parseBSEffectShaderProperty(class NifIStream& in, int blockIndex);
     void parseBSShaderTextureSet(class NifIStream& in, int blockIndex);
     void parseNiMaterialProperty(class NifIStream& in, int blockIndex);
     void parseNiAlphaProperty(class NifIStream& in, int blockIndex);
@@ -282,7 +360,11 @@ private:
         Transform transform;
         std::int32_t collisionObjectRef = kNoRef;
     };
-    std::string readObjectNetName(class NifIStream& in, bool isBSLightingShaderProperty);
+    // outShaderType, when non-null and isBSLightingShaderProperty is set,
+    // receives the leading "Shader Type" u32 (SkyrimShaderType) that
+    // BSLightingShaderProperty stores BEFORE the NiObjectNET name.
+    std::string readObjectNetName(class NifIStream& in, bool isBSLightingShaderProperty,
+        std::uint32_t* outShaderType = nullptr);
     AvObjectHeader readAvObjectHeader(class NifIStream& in, bool isBSLightingShaderProperty = false);
     std::vector<std::int32_t> readRefArray(class NifIStream& in, std::uint32_t count);
     std::string resolveString(std::int32_t index) const;

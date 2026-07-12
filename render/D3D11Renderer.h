@@ -108,10 +108,13 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendAlpha;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthDefault;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterSolid;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterSolidNoCull; // SLSF2_Double_Sided materials
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterWireframe;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_sampler;
 
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_whiteTexSRV; // 1x1 white fallback when a mesh has no diffuse texture
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_whiteTexSRV;     // 1x1 white fallback (diffuse / env-mask)
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_blackTexSRV;     // 1x1 black fallback (glow / backlight)
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_flatNormalSRV;   // 1x1 flat normal + full spec mask
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_gridAxesVB;
     UINT m_gridVertexCount = 0;

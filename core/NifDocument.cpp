@@ -342,6 +342,8 @@ void NifDocument::parseBlocks(NifIStream& in)
         }
         else if (t == "BSLightingShaderProperty")
             parseBSLightingShaderProperty(in, i);
+        else if (t == "BSEffectShaderProperty")
+            parseBSEffectShaderProperty(in, i);
         else if (t == "BSShaderTextureSet")
             parseBSShaderTextureSet(in, i);
         else if (t == "NiMaterialProperty")
@@ -374,11 +376,16 @@ void NifDocument::parseBlocks(NifIStream& in)
 }
 
 // --- Shared NiObjectNET / NiAVObject header reader --------------------------
-std::string NifDocument::readObjectNetName(NifIStream& in, bool isBSLightingShaderProperty)
+std::string NifDocument::readObjectNetName(NifIStream& in, bool isBSLightingShaderProperty,
+    std::uint32_t* outShaderType)
 {
     // nif.xml lines 3363-3372.
     if (isBSLightingShaderProperty)
-        in.u32(); // "Shader Type" (BSLightingShaderType), onlyT=BSLightingShaderProperty, line 3365
+    {
+        std::uint32_t shaderType = in.u32(); // "Shader Type" (BSLightingShaderType), onlyT=BSLightingShaderProperty, line 3365
+        if (outShaderType)
+            *outShaderType = shaderType;
+    }
 
     std::int32_t nameIdx = in.i32();               // Name (string -> StringRef), line 3366
     std::uint32_t numExtra = in.u32();              // Num Extra Data List, line 3369
@@ -1042,31 +1049,33 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
 // --- BSLightingShaderProperty -----------------------------------------------
 void NifDocument::parseBSLightingShaderProperty(NifIStream& in, int blockIndex)
 {
-    readObjectNetName(in, /*isBSLightingShaderProperty=*/true);
+    NifMaterial mat;
+    readObjectNetName(in, /*isBSLightingShaderProperty=*/true, &mat.shaderType);
     // BSShaderProperty contributes 0 bytes for BSVER>34 (nif.xml line 6230,
     // gated by NI_BS_LTE_FO3), so BSLightingShaderProperty's own fields
     // start immediately after the NiObjectNET header above.
 
-    in.u32();                                                 // Shader Flags 1 (SK or FO4 variant), lines 6591/6593 - both 4 bytes
-    in.u32();                                                  // Shader Flags 2, lines 6592/6594 - both 4 bytes
+    mat.shaderFlags1 = in.u32();                               // Shader Flags 1 (SK or FO4 variant), lines 6591/6593 - both 4 bytes
+    mat.shaderFlags2 = in.u32();                                // Shader Flags 2, lines 6592/6594 - both 4 bytes
     // BSVER>=155 (Fallout 76) Shader Type/SF1/SF2 arrays: out of scope, not present for BSVER<=130.
 
-    in.vector2();                                              // UV Offset (TexCoord), line 6600
-    in.vector2();                                              // UV Scale (TexCoord), line 6601
+    mat.uvOffset = in.vector2();                                // UV Offset (TexCoord), line 6600
+    mat.uvScale = in.vector2();                                  // UV Scale (TexCoord), line 6601
 
-    NifMaterial mat;
     std::int32_t textureSetRef = in.i32();                     // Texture Set (Ref), line 6602
     mat.emissiveColor = in.color3();                           // Emissive Color, line 6603
     mat.emissiveMultiple = in.f32();                            // Emissive Multiple, line 6604
 
     // Root Material (line 6605) onward is a long, Shader-Type/BSVER-gated
     // field chain (nif.xml lines 6605-6648). Only the #NI_BS_LT_FO4# row
-    // (bsVersion < 130 - Skyrim/SE, our primary real-content target) is a
-    // short, unconditional run of fields; parse that much (Alpha/Glossiness/
-    // Specular - the "core" material properties the HLSL shader now
-    // consumes, see Shaders.h). FO4/F76 (Root Material string + Smoothness +
-    // the per-Shader-Type tail) is intentionally still not read - the block-
-    // size table safely skips whatever follows either way.
+    // (bsVersion < 130 - Skyrim/SE, our primary real-content target) is
+    // parsed, through the leading Shader-Type-conditional entries the
+    // sk_default.frag feature set needs (Environment Map Scale / Skin & Hair
+    // Tint Color). The remaining tails (Parallax type 11, Sparkle type 14,
+    // Eye type 16 - the multilayer/eye shaders are not ported yet) and the
+    // FO4/F76 variants (Root Material string + Smoothness + their own tails)
+    // are intentionally still not read - the block-size table safely skips
+    // whatever follows either way.
     if (m_bsVersion < kBsVerFO4)
     {
         in.u32();                                                // Texture Clamp Mode, line 6607
@@ -1075,15 +1084,104 @@ void NifDocument::parseBSLightingShaderProperty(NifIStream& in, int blockIndex)
         mat.glossiness = in.f32();                                // Glossiness, line 6610
         mat.specularColor = in.color3();                          // Specular Color, line 6612
         mat.specularStrength = in.f32();                          // Specular Strength, line 6613
-        // Lighting Effect 1/2 (rim/soft-light/backlight strength, line
-        // 6614-6615) intentionally not read - out of the current "core"
-        // scope (normal map + specular + glow + tint).
+        mat.lightingEffect1 = in.f32();                           // Lighting Effect 1, line 6614 (soft-light wrap)
+        mat.lightingEffect2 = in.f32();                           // Lighting Effect 2, line 6615 (rim power)
+
+        // Shader-Type-conditional entries (same order as nif.xml).
+        if (mat.shaderType == 1)                                  // ST_EnvironmentMap
+            mat.environmentReflection = in.f32();                 // Environment Map Scale, line 6631
+        if (mat.shaderType == 5)                                  // ST_SkinTint
+            mat.tintColor = in.color3();                           // Skin Tint Color, line 6636
+        if (mat.shaderType == 6)                                  // ST_HairTint
+            mat.tintColor = in.color3();                           // Hair Tint Color, line 6638
+        if (mat.shaderType == 11)                                 // ST_MultiLayerParallax
+        {
+            mat.innerThickness = in.f32();                         // Parallax Inner Layer Thickness, line 6641
+            mat.outerRefractionStrength = in.f32();                 // Parallax Refraction Scale, line 6642
+            mat.innerTextureScale = in.vector2();                   // Parallax Inner Layer Texture Scale, line 6643
+            mat.outerReflectionStrength = in.f32();                  // Parallax Envmap Strength, line 6644
+        }
+        if (mat.shaderType == 16)                                 // ST_EyeEnvmap
+            mat.environmentReflection = in.f32();                  // Eye Cubemap Scale, line 6646
+        // (types 7/14 tails skipped via the block-size table)
+    }
+    else if (m_bsVersion == kBsVerFO4)
+    {
+        // FO4 (#BS_GTE_130#) variant of the same run. Most real FO4 content
+        // overrides these via an external BGSM material file named by Root
+        // Material (a whole subsystem NifSkope implements in material.cpp) -
+        // that loader is not ported, so this reads only the inline defaults.
+        in.i32();                                                 // Root Material (NiFixedString -> string table), line 6605
+        in.u32();                                                  // Texture Clamp Mode, line 6607
+        mat.alpha = in.f32();                                      // Alpha, line 6608
+        in.f32();                                                   // Refraction Strength, line 6609
+        // Smoothness is 0..1 (physically-based-ish), not a specular power.
+        // fo4_default.frag's exact response curve is not ported; approximate
+        // as an exponent so FO4 files at least get plausible highlights.
+        float smoothness = in.f32();                                // Smoothness, line 6611
+        mat.glossiness = 1.0f + smoothness * 127.0f;
+        mat.specularColor = in.color3();                            // Specular Color, line 6612
+        mat.specularStrength = in.f32();                             // Specular Strength, line 6613
+        // Subsurface Rolloff onward (lines 6616-6621 + per-type tails) not
+        // read - block-size table skips the rest.
     }
 
     // BSShaderTextureSet may appear later in block order than this
-    // property, so texture path resolution is deferred to
-    // buildHierarchyAndRoots() (see m_pendingMaterialTextureSetRef).
+    // property, so texture path resolution AND the texture-dependent
+    // derived has* booleans are deferred to buildHierarchyAndRoots()
+    // (see m_pendingMaterialTextureSetRef and NifMaterial's struct comment).
     m_pendingMaterialTextureSetRef[blockIndex] = textureSetRef;
+    m_materials[blockIndex] = mat;
+}
+
+// --- BSEffectShaderProperty ---------------------------------------------------
+// Additive/translucent effect materials (glows, beams, soul gem swirls...) -
+// nif.xml lines 6651-6691, rendered by the sk_effectshader.frag port (see
+// Shaders.h). Unlike BSLightingShaderProperty there is no BSShaderTextureSet
+// ref: the two textures are inline SizedStrings, so everything (including
+// derived flags) resolves right here - no buildHierarchyAndRoots() pass
+// needed. Field mapping follows NifSkope's
+// BSEffectShaderProperty::updateParams (glproperty.cpp lines 1472-1529).
+void NifDocument::parseBSEffectShaderProperty(NifIStream& in, int blockIndex)
+{
+    readObjectNetName(in, /*isBSLightingShaderProperty=*/false);
+
+    NifMaterial mat;
+    mat.isEffectShader = true;
+    mat.shaderFlags1 = in.u32();                               // Shader Flags 1 (SK/FO4), lines 6653/6655
+    mat.shaderFlags2 = in.u32();                                // Shader Flags 2, lines 6654/6656
+    mat.uvOffset = in.vector2();                                // UV Offset, line 6661
+    mat.uvScale = in.vector2();                                  // UV Scale, line 6662
+    mat.diffuseTexture = normalizeSlashes(in.sizedString());    // Source Texture, line 6663
+    in.u8();                                                     // Texture Clamp Mode, line 6666
+    in.u8();                                                      // Lighting Influence, line 6667
+    in.u8();                                                       // Env Map Min LOD, line 6668
+    in.u8();                                                        // Unused Byte, line 6669
+    mat.falloffStartAngle = in.f32();                            // Falloff Start Angle, line 6670
+    mat.falloffStopAngle = in.f32();                              // Falloff Stop Angle, line 6671
+    mat.falloffStartOpacity = in.f32();                            // Falloff Start Opacity, line 6672
+    mat.falloffStopOpacity = in.f32();                              // Falloff Stop Opacity, line 6673
+    Color4 baseColor = in.color4();                               // Base Color, line 6675
+    mat.emissiveColor = Color3(baseColor[0], baseColor[1], baseColor[2]);
+    mat.effectEmissiveAlpha = baseColor[3];
+    mat.emissiveMultiple = in.f32();                              // Base Color Scale, line 6676
+    in.f32();                                                      // Soft Falloff Depth, line 6677 (unused by the frag too)
+    mat.greyscaleTexture = normalizeSlashes(in.sizedString());    // Greyscale Texture, line 6678
+    // FO4 (BS_GTE_130) adds Env Map/Normal/Env Mask Texture + Env Map Scale
+    // (lines 6679-6682) - not read; the effect shader port covers the
+    // Skyrim/SE feature set and the block-size table skips the tail.
+
+    const auto sf1 = [&mat](int bit) { return (mat.shaderFlags1 >> bit) & 1u; };
+    const auto sf2 = [&mat](int bit) { return (mat.shaderFlags2 >> bit) & 1u; };
+    mat.useFalloff = sf1(6) != 0;                                // SLSF1_Use_Falloff
+    mat.greyscaleColor = sf1(4) != 0;                             // SLSF1_Greyscale_To_PaletteColor
+    mat.greyscaleAlpha = sf1(5) != 0;                              // SLSF1_Greyscale_To_PaletteAlpha
+    mat.isDoubleSided = sf2(4) != 0;                                // SLSF2_Double_Sided
+    if (m_bsVersion < kBsVerFO4)
+        mat.hasWeaponBlood = sf2(17) != 0;                          // SLSF2_Weapon_Blood
+    mat.hasSpecular = false;                                       // effect shader is unlit - no specular term
+    mat.hasEmittance = true;                                        // Base Color always applies
+
     m_materials[blockIndex] = mat;
 }
 
@@ -1160,21 +1258,71 @@ void NifDocument::buildHierarchyAndRoots()
             m_roots.push_back(static_cast<int>(i));
 
     // Resolve BSLightingShaderProperty -> BSShaderTextureSet texture paths
-    // now that every block (regardless of file order) has been parsed.
+    // now that every block (regardless of file order) has been parsed, then
+    // compute the texture-dependent derived feature booleans, mirroring
+    // NifSkope's BSLightingShaderProperty::updateParams() (glproperty.cpp
+    // lines 1141-1256, the Skyrim/SE stream<130 branch) - see NifMaterial's
+    // struct comment. Flag bit numbers are from nif.xml's
+    // SkyrimShaderPropertyFlags1/2 bitflags (lines 6379-6449).
     for (auto& [propBlockIdx, texSetRef] : m_pendingMaterialTextureSetRef)
     {
-        if (texSetRef < 0)
-            continue;
         auto matIt = m_materials.find(propBlockIdx);
-        auto texIt = m_textureSets.find(texSetRef);
-        if (matIt == m_materials.end() || texIt == m_textureSets.end())
+        if (matIt == m_materials.end())
             continue;
-        if (!texIt->second.empty())
-            matIt->second.diffuseTexture = texIt->second[0];
-        if (texIt->second.size() > 1)
-            matIt->second.normalTexture = texIt->second[1];
-        if (texIt->second.size() > 2)
-            matIt->second.glowTexture = texIt->second[2]; // BSShaderTextureSet Textures[2], used as the glow mask
+        NifMaterial& mat = matIt->second;
+
+        if (texSetRef >= 0)
+        {
+            auto texIt = m_textureSets.find(texSetRef);
+            if (texIt != m_textureSets.end())
+            {
+                const std::vector<std::string>& tex = texIt->second;
+                auto slot = [&tex](std::size_t i) { return (i < tex.size()) ? tex[i] : std::string(); };
+                mat.diffuseTexture   = slot(0);
+                mat.normalTexture    = slot(1);
+                mat.glowTexture      = slot(2); // glow map OR rim/soft LightMask - see NifMaterial
+                mat.heightTexture    = slot(3); // height map OR face detail mask
+                mat.cubeTexture      = slot(4);
+                mat.envMaskTexture   = slot(5);
+                mat.innerTexture     = slot(6); // face tint mask OR multilayer inner map
+                mat.backlightTexture = slot(7); // backlight map OR MSN specular map
+            }
+        }
+
+        const auto sf1 = [&mat](int bit) { return (mat.shaderFlags1 >> bit) & 1u; };
+        const auto sf2 = [&mat](int bit) { return (mat.shaderFlags2 >> bit) & 1u; };
+        const std::uint32_t st = mat.shaderType;
+        const bool skyrimStream = m_bsVersion < kBsVerFO4; // FO4's flag words lack the bits gated below
+
+        mat.hasSpecular   = sf1(0) != 0;                       // SLSF1_Specular
+        mat.hasEmittance  = sf1(22) != 0;                      // SLSF1_Own_Emit
+        mat.hasGlowMap    = st == 2 && sf2(6) && !mat.glowTexture.empty();   // ST_GlowShader + SLSF2_Glow_Map
+        mat.isDoubleSided = sf2(4) != 0;                        // SLSF2_Double_Sided
+        mat.hasModelSpaceNormals = sf1(12) != 0;                 // SLSF1_Model_Space_Normals (sk_msn path)
+
+        if (skyrimStream)
+        {
+            mat.hasHeightMap  = st == 3 && sf1(11) && !mat.heightTexture.empty();// ST_Heightmap + SLSF1_Parallax
+            mat.hasBacklight  = sf2(27) != 0;                    // SLSF2_Back_Lighting
+            mat.hasRimlight   = sf2(26) != 0;                     // SLSF2_Rim_Lighting
+            mat.hasSoftlight  = sf2(25) != 0;                      // SLSF2_Soft_Lighting
+            mat.hasTintColor  = st == 5 || st == 6;                 // ST_SkinTint / ST_HairTint
+            mat.hasSpecularMap = sf1(0) && !mat.backlightTexture.empty(); // MSN external spec mask (updateParams line 1202)
+            mat.hasTintMask   = st == 4;                             // ST_FaceTint (updateParams line 1214)
+            mat.hasDetailMask = mat.hasTintMask;
+            mat.hasMultiLayerParallax = sf2(24) != 0;                 // SLSF2_Multi_Layer_Parallax
+        }
+        else
+        {
+            mat.hasSpecularMap = sf1(0) != 0;                    // FO4: no slot check (updateParams line 1228)
+        }
+
+        mat.hasEnvironmentMap =
+            (st == 1 && sf1(7)) ||                              // ST_EnvironmentMap + SLSF1_Environment_Mapping
+            (st == 16 && sf1(17)) ||                             // ST_EyeEnvmap + SLSF1_Eye_Environment_Mapping
+            (m_bsVersion == kBsVerSSE && mat.hasMultiLayerParallax); // SSE quirk: multilayer implies envmap (updateParams line 1240)
+        mat.hasCubeMap = mat.hasEnvironmentMap && !mat.cubeTexture.empty();
+        mat.useEnvironmentMask = mat.hasEnvironmentMap && !mat.envMaskTexture.empty();
     }
 
     // Apply alpha blending flag (bit 0 of AlphaFlags means "alpha blending
