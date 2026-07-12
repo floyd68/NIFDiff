@@ -13,11 +13,13 @@ app-shell conventions - to 3D NIF models. The actual NIF-parsing/3D-scene/
 compare-UI logic needed for that (which FICture2 never had) is ported in
 from NifSkope - see "Origins" below.
 
-This repo is currently an **empty scaffold**: directory layout, CMake/build
-setup, and third-party wiring are in place, but no NIF parsing, rendering,
-or compare-UI code has been ported in yet. `app/main.cpp` is a placeholder
-that just proves the toolchain links - confirmed with an actual
-`cmake --build build --config Debug` run.
+NIF parsing (`core/`), D3D11 rendering (`render/`), and a dynamic 2-4 pane
+FICture2-style compare UI (`ui/`, `app/`) are implemented and build/run -
+confirmed with an actual `cmake --build build --config Debug` run producing
+`NIFDiff.exe` (the app), `NifValidate.exe` (console parser smoke-test) and
+`ResourceResolveTest.exe` (Bethesda search-order smoke-test), plus manual
+verification of loading NIF files into panes, dynamically adding/removing
+panes (up to 4, equal-width), and camera/lighting sync across panes.
 
 Third-party submodules (`FD2D`, `ImageCore`, `Floar`, `external/DirectXTex`,
 `external/spdlog`) are independent clones from their GitHub URLs, not
@@ -107,17 +109,20 @@ pieces of ported code carry different licenses.
 ## Layout
 
 ```
-app/               placeholder entry point (main.cpp) - see "Next steps"
-core/              NIF parsing / scene building (not yet implemented - NOTES.md)
-render/            D3D11 renderer / texture cache (not yet implemented - NOTES.md)
-ui/                Compare view / control panel (not yet implemented - NOTES.md)
-schema_reference/  nif.xml reference (not yet added - NOTES.md)
-test_assets/       smoke-test .nif fixtures (not yet added - NOTES.md)
+app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
+                   AppSettings.h (INI persistence), FileDialog.h/.cpp,
+                   ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests
+core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera
+render/            D3D11 renderer / texture cache
+ui/                NifViewport (single 3D view), NifComparePane (view + Open/Close),
+                   NifCompareSplitCoordinator (2-4 pane equal-width layout),
+                   NifCompareControlPanel (bottom strip), NifCompareView (top-level)
+schema_reference/  nif.xml reference (vendored from niftools/nifxml, not parsed at runtime)
+test_assets/       5 Skyrim SE/Fallout 4 smoke-test .nif fixtures
 third_party/       git submodules: FD2D, Floar, ImageCore, external/DirectXTex,
-                   external/spdlog + vendored third_party/CommonUtil.h,
-                   third_party/AppLog.h
-CMakeLists.txt     sets up the FD2D/Floar/ImageCore/DirectXTex/spdlog
-                   third-party wiring
+                   external/spdlog, gli (header-only DDS decode) +
+                   vendored third_party/CommonUtil.h, third_party/AppLog.h
+CMakeLists.txt     sets up third-party wiring + NIFDiff/NifValidate/ResourceResolveTest targets
 GenerateVS2026.ps1/.bat   configures a VS2026 solution under build/
 ```
 
@@ -132,21 +137,32 @@ cmake --build build --config Debug
 `GenerateVS2026.ps1` runs the submodule update for you if `third_party/FD2D`
 or `third_party/Floar` look uninitialized.
 
+## Status
+
+Implemented: NIF parsing/scene-building/D3D11 rendering (ported from
+NifSkope's `liteviewer` prototype at `D:\Works\nifskope\liteviewer`,
+`nsk` namespace, essentially verbatim), and a dynamic **2-4 pane** compare
+UI laid out FICture2-style (bottom control strip, equal-width pane
+splitting up to 4 via `NifCompareSplitCoordinator`, ported/adapted from
+FICture2's own `ImageBrowserSplitCoordinator`) - not liteviewer's original
+fixed 2-pane/right-sidebar layout. App shell (window bootstrap, INI session
+persistence for up to 4 files, Win32 file dialogs) hosts one `NifCompareView`.
+
+Not yet ported/implemented: skinning/morphs/particles/controllers (out of
+scope per `SceneBuilder.h`'s documented scope note - static bind-pose
+comparison only), a `.ico`/app icon, and pane-splitter-ratio persistence
+across add/remove (each add/remove currently resets to equal widths).
+
 ## Next steps
 
-1. Implement `core/`, `render/`, `ui/` per the file breakdown in "Origins"
-   above - NIF parsing/scene-building adapted from NifSkope's
-   model/scenegraph, a D3D11 render path, and an FD2D Compare view laid
-   out FICture2-style.
-2. Add `schema_reference/nif.xml` (from niftools/nifxml, for parser
-   reference) and a handful of Skyrim SE/Fallout 4 `test_assets/*.nif`
-   fixtures.
-3. Vendor `lib/gli` for DDS decode in `TextureCache.cpp` (not yet present
-   in this repo).
-4. Add those sources to `CMakeLists.txt`'s `NIFDiff` target (the file lists
-   the expected set as a comment) and replace `app/main.cpp`'s placeholder
-   with a real app shell (`AppSettings.h`, `FileDialog.h/.cpp`, and an
-   `Application.cpp`-style bootstrap per FICture2's own conventions),
-   hosting one Compare view.
-5. Decide on naming/branding (window title, `.ico`, INI section names,
-   C++ namespace) for the new code.
+Possible follow-ups, not required for the current feature set:
+1. Persist per-pane split ratios across add/remove (FICture2's
+   `CaptureHorizontalSplitRatios`/`ApplyHorizontalSplitRatios` pattern).
+2. File drag-and-drop onto a pane (FICture2's `ImageBrowserDragController`
+   equivalent) as an alternative to the "Open..." button.
+3. Push the local, currently-unpublished FD2D commits (Slider/CheckBox/
+   ComboBox controls, `Text::Measure` DirectWrite-metrics fix) from
+   `D:\Works\Ficture2\FD2D` to `origin` (`github.com/floyd68/FD2D`) - the
+   submodule pin here (`75dd6e1`) currently only resolves from a local
+   fetch, not a fresh `git submodule update --init` against GitHub alone.
+4. An app icon / `.ico` (none exists yet, matching liteviewer).

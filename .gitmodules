@@ -13,3 +13,6 @@
 [submodule "third_party/external/spdlog"]
 	path = third_party/external/spdlog
 	url = https://github.com/gabime/spdlog.git
+[submodule "third_party/gli"]
+	path = third_party/gli
+	url = https://github.com/g-truc/gli.git

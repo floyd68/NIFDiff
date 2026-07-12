@@ -78,17 +78,40 @@ add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/Floar" "${CMAKE_BINARY_DIR}/_deps/
 # ---------------------------------------------------------------------------
 # NIFDiff executable
 # ---------------------------------------------------------------------------
-# NOTE: only app/main.cpp exists so far (placeholder). As core/render/ui are
-# implemented (see README.md's "Origins" section for the NifSkope/FICture2
-# source mapping), add their files here, e.g.:
-#   core/NifTypes.h  core/NifStream.h  core/NifValue.h  core/NifItem.h
-#   core/NifDocument.h/.cpp  core/SceneBuilder.h/.cpp  core/Camera.h
-#   core/ResourceResolver.h/.cpp
-#   render/Shaders.h  render/D3D11Renderer.h/.cpp  render/TextureCache.h/.cpp
-#   ui/NifViewport.h/.cpp  ui/NifCompareControlPanel.h/.cpp
-#   ui/NifCompareView.h/.cpp
 add_executable(NIFDiff WIN32
+    app/AppSettings.h
+    app/FileDialog.h
+    app/FileDialog.cpp
+    app/NIFDiffApp.h
+    app/NIFDiffApp.cpp
     app/main.cpp
+    core/NifTypes.h
+    core/NifStream.h
+    core/NifValue.h
+    core/NifItem.h
+    core/NifDocument.h
+    core/NifDocument.cpp
+    core/SceneBuilder.h
+    core/SceneBuilder.cpp
+    core/NifLog.h
+    core/Camera.h
+    core/ResourceResolver.h
+    core/ResourceResolver.cpp
+    render/Shaders.h
+    render/D3D11Renderer.h
+    render/D3D11Renderer.cpp
+    render/TextureCache.h
+    render/TextureCache.cpp
+    ui/NifViewport.h
+    ui/NifViewport.cpp
+    ui/NifComparePane.h
+    ui/NifComparePane.cpp
+    ui/NifCompareSplitCoordinator.h
+    ui/NifCompareSplitCoordinator.cpp
+    ui/NifCompareControlPanel.h
+    ui/NifCompareControlPanel.cpp
+    ui/NifCompareView.h
+    ui/NifCompareView.cpp
 )
 
 set_target_properties(NIFDiff PROPERTIES
@@ -100,6 +123,11 @@ target_include_directories(NIFDiff PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/render
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
+    ${NIFDIFF_THIRD_PARTY_ROOT}/gli
+    ${NIFDIFF_THIRD_PARTY_ROOT}/gli/external
+    # core/NifLog.h logs via spdlog directly (header-only; see its own
+    # comment for why this isn't routed through third_party/AppLog.h).
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
     # CommonUtil.h lives at third_party/ for FD2D's "../CommonUtil.h" includes.
     ${NIFDIFF_THIRD_PARTY_ROOT}
 )
@@ -132,4 +160,51 @@ if(MSVC)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
     target_compile_options(NIFDiff PRIVATE /permissive- /utf-8 /W3)
+endif()
+
+# ---------------------------------------------------------------------------
+# NifValidate - console-mode parser smoke-test
+# ---------------------------------------------------------------------------
+add_executable(NifValidate
+    app/ValidateNif.cpp
+    core/NifTypes.h
+    core/NifStream.h
+    core/NifValue.h
+    core/NifItem.h
+    core/NifDocument.h
+    core/NifDocument.cpp
+    core/SceneBuilder.h
+    core/SceneBuilder.cpp
+    core/NifLog.h
+)
+target_include_directories(NifValidate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_compile_definitions(NifValidate PRIVATE NOMINMAX)
+set_target_properties(NifValidate PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
+if(MSVC)
+    target_compile_options(NifValidate PRIVATE /permissive- /utf-8 /W3)
+endif()
+
+# ---------------------------------------------------------------------------
+# ResourceResolveTest - Bethesda search-order smoke test (uses Floar for BSA)
+# ---------------------------------------------------------------------------
+add_executable(ResourceResolveTest
+    app/ResourceResolveTest.cpp
+    core/ResourceResolver.h
+    core/ResourceResolver.cpp
+)
+target_include_directories(ResourceResolveTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+)
+target_link_libraries(ResourceResolveTest PRIVATE Floar advapi32)
+target_compile_definitions(ResourceResolveTest PRIVATE NOMINMAX)
+set_target_properties(ResourceResolveTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
+if(MSVC)
+    target_compile_options(ResourceResolveTest PRIVATE /permissive- /utf-8 /W3)
 endif()
