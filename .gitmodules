@@ -1,0 +1,15 @@
+[submodule "third_party/FD2D"]
+	path = third_party/FD2D
+	url = https://github.com/floyd68/FD2D.git
+[submodule "third_party/external/DirectXTex"]
+	path = third_party/external/DirectXTex
+	url = https://github.com/floyd68/DirectXTex.git
+[submodule "third_party/Floar"]
+	path = third_party/Floar
+	url = https://github.com/floyd68/Floar.git
+[submodule "third_party/ImageCore"]
+	path = third_party/ImageCore
+	url = https://github.com/floyd68/ImageCore.git
+[submodule "third_party/external/spdlog"]
+	path = third_party/external/spdlog
+	url = https://github.com/gabime/spdlog.git
