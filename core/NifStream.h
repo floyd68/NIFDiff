@@ -117,12 +117,47 @@ public:
         return s;
     }
 
-    Vector2 vector2() { return Vector2(f32(), f32()); }
-    Vector3 vector3() { return Vector3(f32(), f32(), f32()); }
-    Vector4 vector4() { return Vector4(f32(), f32(), f32(), f32()); }
-    Color3  color3()  { return Color3(f32(), f32(), f32()); }
-    Color4  color4()  { return Color4(f32(), f32(), f32(), f32()); }
-    Triangle triangle() { return Triangle(u16(), u16(), u16()); }
+    // NOTE: every multi-component reader below deliberately reads into named
+    // locals one statement at a time instead of the tempting one-liner
+    // `Vector3(f32(), f32(), f32())`. C++ leaves function-argument evaluation
+    // order unspecified, and MSVC evaluates right-to-left - so the one-liner
+    // filled Z from the FIRST float in the stream and X from the LAST,
+    // silently swapping X<->Z on every Vector3 (and reversing triangles,
+    // colors and quaternions) while leaving matrix33() below (explicit loop,
+    // well-defined order) correct. The resulting "positions/translations
+    // swapped but rotations not" inconsistency corrupted every skinned mesh
+    // whose bones carry non-identity rotations. Bug found by comparing
+    // against NifSkope's ground-truth render of the same file.
+    Vector2 vector2()
+    {
+        float x = f32(); float y = f32();
+        return Vector2(x, y);
+    }
+    Vector3 vector3()
+    {
+        float x = f32(); float y = f32(); float z = f32();
+        return Vector3(x, y, z);
+    }
+    Vector4 vector4()
+    {
+        float x = f32(); float y = f32(); float z = f32(); float w = f32();
+        return Vector4(x, y, z, w);
+    }
+    Color3 color3()
+    {
+        float r = f32(); float g = f32(); float b = f32();
+        return Color3(r, g, b);
+    }
+    Color4 color4()
+    {
+        float r = f32(); float g = f32(); float b = f32(); float a = f32();
+        return Color4(r, g, b, a);
+    }
+    Triangle triangle()
+    {
+        std::uint16_t v1 = u16(); std::uint16_t v2 = u16(); std::uint16_t v3 = u16();
+        return Triangle(v1, v2, v3);
+    }
 
     Matrix matrix33()
     {
@@ -133,7 +168,11 @@ public:
         return m;
     }
 
-    Quat quatWXYZ() { return Quat(f32(), f32(), f32(), f32()); }
+    Quat quatWXYZ()
+    {
+        float w = f32(); float x = f32(); float y = f32(); float z = f32();
+        return Quat(w, x, y, z);
+    }
 
     bool eof() const { return m_eof; }
 

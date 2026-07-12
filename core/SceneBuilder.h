@@ -10,18 +10,22 @@
 // view (no animation/particle playback - see NIF_DIFF_VIEWER.md), and
 // because NifDocument already parses geometry + shader/alpha property refs
 // directly (see NifDocument.h), the only scenegraph responsibility left is
-// (a): resolving world transforms and flattening the shape hierarchy into a
-// single render list. That is what SceneBuilder does, in about a hundred
-// lines instead of glscene.cpp+glnode.cpp's several thousand.
+// (a) resolving world transforms and flattening the shape hierarchy into a
+// single render list, PLUS (b) static (bind-pose) matrix-palette skinning
+// for NiSkinPartition-backed shapes - see applySkinning() in the .cpp,
+// which mirrors NifSkope's BSShape::transformShapes() (bsshape.cpp) exactly
+// and was verified against a live NifSkope render of real Skyrim SE content
+// with Do Skinning toggled both ways.
 //
-// Explicitly dropped vs. the original scenegraph (documented here rather
-// than silently, per the plan's Phase 3 scope): skinning/bone deformation,
-// morph targets, particle systems (glparticles.cpp), and all NiTimeController
+// Explicitly still dropped vs. the original scenegraph: bone *animation*
+// (this only ever shows the skeleton's bind/rest pose), morph targets,
+// particle systems (glparticles.cpp), and all other NiTimeController
 // playback (controllers.cpp) - none of these affect a static bind-pose mesh
 // comparison, which is the feature NIF_DIFF_VIEWER.md actually asks for.
 #pragma once
 
 #include "NifDocument.h"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -42,7 +46,12 @@ struct RenderMesh
 {
     std::string nodeName;
     Matrix4 worldTransform;
-    const NifGeometry* geometry = nullptr; // borrowed pointer into the owning NifDocument
+    const NifGeometry* geometry = nullptr; // borrowed pointer into the owning NifDocument, or into ownedGeometry below
+    // Set only for skinned shapes (see applySkinning()): geometry with
+    // world-space-skinned positions can't be shared with the NifDocument's
+    // own (reference-pose) storage, so it is owned here instead. geometry
+    // points into this when set; null otherwise (the common, rigid-shape case).
+    std::shared_ptr<NifGeometry> ownedGeometry;
     NifMaterial material;                  // copied (cheap: a few floats + 2 short paths)
 };
 

@@ -133,6 +133,12 @@ std::string NifDocument::resolveString(std::int32_t index) const
     return m_strings[static_cast<std::size_t>(index)];
 }
 
+int NifDocument::nodeIndexForBlock(std::int32_t blockIndex) const
+{
+    auto it = m_blockIndexToNodeIndex.find(blockIndex);
+    return (it != m_blockIndexToNodeIndex.end()) ? it->second : kNoRef;
+}
+
 const std::string& NifDocument::blockTypeName(int index) const
 {
     static const std::string kEmpty;
@@ -344,6 +350,8 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiAlphaProperty(in, i);
         else if (t == "NiSkinInstance" || t == "BSDismemberSkinInstance")
             parseNiSkinInstance(in, i);
+        else if (t == "NiSkinData")
+            parseNiSkinData(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -518,10 +526,11 @@ static GeomDataHeader readGeomDataHeaderAndVerts(NifIStream& in, NifGeometry& ge
     }
     if (hasNormals && hdr.hasTangents)
     {
+        geo.tangents.resize(hdr.numVertices);
+        for (auto& t : geo.tangents)
+            t = in.vector3();                                // Tangents, line 3899
         for (std::uint16_t i = 0; i < hdr.numVertices; ++i)
-            in.vector3();                                   // Tangents, line 3899 (not needed for basic shading)
-        for (std::uint16_t i = 0; i < hdr.numVertices; ++i)
-            in.vector3();                                   // Bitangents, line 3900
+            in.vector3();                                    // Bitangents, line 3900 - not stored, see NifGeometry::tangents' comment
     }
 
     in.f32(); in.f32(); in.f32(); in.f32();                // Bounding Sphere (NiBound = Vector3+float), line 3903
@@ -652,7 +661,7 @@ void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex)
 // allowFo4HalfPrecision is always false for that caller) can reuse it
 // instead of duplicating ~80 lines of bit-for-bit vertex decode logic.
 void NifDocument::readVertexDataBuffer(NifIStream& in, NifGeometry& geo, std::uint16_t numVertices,
-    std::uint16_t attribBits, bool allowFo4HalfPrecision)
+    std::uint16_t attribBits, bool allowFo4HalfPrecision, std::vector<NifVertexSkinWeights>* outSkinWeights)
 {
     // Attribute masks per NifTypes.h's VertexFlags (nif.xml BSVertexDesc bits 44+).
     bool fullPrecision = (attribBits & VF_FULLPREC) != 0; // only meaningful for the FO4 BSVertexData branch
@@ -667,6 +676,8 @@ void NifDocument::readVertexDataBuffer(NifIStream& in, NifGeometry& geo, std::ui
     if (hasUv) geo.uvs.resize(numVertices);
     if (hasNormal) geo.normals.resize(numVertices);
     if (hasColor) geo.colors.resize(numVertices);
+    if (hasNormal && hasTangent) geo.tangents.resize(numVertices);
+    if (hasSkin && outSkinWeights) outSkinWeights->resize(numVertices);
 
     for (std::uint16_t v = 0; v < numVertices; ++v)
     {
@@ -734,8 +745,11 @@ void NifDocument::readVertexDataBuffer(NifIStream& in, NifGeometry& geo, std::ui
         }
         if (hasNormal && hasTangent)
         {
-            in.u8(); in.u8(); in.u8();                    // Tangent (ByteVector3), cond (arg&0x18)==0x18
-            in.u8();                                       // Bitangent Z (normbyte)
+            float tx = (static_cast<int>(in.u8()) - 127) / 127.0f;
+            float ty = (static_cast<int>(in.u8()) - 127) / 127.0f;
+            float tz = (static_cast<int>(in.u8()) - 127) / 127.0f;
+            geo.tangents[v] = Vector3(tx, ty, tz);        // Tangent (ByteVector3), cond (arg&0x18)==0x18
+            in.u8();                                       // Bitangent Z (normbyte) - not stored, see NifGeometry::tangents' comment
         }
         if (hasColor)
         {
@@ -747,8 +761,20 @@ void NifDocument::readVertexDataBuffer(NifIStream& in, NifGeometry& geo, std::ui
         }
         if (hasSkin)
         {
-            in.read<std::uint16_t>(); in.read<std::uint16_t>(); in.read<std::uint16_t>(); in.read<std::uint16_t>(); // Bone Weights (hfloat[4])
-            in.u8(); in.u8(); in.u8(); in.u8();           // Bone Indices (byte[4])
+            float w0 = halfToFloat(in.read<std::uint16_t>());
+            float w1 = halfToFloat(in.read<std::uint16_t>());
+            float w2 = halfToFloat(in.read<std::uint16_t>());
+            float w3 = halfToFloat(in.read<std::uint16_t>()); // Bone Weights (hfloat[4])
+            std::uint8_t i0 = in.u8();
+            std::uint8_t i1 = in.u8();
+            std::uint8_t i2 = in.u8();
+            std::uint8_t i3 = in.u8();                        // Bone Indices (byte[4]) - global to this shape's own NiSkinInstance Bones[] list
+            if (outSkinWeights)
+            {
+                NifVertexSkinWeights& vw = (*outSkinWeights)[v];
+                vw.weight = { w0, w1, w2, w3 };
+                vw.boneIndex = { i0, i1, i2, i3 };
+            }
         }
     }
 }
@@ -761,27 +787,76 @@ void NifDocument::parseNiSkinInstance(NifIStream& in, int blockIndex)
     // BSDismemberSkinInstance's own trailing body-part fields (Num
     // Partitions/Partitions) are intentionally not read - safely skipped via
     // the block-size table, same as everywhere else.
-    /*dataRef*/ in.i32();                     // Data (Ref -> NiSkinData), line 5082
+    std::int32_t dataRef = in.i32();          // Data (Ref -> NiSkinData), line 5082
     std::int32_t skinPartitionRef = in.i32(); // Skin Partition (Ref -> NiSkinPartition), line 5083
+    /*skeletonRootRef*/ in.i32();             // Skeleton Root (Ptr -> NiNode), line 5084 - see this
+                                               // method's declaration comment on the "coincides with
+                                               // the scene root" assumption this lets SceneBuilder make.
+    std::uint32_t numBones = in.u32();        // Num Bones, line 5085
+    std::vector<std::int32_t> bones(numBones);
+    for (auto& b : bones)
+        b = in.i32();                          // Bones (Ptr[] -> NiNode), line 5086
 
     m_skinInstanceToPartitionRef[blockIndex] = skinPartitionRef;
+    m_skinInstanceToDataRef[blockIndex] = dataRef;
+    m_skinInstanceBones[blockIndex] = std::move(bones);
+}
+
+// --- NiSkinData --------------------------------------------------------------
+void NifDocument::parseNiSkinData(NifIStream& in, int blockIndex)
+{
+    // nif.xml lines 5071-5078. Our NIF version (20.2.0.7) is newer than the
+    // legacy "Skin Partition" Ref field's until=10.1.0.0, so that field does
+    // NOT exist here (unlike NiSkinInstance's same-named field, which does).
+    NifSkinData data;
+    data.skinTransform.rotation = in.matrix33();    // Skin Transform.Rotation
+    data.skinTransform.translation = in.vector3();   // Skin Transform.Translation
+    data.skinTransform.scale = in.f32();             // Skin Transform.Scale
+
+    std::uint32_t numBones = in.u32();               // Num Bones
+    bool hasVertexWeights = in.boolean();            // Has Vertex Weights, since 4.2.1.0 (default true, always present for us)
+
+    data.boneOffsets.reserve(numBones);
+    for (std::uint32_t b = 0; b < numBones; ++b)
+    {
+        // BoneData (nif.xml lines 2279-2286).
+        Transform boneOffset;
+        boneOffset.rotation = in.matrix33();          // Skin Transform.Rotation
+        boneOffset.translation = in.vector3();         // Skin Transform.Translation
+        boneOffset.scale = in.f32();                    // Skin Transform.Scale
+        in.f32(); in.f32(); in.f32(); in.f32();          // Bounding Sphere (NiBound)
+        std::uint16_t numVerts = in.u16();               // Num Vertices
+        if (hasVertexWeights)
+        {
+            // BoneVertData[Num Vertices] (ushort index + float weight, 6
+            // bytes each) - not stored: NiSkinPartition's own per-vertex
+            // weights are used instead (matching NifSkope's glmesh.cpp,
+            // "Ignore weights listed in NiSkinData if NiSkinPartition
+            // exists" - true for every BS_SSE file this parser targets).
+            // Still must be consumed to correctly advance to the next
+            // BoneData entry in this array.
+            for (std::uint16_t i = 0; i < numVerts; ++i) { in.u16(); in.f32(); }
+        }
+        data.boneOffsets.push_back(boneOffset);
+    }
+
+    m_skinData[blockIndex] = std::move(data);
 }
 
 // --- NiSkinPartition (BS_SSE) ------------------------------------------------
-// Holds the actual rest-pose vertex/triangle data for a skinned Skyrim SE
-// shape whose owning BSTriShape has Data Size == 0 (see parseBSTriShape /
-// NifSceneNode::skinInstanceRef) - Bethesda's SSE export strips the inline
-// buffer on a skinned BSTriShape and stores one shared vertex buffer plus
-// per-bone-group "partitions" here instead, to avoid duplicating vertex data
-// per partition. Reconstructing a flat NifGeometry only needs: (a) the
-// shared global vertex buffer (nif.xml line 5103, same BSVertexDataSSE wire
-// format as BSTriShape's own inline buffer - see readVertexDataBuffer), and
-// (b) each partition's triangles, whose LOCAL vertex indices are remapped to
-// GLOBAL indices into that shared buffer via the partition's own Vertex Map.
-// No bone weights/skeleton needed for a static bind-pose render - see this
-// class's scope note on skinning/animation being out of scope, which this
-// deliberately does NOT reopen: this only reads already-baked rest-pose
-// positions, not runtime bone deformation.
+// Holds the actual rest-pose vertex/triangle/bone-weight data for a skinned
+// Skyrim SE shape whose owning BSTriShape has Data Size == 0 (see
+// parseBSTriShape / NifSceneNode::skinInstanceRef) - Bethesda's SSE export
+// strips the inline buffer on a skinned BSTriShape and stores one shared
+// vertex buffer plus per-bone-group "partitions" here instead, to avoid
+// duplicating vertex data per partition. Reconstructing a flat NifGeometry
+// needs: (a) the shared global vertex buffer (nif.xml line 5103, same
+// BSVertexDataSSE wire format as BSTriShape's own inline buffer - see
+// readVertexDataBuffer), and (b) each partition's triangles, whose LOCAL
+// vertex indices are remapped to GLOBAL indices into that shared buffer via
+// the partition's own Vertex Map. Correctly *positioning* those vertices
+// additionally needs each vertex's bone weights (also reconstructed here,
+// into m_skinPartitionWeights) - see SceneBuilder.cpp's applySkinning.
 void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
 {
     std::uint32_t numPartitions = in.u32();               // Num Partitions, line 5099
@@ -794,12 +869,27 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
         blockIndex, numPartitions, dataSize, vertexSize, attribBits);
 
     NifGeometry geo; // shared global vertex buffer; triangles accumulated below across all partitions
+    // Each vertex in this buffer optionally carries its own embedded bone
+    // weights/indices (VF_SKINNED, set for every file this parser has been
+    // tested against) - global-buffer-index-aligned already, so preferred
+    // over reconstructing per-vertex weights from each partition's separate
+    // Bones[]/Vertex Map/Bone Indices fields below (that reconstruction path
+    // is kept only as a fallback for the - currently unobserved - case of a
+    // BS_SSE file whose global buffer omits VF_SKINNED).
+    std::vector<NifVertexSkinWeights> embeddedWeights;
     std::uint32_t numVerticesGlobal = (vertexSize > 0) ? (dataSize / vertexSize) : 0;
     if (dataSize > 0 && numVerticesGlobal > 0 && numVerticesGlobal <= 0xFFFFu)
     {
         readVertexDataBuffer(in, geo, static_cast<std::uint16_t>(numVerticesGlobal), attribBits,
-            /*allowFo4HalfPrecision=*/false); // line 5103's Vertex Data field is BS_SSE-only
+            /*allowFo4HalfPrecision=*/false, &embeddedWeights); // line 5103's Vertex Data field is BS_SSE-only
     }
+    const bool haveEmbeddedWeights = !embeddedWeights.empty();
+
+    // Per-global-vertex bone weights (for SceneBuilder::applySkinning), sized
+    // to match geo.positions; left at its default (all-zero-weight, i.e. no
+    // influence) for any vertex no partition below ends up covering (only
+    // relevant when falling back to per-partition reconstruction).
+    std::vector<NifVertexSkinWeights> weights(haveEmbeddedWeights ? 0 : geo.positions.size());
 
     for (std::uint32_t p = 0; p < numPartitions; ++p)
     {
@@ -809,8 +899,9 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
         std::uint16_t pNumBones = in.u16();                    // Num Bones
         std::uint16_t pNumStrips = in.u16();                    // Num Strips
         std::uint16_t pNumWeightsPerVertex = in.u16();           // Num Weights Per Vertex
-        for (std::uint16_t b = 0; b < pNumBones; ++b)
-            in.u16();                                             // Bones[]
+        std::vector<std::uint16_t> partitionBones(pNumBones);
+        for (auto& pb : partitionBones)
+            pb = in.u16();                                        // Bones[] - partition-local -> skin-instance-global bone index
 
         bool hasVertexMap = in.boolean();                        // Has Vertex Map, since 10.1.0.0 (always true for our version range)
         std::vector<std::uint16_t> vertexMap;
@@ -820,14 +911,18 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
             for (auto& vm : vertexMap)
                 vm = in.u16();                                    // Vertex Map
         }
+        auto mapIdx = [&vertexMap](std::uint16_t localIdx) -> std::uint16_t
+        {
+            return (localIdx < vertexMap.size()) ? vertexMap[localIdx] : localIdx;
+        };
 
         bool hasVertexWeights = in.boolean();                    // Has Vertex Weights
+        std::vector<float> localWeights;
         if (hasVertexWeights)
         {
-            // Vertex weights only matter for runtime bone deformation, not a
-            // static bind-pose render (see this function's scope note).
-            for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(pNumVertices) * pNumWeightsPerVertex; ++i)
-                in.f32();
+            localWeights.resize(static_cast<std::size_t>(pNumVertices) * pNumWeightsPerVertex);
+            for (auto& w : localWeights)
+                w = in.f32();
         }
 
         std::vector<std::uint16_t> stripLengths(pNumStrips);
@@ -858,28 +953,82 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
         }
 
         bool hasBoneIndices = in.boolean();                       // Has Bone Indices
+        std::vector<std::uint8_t> localBoneIndices;
         if (hasBoneIndices)
         {
-            for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(pNumVertices) * pNumWeightsPerVertex; ++i)
-                in.u8();                                            // Bone Indices
+            localBoneIndices.resize(static_cast<std::size_t>(pNumVertices) * pNumWeightsPerVertex);
+            for (auto& bi : localBoneIndices)
+                bi = in.u8();
         }
 
         // BS_SSE-only trailing fields (nif.xml lines 2169-2172): LOD Level,
         // Global VB, a per-partition Vertex Desc (redundant with the block-
-        // level one above) and a Triangles Copy - none needed here, and
-        // safely skipped via the block-size table like everywhere else.
+        // level one above) and a Triangles Copy. None of these are needed,
+        // but - unlike most other "trailing, unneeded" fields elsewhere in
+        // this parser - they can NOT be left for the block-size table to
+        // skip: they occur inside this per-partition loop (nif.xml's
+        // SkinPartition struct), so for any file with more than one
+        // partition, skipping them would misalign every partition after the
+        // first, corrupting its Num Vertices/Num Triangles/etc. reads. Must
+        // be consumed here to keep the stream aligned for the next iteration.
+        bool usesGlobalVertexBuffer = false;
+        if (m_bsVersion == kBsVerSSE)
+        {
+            in.u8();                   // LOD Level
+            usesGlobalVertexBuffer = in.boolean(); // Global VB
+            in.read<std::uint64_t>();   // Vertex Desc (BSVertexDesc)
+            for (std::uint16_t t = 0; t < pNumTriangles; ++t)
+                in.triangle();           // Triangles Copy
+        }
 
-        // Remap this partition's LOCAL triangle indices (0..pNumVertices-1)
-        // to GLOBAL indices into the shared vertex buffer read above, via
-        // this partition's own Vertex Map (falls back to identity if the
-        // map was absent, which should not happen for our version range).
+        std::uint16_t maxTriangleIndex = 0;
+        for (const Triangle& tri : localTriangles)
+            maxTriangleIndex = (std::max)({ maxTriangleIndex, tri.v1(), tri.v2(), tri.v3() });
+        std::size_t nonIdentityMapEntries = 0;
+        for (std::size_t i = 0; i < vertexMap.size(); ++i)
+            if (vertexMap[i] != i)
+                ++nonIdentityMapEntries;
+        NIFLOG_TRACE("parseNiSkinPartition: partition {} verts={} tris={} globalVB={} vertexMap={} "
+            "nonIdentityMap={} maxTriangleIndex={}",
+            p, pNumVertices, pNumTriangles, usesGlobalVertexBuffer, hasVertexMap,
+            nonIdentityMapEntries, maxTriangleIndex);
+
+        // NifSkope's BSShape path consumes BS_SSE partition triangles
+        // directly, regardless of the Global VB flag. These indices address
+        // the NiSkinPartition-wide vertex buffer; remapping them through the
+        // partition's Vertex Map (the legacy NiTriShape/glmesh path) connects
+        // unrelated global vertices and produces a torn/spaghetti mesh.
+        // Non-SSE/legacy partitions still require the Vertex Map.
         for (const Triangle& lt : localTriangles)
         {
-            auto mapIdx = [&vertexMap](std::uint16_t localIdx) -> std::uint16_t
+            if (m_bsVersion == kBsVerSSE)
+                geo.triangles.push_back(lt);
+            else
+                geo.triangles.emplace_back(mapIdx(lt.v1()), mapIdx(lt.v2()), mapIdx(lt.v3()));
+        }
+
+        // Same remap for this partition's per-vertex bone weights, additionally
+        // translating the partition-local bone index (0..pNumBones-1) into a
+        // skin-instance-global one via partitionBones - see
+        // NifVertexSkinWeights. Skipped when the global buffer already had
+        // embedded per-vertex weights (weights.size()==0 in that case - see
+        // haveEmbeddedWeights above), which are preferred.
+        if (!haveEmbeddedWeights && hasVertexWeights && hasBoneIndices)
+        {
+            const std::uint16_t slotsToUse = (std::min)(pNumWeightsPerVertex, static_cast<std::uint16_t>(4));
+            for (std::uint16_t lv = 0; lv < pNumVertices; ++lv)
             {
-                return (localIdx < vertexMap.size()) ? vertexMap[localIdx] : localIdx;
-            };
-            geo.triangles.emplace_back(mapIdx(lt.v1()), mapIdx(lt.v2()), mapIdx(lt.v3()));
+                std::uint16_t gv = mapIdx(lv);
+                if (gv >= weights.size())
+                    continue;
+                for (std::uint16_t slot = 0; slot < slotsToUse; ++slot)
+                {
+                    std::size_t srcIdx = static_cast<std::size_t>(lv) * pNumWeightsPerVertex + slot;
+                    std::uint8_t localBone = localBoneIndices[srcIdx];
+                    weights[gv].boneIndex[slot] = (localBone < partitionBones.size()) ? partitionBones[localBone] : 0;
+                    weights[gv].weight[slot] = localWeights[srcIdx];
+                }
+            }
         }
     }
 
@@ -887,6 +1036,7 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
         blockIndex, geo.positions.size(), geo.triangles.size(), numPartitions);
 
     m_skinPartitionGeometries[blockIndex] = std::move(geo);
+    m_skinPartitionWeights[blockIndex] = haveEmbeddedWeights ? std::move(embeddedWeights) : std::move(weights);
 }
 
 // --- BSLightingShaderProperty -----------------------------------------------
@@ -908,10 +1058,27 @@ void NifDocument::parseBSLightingShaderProperty(NifIStream& in, int blockIndex)
     std::int32_t textureSetRef = in.i32();                     // Texture Set (Ref), line 6602
     mat.emissiveColor = in.color3();                           // Emissive Color, line 6603
     mat.emissiveMultiple = in.f32();                            // Emissive Multiple, line 6604
-    // Everything after this point (Root Material, Alpha, Glossiness,
-    // Specular, per-Shader-Type tail...) is intentionally not read - see
-    // NifDocument.h scope note; the next block is located via the header's
-    // Block Size table, not via stream position.
+
+    // Root Material (line 6605) onward is a long, Shader-Type/BSVER-gated
+    // field chain (nif.xml lines 6605-6648). Only the #NI_BS_LT_FO4# row
+    // (bsVersion < 130 - Skyrim/SE, our primary real-content target) is a
+    // short, unconditional run of fields; parse that much (Alpha/Glossiness/
+    // Specular - the "core" material properties the HLSL shader now
+    // consumes, see Shaders.h). FO4/F76 (Root Material string + Smoothness +
+    // the per-Shader-Type tail) is intentionally still not read - the block-
+    // size table safely skips whatever follows either way.
+    if (m_bsVersion < kBsVerFO4)
+    {
+        in.u32();                                                // Texture Clamp Mode, line 6607
+        mat.alpha = in.f32();                                    // Alpha, line 6608
+        in.f32();                                                 // Refraction Strength, line 6609
+        mat.glossiness = in.f32();                                // Glossiness, line 6610
+        mat.specularColor = in.color3();                          // Specular Color, line 6612
+        mat.specularStrength = in.f32();                          // Specular Strength, line 6613
+        // Lighting Effect 1/2 (rim/soft-light/backlight strength, line
+        // 6614-6615) intentionally not read - out of the current "core"
+        // scope (normal map + specular + glow + tint).
+    }
 
     // BSShaderTextureSet may appear later in block order than this
     // property, so texture path resolution is deferred to
@@ -1006,6 +1173,8 @@ void NifDocument::buildHierarchyAndRoots()
             matIt->second.diffuseTexture = texIt->second[0];
         if (texIt->second.size() > 1)
             matIt->second.normalTexture = texIt->second[1];
+        if (texIt->second.size() > 2)
+            matIt->second.glowTexture = texIt->second[2]; // BSShaderTextureSet Textures[2], used as the glow mask
     }
 
     // Apply alpha blending flag (bit 0 of AlphaFlags means "alpha blending
@@ -1063,6 +1232,18 @@ void NifDocument::buildHierarchyAndRoots()
 
         node.inlineGeometry = partGeoIt->second; // copy: multiple shapes could in principle share a skin instance
         node.geometryBlockIndex = kNoRef;        // SceneBuilder reads inlineGeometry uniformly once this is kNoRef
+        node.skinPartitionRef = partRefIt->second;
+
+        auto weightsIt = m_skinPartitionWeights.find(partRefIt->second);
+        node.hasSkinWeights = (weightsIt != m_skinPartitionWeights.end() &&
+            weightsIt->second.size() == node.inlineGeometry.positions.size());
+        if (!node.hasSkinWeights)
+        {
+            NIFLOG_WARN("NifDocument: shape '{}' (block {}) has no usable per-vertex skin weights - "
+                "falling back to this shape's own (likely incorrect) scene-graph transform. "
+                "See SceneBuilder.cpp's applySkinning.",
+                node.name, node.blockIndex);
+        }
     }
 }
 

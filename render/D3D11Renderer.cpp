@@ -15,11 +15,20 @@ namespace nsk
 
 namespace
 {
-    struct Vertex { float pos[3]; float normal[3]; float uv[2]; float color[4]; };
+    struct Vertex { float pos[3]; float normal[3]; float uv[2]; float color[4]; float tangent[3]; };
     struct LineVertex { float pos[3]; float color[4]; };
 
     struct CBPerFrameLit { float viewProj[16]; float lightDir[3]; float ambient; float eyePos[3]; float brightness; };
-    struct CBPerObjectLit { float world[16]; float tint[4]; float spec[4]; std::int32_t hasTexture; float pad0[3]; };
+    struct CBPerObjectLit
+    {
+        float world[16];
+        float tint[4];          // emissive rgb (already * emissiveMultiple) + alpha
+        float spec[4];           // specular color (rgb) + glossiness (a)
+        float specStrength;
+        std::int32_t hasTexture;
+        std::int32_t hasNormalMap;
+        std::int32_t hasGlowMap;
+    };
     struct CBPerFrameUnlit { float viewProj[16]; };
     struct CBPerObjectUnlit { float world[16]; };
 
@@ -135,8 +144,9 @@ bool D3D11Renderer::CreateShaders(std::string* error)
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, normal), D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, offsetof(Vertex, uv),     D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, tangent), D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
-    m_device->CreateInputLayout(litLayoutDesc, 4, litVsBlob->GetBufferPointer(), litVsBlob->GetBufferSize(), &m_litLayout);
+    m_device->CreateInputLayout(litLayoutDesc, 5, litVsBlob->GetBufferPointer(), litVsBlob->GetBufferSize(), &m_litLayout);
 
     D3D11_INPUT_ELEMENT_DESC unlitLayoutDesc[] =
     {
@@ -182,6 +192,9 @@ bool D3D11Renderer::CreateStateObjects()
     const D3D11_RASTERIZER_DESC rasterSolid {
         .FillMode = D3D11_FILL_SOLID,
         .CullMode = D3D11_CULL_BACK,
+        // With the D3D viewport/projection convention used by this renderer,
+        // NIF's outward-facing triangles rasterize clockwise.
+        .FrontCounterClockwise = FALSE,
         .DepthClipEnable = TRUE,
     };
     m_device->CreateRasterizerState(&rasterSolid, &m_rasterSolid);
@@ -280,6 +293,18 @@ const D3D11Renderer::GpuMesh* D3D11Renderer::GetOrCreateGpuMesh(const NifGeometr
         else
         {
             v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f;
+        }
+        if (i < geometry->tangents.size())
+        {
+            v.tangent[0] = geometry->tangents[i][0]; v.tangent[1] = geometry->tangents[i][1]; v.tangent[2] = geometry->tangents[i][2];
+        }
+        else
+        {
+            // Harmless placeholder: only sampled by the shader when
+            // gHasNormalMap is set, which only happens when the material
+            // actually resolved a normal texture - a mesh with no tangent
+            // data in the file also has no meaningful normal map to apply.
+            v.tangent[0] = 1.0f; v.tangent[1] = 0.0f; v.tangent[2] = 0.0f;
         }
     }
 
@@ -452,19 +477,47 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             cbObj.spec[0] = mesh.material.specularColor[0];
             cbObj.spec[1] = mesh.material.specularColor[1];
             cbObj.spec[2] = mesh.material.specularColor[2];
-            cbObj.spec[3] = 0.0f;
+            cbObj.spec[3] = mesh.material.glossiness;
+            cbObj.specStrength = mesh.material.specularStrength;
 
-            ID3D11ShaderResourceView* srv = m_whiteTexSRV.Get();
+            ID3D11ShaderResourceView* diffuseSrv = m_whiteTexSRV.Get();
             cbObj.hasTexture = 0;
             if (textures && !mesh.material.diffuseTexture.empty())
             {
                 if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(mesh.material.diffuseTexture))
                 {
-                    srv = loaded;
+                    diffuseSrv = loaded;
                     cbObj.hasTexture = 1;
                 }
             }
-            m_context->PSSetShaderResources(0, 1, &srv);
+
+            // Normal map alpha channel doubles as the specular mask
+            // (Bethesda convention - see Shaders.h's PSMain), so
+            // gHasNormalMap gates both effects together.
+            ID3D11ShaderResourceView* normalSrv = m_whiteTexSRV.Get();
+            cbObj.hasNormalMap = 0;
+            if (textures && !mesh.material.normalTexture.empty())
+            {
+                if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(mesh.material.normalTexture))
+                {
+                    normalSrv = loaded;
+                    cbObj.hasNormalMap = 1;
+                }
+            }
+
+            ID3D11ShaderResourceView* glowSrv = m_whiteTexSRV.Get();
+            cbObj.hasGlowMap = 0;
+            if (textures && !mesh.material.glowTexture.empty())
+            {
+                if (ID3D11ShaderResourceView* loaded = textures->GetOrLoad(mesh.material.glowTexture))
+                {
+                    glowSrv = loaded;
+                    cbObj.hasGlowMap = 1;
+                }
+            }
+
+            ID3D11ShaderResourceView* srvs[3] = { diffuseSrv, normalSrv, glowSrv };
+            m_context->PSSetShaderResources(0, 3, srvs);
 
             UploadDynamicCB(m_context.Get(), m_cbPerObject.Get(), &cbObj, sizeof(cbObj));
             ID3D11Buffer* objCb = m_cbPerObject.Get();

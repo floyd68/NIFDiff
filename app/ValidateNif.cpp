@@ -15,6 +15,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <format>
 #include <iostream>
 #include <string>
@@ -66,9 +67,29 @@ namespace
             const auto& m = meshes[i];
             const std::size_t nv = m.geometry ? m.geometry->positions.size() : 0;
             const std::size_t nt = m.geometry ? m.geometry->triangles.size() : 0;
-            std::cout << std::format("    [{}] {:<32} verts={:<6} tris={:<6} diffuse={}\n",
+            std::cout << std::format("    [{}] {:<32} verts={:<6} tris={:<6} diffuse={} skinned={}\n",
                 i, m.nodeName, nv, nt,
-                m.material.diffuseTexture.empty() ? "(none)" : m.material.diffuseTexture);
+                m.material.diffuseTexture.empty() ? "(none)" : m.material.diffuseTexture,
+                m.ownedGeometry ? "yes" : "no");
+
+            if (m.geometry && nv > 0)
+            {
+                Vector3 mn = m.worldTransform * m.geometry->positions[0];
+                Vector3 mx = mn;
+                for (std::size_t v = 0; v < nv; ++v)
+                {
+                    Vector3 p = m.worldTransform * m.geometry->positions[v];
+                    for (int k = 0; k < 3; ++k)
+                    {
+                        mn[k] = std::min(mn[k], p[k]);
+                        mx[k] = std::max(mx[k], p[k]);
+                    }
+                }
+                std::cout << std::format("        world bbox min=({:.2f},{:.2f},{:.2f}) max=({:.2f},{:.2f},{:.2f}) size=({:.2f},{:.2f},{:.2f})\n",
+                    mn[0], mn[1], mn[2],
+                    mx[0], mx[1], mx[2],
+                    mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]);
+            }
         }
         std::cout << '\n';
     }

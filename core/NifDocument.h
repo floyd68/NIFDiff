@@ -45,6 +45,7 @@
 
 #include "NifTypes.h"
 #include "NifItem.h"
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -63,9 +64,12 @@ struct NifMaterial
 {
     std::string diffuseTexture;   // Textures[0] from BSShaderTextureSet, backslashes normalized to '/'.
     std::string normalTexture;    // Textures[1]
+    std::string glowTexture;      // Textures[2] (glow/skin/detail map, used here as the glow mask)
     Color3 emissiveColor { 0.0f, 0.0f, 0.0f };
     float emissiveMultiple = 1.0f;
     Color3 specularColor { 1.0f, 1.0f, 1.0f };
+    float specularStrength = 1.0f;
+    float glossiness = 80.0f;     // BSLightingShaderProperty's default (nif.xml line 6610)
     float alpha = 1.0f;
     bool hasAlphaBlend = false;
 };
@@ -78,7 +82,43 @@ struct NifGeometry
     std::vector<Vector3> normals;   // may be empty
     std::vector<Vector2> uvs;       // may be empty
     std::vector<Color4> colors;     // may be empty
+    // Tangent only (no stored bitangent): the renderer reconstructs the
+    // bitangent as cross(normal, tangent) in the pixel shader instead of
+    // decoding the file's separately bit-packed Bitangent X/Y/Z fields (see
+    // NifDocument.cpp's readVertexDataBuffer) - a standard simplification
+    // that can get handedness wrong on meshes with mirrored UV islands, but
+    // is correct for the common case and avoids a second packed-byte decode
+    // path. May be empty if the source vertex format had no tangent data.
+    std::vector<Vector3> tangents;
     std::vector<Triangle> triangles;
+};
+
+// Up to 4 (bone, weight) influences for one vertex of a NiSkinPartition-
+// reconstructed mesh. boneIndex indexes into the owning NiSkinInstance's
+// bones() array (itself a list of NiNode block indices - see
+// NifDocument::skinInstanceBones()), NOT directly into m_nodes/m_blocks.
+struct NifVertexSkinWeights
+{
+    std::array<std::uint16_t, 4> boneIndex { 0, 0, 0, 0 };
+    std::array<float, 4> weight { 0.0f, 0.0f, 0.0f, 0.0f };
+};
+
+// NiSkinData: the bind-pose offsets needed to place a skinned mesh's stored
+// (reference-pose) vertex positions correctly in the scene, per NifSkope's
+// own bsshape.cpp BSShape::transformShapes() formula (see SceneBuilder.cpp's
+// applySkinning - that's the code path NifSkope actually uses for the
+// BSTriShape family, unlike glmesh.cpp which handles only legacy shapes):
+//   finalWorldPos = sum_i weight_i *
+//       (boneLocalTrans_i * boneOffsets[i]) * localVertexPos
+// boneOffsets[i] is BoneData[i]'s "Skin Transform" field, index-aligned with
+// the owning NiSkinInstance's Bones[]. skinTransform is NiSkinData's own
+// top-level, identically-named "Skin Transform" field - parsed and kept for
+// completeness, but NOT part of the BSShape formula (NifSkope reads it into
+// skeletonTrans and its BSShape path never uses it).
+struct NifSkinData
+{
+    Transform skinTransform;
+    std::vector<Transform> boneOffsets; // parallel to the owning NiSkinInstance's bones()
 };
 
 // One renderable node in the scene graph: either a plain NiNode (no geometry,
@@ -105,7 +145,24 @@ struct NifSceneNode
     // NiSkinPartition block. buildHierarchyAndRoots() resolves that chain
     // and fills inlineGeometry from it as a fallback when the shape's own
     // geometry came back empty - see NifDocument.cpp's parseNiSkinPartition.
+    //
+    // That fallback geometry alone is NOT correctly positioned/oriented,
+    // though: a skinned shape's stored vertex positions are in an arbitrary
+    // reference-pose space that only becomes correct once transformed by
+    // per-vertex bone weights (real matrix-palette skinning), not simply by
+    // composing this node's own transform up the parent chain like a rigid
+    // shape - see SceneBuilder.cpp's applySkinning for the actual math.
+    // hasSkinWeights is set once buildHierarchyAndRoots() has confirmed
+    // NiSkinPartition-derived per-vertex weights are available (i.e.
+    // whether SceneBuilder should run that path for this node at all).
     std::int32_t skinInstanceRef = kNoRef;
+    bool hasSkinWeights = false;
+    // NiSkinPartition block index the fallback geometry (and hasSkinWeights,
+    // when true) came from - set alongside them in buildHierarchyAndRoots().
+    // SceneBuilder looks up skinPartitionWeights()[skinPartitionRef] with
+    // this, since NifVertexSkinWeights is keyed by partition block index,
+    // not skinInstanceRef.
+    std::int32_t skinPartitionRef = kNoRef;
 };
 
 // Top-level parsed document: header info + curated block records. See the
@@ -136,6 +193,18 @@ public:
     const std::unordered_map<std::int32_t, NifGeometry>& geometries() const { return m_geometries; }
     const std::unordered_map<std::int32_t, NifMaterial>& materials() const { return m_materials; }
     const std::unordered_map<std::int32_t, std::vector<std::string>>& textureSets() const { return m_textureSets; }
+
+    // Skinning data, used by SceneBuilder::applySkinning() - see
+    // NifSceneNode::hasSkinWeights / NifSkinData's comment for the math.
+    // Block index -> block index into m_nodes' owner map (skinInstanceRef
+    // -> NiNode block index list, parallel to that NiSkinInstance's Bones[]).
+    const std::unordered_map<std::int32_t, std::vector<std::int32_t>>& skinInstanceBones() const { return m_skinInstanceBones; }
+    const std::unordered_map<std::int32_t, std::int32_t>& skinInstanceToDataRef() const { return m_skinInstanceToDataRef; }
+    const std::unordered_map<std::int32_t, NifSkinData>& skinData() const { return m_skinData; }
+    const std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>>& skinPartitionWeights() const { return m_skinPartitionWeights; }
+    // Resolves a raw block index (e.g. from skinInstanceBones()) to an index
+    // into nodes(), or kNoRef if that block wasn't parsed into a scene node.
+    int nodeIndexForBlock(std::int32_t blockIndex) const;
 
     // Root node indices into nodes() (top-level NIF objects not referenced as
     // anyone else's child).
@@ -173,21 +242,36 @@ private:
     void parseBSShaderTextureSet(class NifIStream& in, int blockIndex);
     void parseNiMaterialProperty(class NifIStream& in, int blockIndex);
     void parseNiAlphaProperty(class NifIStream& in, int blockIndex);
-    // NiSkinInstance/BSDismemberSkinInstance: only reads the shared
-    // NiSkinInstance prefix (Data ref, Skin Partition ref) both share -
-    // BSDismemberSkinInstance's own trailing body-part fields are safely
-    // skipped via the block-size table, same as everywhere else.
+    // NiSkinInstance/BSDismemberSkinInstance: reads the shared NiSkinInstance
+    // prefix (Data ref, Skin Partition ref, Skeleton Root ptr, Bones[] ptr
+    // array) both share - BSDismemberSkinInstance's own trailing body-part
+    // fields are safely skipped via the block-size table, same as everywhere
+    // else. Skeleton Root is read but not stored: SceneBuilder's skinning
+    // assumes it coincides with the overall scene root (see its comment) -
+    // true for a standalone character/armor skeleton, which covers this
+    // parser's scope.
     void parseNiSkinInstance(class NifIStream& in, int blockIndex);
+    // NiSkinData: per-bone bind-pose offsets needed to correctly place a
+    // skinned shape's vertices - see NifSkinData's own comment.
+    void parseNiSkinData(class NifIStream& in, int blockIndex);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
-    // this parser): holds the actual rest-pose vertex/triangle data for a
-    // skinned Skyrim SE shape whose own BSTriShape vertex buffer is empty.
+    // this parser): holds the actual rest-pose vertex/triangle/bone-weight
+    // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer
+    // is empty.
     void parseNiSkinPartition(class NifIStream& in, int blockIndex);
     // Shared BSVertexDataSSE/BSVertexData per-vertex decode, used by both
     // parseBSTriShape's inline buffer and parseNiSkinPartition's global
     // vertex buffer (identical wire format - nif.xml's BSVertexDesc-driven
     // arg on both "Vertex Data" fields is the same expression).
+    // outSkinWeights, if non-null and VF_SKINNED is set in attribBits, is
+    // resized to numVertices and filled with each vertex's own embedded
+    // bone weights/indices (global-buffer-index-aligned - no partition-local
+    // remap needed, unlike NiSkinPartition's separate per-partition Bone
+    // Indices/Vertex Weights fields - see parseNiSkinPartition's comment on
+    // why this is preferred over reconstructing from those instead).
     void readVertexDataBuffer(class NifIStream& in, NifGeometry& geo, std::uint16_t numVertices,
-        std::uint16_t attribBits, bool allowFo4HalfPrecision);
+        std::uint16_t attribBits, bool allowFo4HalfPrecision,
+        std::vector<NifVertexSkinWeights>* outSkinWeights = nullptr);
 
     // Shared NiObjectNET + NiAVObject leading-field reader (name/extra data
     // list/controller, then flags/translation/rotation/scale/collision).
@@ -229,6 +313,10 @@ private:
     std::unordered_map<std::int32_t, std::uint16_t> m_pendingAlphaFlags;                   // NiAlphaProperty block index -> AlphaFlags
     std::unordered_map<std::int32_t, std::int32_t> m_skinInstanceToPartitionRef;           // NiSkinInstance/BSDismemberSkinInstance block index -> NiSkinPartition block index
     std::unordered_map<std::int32_t, NifGeometry> m_skinPartitionGeometries;               // NiSkinPartition block index -> reconstructed geometry (global vertex buffer + all partitions' triangles, remapped)
+    std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>> m_skinPartitionWeights; // NiSkinPartition block index -> per-global-vertex bone weights, parallel to m_skinPartitionGeometries' positions
+    std::unordered_map<std::int32_t, std::int32_t> m_skinInstanceToDataRef;                // NiSkinInstance block index -> NiSkinData block index
+    std::unordered_map<std::int32_t, std::vector<std::int32_t>> m_skinInstanceBones;       // NiSkinInstance block index -> Bones[] (NiNode block indices, in NifVertexSkinWeights::boneIndex order)
+    std::unordered_map<std::int32_t, NifSkinData> m_skinData;                              // NiSkinData block index -> bind-pose offsets
 
     std::unique_ptr<NifItem> m_blockTree;
     std::string m_lastError;
