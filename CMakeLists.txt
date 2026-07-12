@@ -21,6 +21,11 @@
 #                   third_party/external/spdlog (header-only; FD2D's own
 #                   CMakeLists.txt adds its include/ path relative to its
 #                   own location, so it needs no wiring here)
+#   - gli           https://github.com/g-truc/gli.git, at
+#                   third_party/external/gli (header-only DDS decode for
+#                   render/TextureCache.cpp; not a floyd68 project, so it
+#                   lives under external/ alongside DirectXTex/spdlog rather
+#                   than directly under third_party/ like FD2D/Floar/ImageCore)
 #   - CommonUtil.h  small header-only util still included by FD2D as
 #                   ../CommonUtil.h (vendored copy next to the FD2D submodule)
 #   - AppLog.h      startup-timing/logging macros FD2D includes as
@@ -123,8 +128,8 @@ target_include_directories(NIFDiff PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/render
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
-    ${NIFDIFF_THIRD_PARTY_ROOT}/gli
-    ${NIFDIFF_THIRD_PARTY_ROOT}/gli/external
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/gli
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/gli/external
     # core/NifLog.h logs via spdlog directly (header-only; see its own
     # comment for why this isn't routed through third_party/AppLog.h).
     ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include

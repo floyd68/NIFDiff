@@ -120,7 +120,7 @@ ui/                NifViewport (single 3D view), NifComparePane (view + Open/Clo
 schema_reference/  nif.xml reference (vendored from niftools/nifxml, not parsed at runtime)
 test_assets/       5 Skyrim SE/Fallout 4 smoke-test .nif fixtures
 third_party/       git submodules: FD2D, Floar, ImageCore, external/DirectXTex,
-                   external/spdlog, gli (header-only DDS decode) +
+                   external/spdlog, external/gli (header-only DDS decode) +
                    vendored third_party/CommonUtil.h, third_party/AppLog.h
 CMakeLists.txt     sets up third-party wiring + NIFDiff/NifValidate/ResourceResolveTest targets
 GenerateVS2026.ps1/.bat   configures a VS2026 solution under build/
