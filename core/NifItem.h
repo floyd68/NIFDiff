@@ -14,6 +14,7 @@
 #include "NifValue.h"
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace nsk
@@ -44,7 +45,7 @@ public:
     int childCount() const { return static_cast<int>(m_children.size()); }
     NifItem* child(int row) const { return (row >= 0 && row < childCount()) ? m_children[static_cast<size_t>(row)].get() : nullptr; }
 
-    NifItem* findChild(const std::string& name) const
+    NifItem* findChild(std::string_view name) const
     {
         for (auto& c : m_children)
             if (c->name() == name)

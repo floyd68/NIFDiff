@@ -68,7 +68,11 @@ public:
         return ini;
     }
 
-    std::wstring GetString(const std::wstring& section, const std::wstring& key, const std::wstring& defaultVal = L"") const
+    // Read-path lookups take wstring_view: section/key are only lowered into
+    // a fresh key string, never stored or passed to a C API needing null
+    // termination (unlike SetString below, which keeps const wstring& for
+    // WritePrivateProfileStringW's c_str()).
+    std::wstring GetString(std::wstring_view section, std::wstring_view key, const std::wstring& defaultVal = L"") const
     {
         auto sIt = m_sections.find(ToLower(section));
         if (sIt == m_sections.end()) return defaultVal;
@@ -77,7 +81,7 @@ public:
         return kIt->second;
     }
 
-    int GetInt(const std::wstring& section, const std::wstring& key, int defaultVal = 0) const
+    int GetInt(std::wstring_view section, std::wstring_view key, int defaultVal = 0) const
     {
         std::wstring s = GetString(section, key);
         if (s.empty()) return defaultVal;
@@ -86,7 +90,7 @@ public:
         return (end == s.c_str()) ? defaultVal : static_cast<int>(v);
     }
 
-    float GetFloat(const std::wstring& section, const std::wstring& key, float defaultVal = 0.0f) const
+    float GetFloat(std::wstring_view section, std::wstring_view key, float defaultVal = 0.0f) const
     {
         std::wstring s = GetString(section, key);
         if (s.empty()) return defaultVal;
@@ -117,19 +121,20 @@ private:
     bool m_loaded = false;
     std::wstring m_path;
 
-    static std::wstring ToLower(std::wstring s)
+    static std::wstring ToLower(std::wstring_view s)
     {
-        for (wchar_t& c : s) c = static_cast<wchar_t>(std::towlower(c));
-        return s;
+        std::wstring out(s);
+        for (wchar_t& c : out) c = static_cast<wchar_t>(std::towlower(c));
+        return out;
     }
 
-    static std::wstring Trim(std::wstring s)
+    static std::wstring Trim(std::wstring_view s)
     {
         std::size_t start = 0;
         while (start < s.size() && std::iswspace(s[start])) ++start;
         std::size_t end = s.size();
         while (end > start && std::iswspace(s[end - 1])) --end;
-        return s.substr(start, end - start);
+        return std::wstring(s.substr(start, end - start));
     }
 
     void Parse(const std::wstring& content)
@@ -155,15 +160,15 @@ private:
             {
                 std::size_t close = line.find(L']', start + 1);
                 if (close != std::wstring_view::npos)
-                    currentSection = ToLower(Trim(std::wstring(line.substr(start + 1, close - start - 1))));
+                    currentSection = ToLower(Trim(line.substr(start + 1, close - start - 1)));
                 continue;
             }
 
             std::size_t eq = line.find(L'=', start);
             if (eq != std::wstring_view::npos)
             {
-                std::wstring key = ToLower(Trim(std::wstring(line.substr(start, eq - start))));
-                std::wstring val = Trim(std::wstring(line.substr(eq + 1)));
+                std::wstring key = ToLower(Trim(line.substr(start, eq - start)));
+                std::wstring val = Trim(line.substr(eq + 1));
                 std::size_t semi = val.find(L';');
                 if (semi != std::wstring::npos)
                     val = Trim(val.substr(0, semi));

@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <bit>
 #include <fstream>
+#include <string_view>
 
 namespace nsk
 {
@@ -71,13 +72,13 @@ namespace
 
     // Narrow (UTF-8) conversion for log messages only - NifDocument otherwise
     // keeps paths as std::wstring throughout (see NifDocument.h).
-    std::string toNarrowUtf8(const std::wstring& w)
+    std::string toNarrowUtf8(std::wstring_view w)
     {
         if (w.empty())
             return {};
-        int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+        int len = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
         std::string s(static_cast<std::size_t>(len), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), s.data(), len, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), len, nullptr, nullptr);
         return s;
     }
 
@@ -87,7 +88,7 @@ namespace
     // yet) shows up loudly in the log instead of silently contributing zero
     // triangles - this is exactly the "some NIFs render, some show nothing"
     // failure mode this logging was added to diagnose.
-    bool looksGeometryRelated(const std::string& typeName)
+    bool looksGeometryRelated(std::string_view typeName)
     {
         static const char* kNeedles[] = { "Shape", "Mesh", "Tri", "Geom", "Particle", "Lines" };
         for (const char* needle : kNeedles)

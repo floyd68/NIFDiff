@@ -33,15 +33,16 @@ namespace
             return nullptr;
 
         gli::texture2d tex2d(tex);
-        D3D11_TEXTURE2D_DESC desc {};
-        desc.Width = static_cast<UINT>(tex2d.extent(0).x);
-        desc.Height = static_cast<UINT>(tex2d.extent(0).y);
-        desc.MipLevels = static_cast<UINT>(tex2d.levels());
-        desc.ArraySize = 1;
-        desc.Format = dxgiFormat;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_IMMUTABLE;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        const D3D11_TEXTURE2D_DESC desc {
+            .Width = static_cast<UINT>(tex2d.extent(0).x),
+            .Height = static_cast<UINT>(tex2d.extent(0).y),
+            .MipLevels = static_cast<UINT>(tex2d.levels()),
+            .ArraySize = 1,
+            .Format = dxgiFormat,
+            .SampleDesc = { .Count = 1 },
+            .Usage = D3D11_USAGE_IMMUTABLE,
+            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+        };
 
         std::vector<D3D11_SUBRESOURCE_DATA> subresources(desc.MipLevels);
         for (UINT level = 0; level < desc.MipLevels; ++level)
@@ -85,13 +86,14 @@ ID3D11ShaderResourceView* TextureCache::GetOrCreateFallback()
         return nullptr;
 
     std::uint32_t grayPixel = 0xFF808080u;
-    D3D11_TEXTURE2D_DESC td {};
-    td.Width = 1; td.Height = 1; td.MipLevels = 1; td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    td.SampleDesc.Count = 1;
-    td.Usage = D3D11_USAGE_IMMUTABLE;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA sd { &grayPixel, sizeof(grayPixel), 0 };
+    const D3D11_TEXTURE2D_DESC td {
+        .Width = 1, .Height = 1, .MipLevels = 1, .ArraySize = 1,
+        .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+        .SampleDesc = { .Count = 1 },
+        .Usage = D3D11_USAGE_IMMUTABLE,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+    };
+    const D3D11_SUBRESOURCE_DATA sd { .pSysMem = &grayPixel, .SysMemPitch = sizeof(grayPixel) };
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
     if (FAILED(m_device->CreateTexture2D(&td, &sd, &tex)))
         return nullptr;

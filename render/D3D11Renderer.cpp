@@ -38,11 +38,12 @@ namespace
 
     ComPtr<ID3D11Buffer> CreateDynamicCB(ID3D11Device* device, UINT byteSize)
     {
-        D3D11_BUFFER_DESC desc {};
-        desc.ByteWidth = byteSize;
-        desc.Usage = D3D11_USAGE_DYNAMIC;
-        desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        const D3D11_BUFFER_DESC desc {
+            .ByteWidth = byteSize,
+            .Usage = D3D11_USAGE_DYNAMIC,
+            .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
+            .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
+        };
         ComPtr<ID3D11Buffer> buf;
         device->CreateBuffer(&desc, nullptr, &buf);
         return buf;
@@ -77,13 +78,14 @@ bool D3D11Renderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* contex
     // resource bound, even before any texture ever loads successfully).
     {
         std::uint32_t whitePixel = 0xFFFFFFFFu;
-        D3D11_TEXTURE2D_DESC td {};
-        td.Width = 1; td.Height = 1; td.MipLevels = 1; td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        td.SampleDesc.Count = 1;
-        td.Usage = D3D11_USAGE_IMMUTABLE;
-        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        D3D11_SUBRESOURCE_DATA sd { &whitePixel, sizeof(whitePixel), 0 };
+        const D3D11_TEXTURE2D_DESC td {
+            .Width = 1, .Height = 1, .MipLevels = 1, .ArraySize = 1,
+            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+            .SampleDesc = { .Count = 1 },
+            .Usage = D3D11_USAGE_IMMUTABLE,
+            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+        };
+        const D3D11_SUBRESOURCE_DATA sd { .pSysMem = &whitePixel, .SysMemPitch = sizeof(whitePixel) };
         ComPtr<ID3D11Texture2D> tex;
         if (SUCCEEDED(m_device->CreateTexture2D(&td, &sd, &tex)))
             m_device->CreateShaderResourceView(tex.Get(), nullptr, &m_whiteTexSRV);
@@ -148,32 +150,40 @@ bool D3D11Renderer::CreateShaders(std::string* error)
 
 bool D3D11Renderer::CreateStateObjects()
 {
-    D3D11_BLEND_DESC blendOpaqueDesc {};
-    blendOpaqueDesc.RenderTarget[0].BlendEnable = FALSE;
-    blendOpaqueDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    const D3D11_BLEND_DESC blendOpaqueDesc {
+        .RenderTarget = { {
+            .BlendEnable = FALSE,
+            .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
+        } },
+    };
     m_device->CreateBlendState(&blendOpaqueDesc, &m_blendOpaque);
 
-    D3D11_BLEND_DESC blendAlphaDesc {};
-    blendAlphaDesc.RenderTarget[0].BlendEnable = TRUE;
-    blendAlphaDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-    blendAlphaDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    blendAlphaDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    blendAlphaDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    blendAlphaDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-    blendAlphaDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    blendAlphaDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    const D3D11_BLEND_DESC blendAlphaDesc {
+        .RenderTarget = { {
+            .BlendEnable = TRUE,
+            .SrcBlend = D3D11_BLEND_SRC_ALPHA,
+            .DestBlend = D3D11_BLEND_INV_SRC_ALPHA,
+            .BlendOp = D3D11_BLEND_OP_ADD,
+            .SrcBlendAlpha = D3D11_BLEND_ONE,
+            .DestBlendAlpha = D3D11_BLEND_ZERO,
+            .BlendOpAlpha = D3D11_BLEND_OP_ADD,
+            .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
+        } },
+    };
     m_device->CreateBlendState(&blendAlphaDesc, &m_blendAlpha);
 
-    D3D11_DEPTH_STENCIL_DESC depthDesc {};
-    depthDesc.DepthEnable = TRUE;
-    depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-    depthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    const D3D11_DEPTH_STENCIL_DESC depthDesc {
+        .DepthEnable = TRUE,
+        .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
+        .DepthFunc = D3D11_COMPARISON_LESS_EQUAL,
+    };
     m_device->CreateDepthStencilState(&depthDesc, &m_depthDefault);
 
-    D3D11_RASTERIZER_DESC rasterSolid {};
-    rasterSolid.FillMode = D3D11_FILL_SOLID;
-    rasterSolid.CullMode = D3D11_CULL_BACK;
-    rasterSolid.DepthClipEnable = TRUE;
+    const D3D11_RASTERIZER_DESC rasterSolid {
+        .FillMode = D3D11_FILL_SOLID,
+        .CullMode = D3D11_CULL_BACK,
+        .DepthClipEnable = TRUE,
+    };
     m_device->CreateRasterizerState(&rasterSolid, &m_rasterSolid);
 
     D3D11_RASTERIZER_DESC rasterWire = rasterSolid;
@@ -181,13 +191,14 @@ bool D3D11Renderer::CreateStateObjects()
     rasterWire.CullMode = D3D11_CULL_NONE;
     m_device->CreateRasterizerState(&rasterWire, &m_rasterWireframe);
 
-    D3D11_SAMPLER_DESC sampDesc {};
-    sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-    sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
-    sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
-    sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-    sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-    sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    const D3D11_SAMPLER_DESC sampDesc {
+        .Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+        .AddressU = D3D11_TEXTURE_ADDRESS_WRAP,
+        .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
+        .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
+        .ComparisonFunc = D3D11_COMPARISON_NEVER,
+        .MaxLOD = D3D11_FLOAT32_MAX,
+    };
     m_device->CreateSamplerState(&sampDesc, &m_sampler);
 
     return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterWireframe && m_sampler;
@@ -203,13 +214,14 @@ bool D3D11Renderer::Resize(UINT width, UINT height)
     m_colorRTV.Reset(); m_colorSRV.Reset(); m_colorTex.Reset();
     m_depthDSV.Reset(); m_depthTex.Reset();
 
-    D3D11_TEXTURE2D_DESC colorDesc {};
-    colorDesc.Width = width; colorDesc.Height = height;
-    colorDesc.MipLevels = 1; colorDesc.ArraySize = 1;
-    colorDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // matches D2D's CreateBitmapFromDxgiSurface expectations (see NifViewport.cpp)
-    colorDesc.SampleDesc.Count = 1;
-    colorDesc.Usage = D3D11_USAGE_DEFAULT;
-    colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_TEXTURE2D_DESC colorDesc {
+        .Width = width, .Height = height,
+        .MipLevels = 1, .ArraySize = 1,
+        .Format = DXGI_FORMAT_B8G8R8A8_UNORM, // matches D2D's CreateBitmapFromDxgiSurface expectations (see NifViewport.cpp)
+        .SampleDesc = { .Count = 1 },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+    };
     if (FAILED(m_device->CreateTexture2D(&colorDesc, nullptr, &m_colorTex)))
         return false;
     m_device->CreateRenderTargetView(m_colorTex.Get(), nullptr, &m_colorRTV);
@@ -283,18 +295,20 @@ const D3D11Renderer::GpuMesh* D3D11Renderer::GetOrCreateGpuMesh(const NifGeometr
     GpuMesh mesh;
     mesh.indexCount = static_cast<UINT>(indices.size());
 
-    D3D11_BUFFER_DESC vbDesc {};
-    vbDesc.ByteWidth = static_cast<UINT>(sizeof(Vertex) * verts.size());
-    vbDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vbData { verts.data(), 0, 0 };
+    const D3D11_BUFFER_DESC vbDesc {
+        .ByteWidth = static_cast<UINT>(sizeof(Vertex) * verts.size()),
+        .Usage = D3D11_USAGE_IMMUTABLE,
+        .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+    };
+    const D3D11_SUBRESOURCE_DATA vbData { .pSysMem = verts.data() };
     m_device->CreateBuffer(&vbDesc, &vbData, &mesh.vertexBuffer);
 
-    D3D11_BUFFER_DESC ibDesc {};
-    ibDesc.ByteWidth = static_cast<UINT>(sizeof(std::uint16_t) * indices.size());
-    ibDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    ibDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA ibData { indices.data(), 0, 0 };
+    const D3D11_BUFFER_DESC ibDesc {
+        .ByteWidth = static_cast<UINT>(sizeof(std::uint16_t) * indices.size()),
+        .Usage = D3D11_USAGE_IMMUTABLE,
+        .BindFlags = D3D11_BIND_INDEX_BUFFER,
+    };
+    const D3D11_SUBRESOURCE_DATA ibData { .pSysMem = indices.data() };
     m_device->CreateBuffer(&ibDesc, &ibData, &mesh.indexBuffer);
 
     auto [insertedIt, _] = m_meshCache.emplace(geometry, std::move(mesh));
@@ -336,11 +350,12 @@ void D3D11Renderer::BuildGridAndAxesGeometry()
     pushAxis(0, 0, axisLen, 0.3f, 0.5f, 1.0f); // Z - blue
     m_axesVertexCount = static_cast<UINT>(verts.size()) - m_axesVertexStart;
 
-    D3D11_BUFFER_DESC desc {};
-    desc.ByteWidth = static_cast<UINT>(sizeof(LineVertex) * verts.size());
-    desc.Usage = D3D11_USAGE_IMMUTABLE;
-    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA data { verts.data(), 0, 0 };
+    const D3D11_BUFFER_DESC desc {
+        .ByteWidth = static_cast<UINT>(sizeof(LineVertex) * verts.size()),
+        .Usage = D3D11_USAGE_IMMUTABLE,
+        .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+    };
+    const D3D11_SUBRESOURCE_DATA data { .pSysMem = verts.data() };
     m_device->CreateBuffer(&desc, &data, &m_gridAxesVB);
 }
 
@@ -356,7 +371,11 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
     m_context->ClearRenderTargetView(m_colorRTV.Get(), clear);
     m_context->ClearDepthStencilView(m_depthDSV.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-    D3D11_VIEWPORT vp { 0.0f, 0.0f, static_cast<float>(m_width), static_cast<float>(m_height), 0.0f, 1.0f };
+    const D3D11_VIEWPORT vp {
+        .TopLeftX = 0.0f, .TopLeftY = 0.0f,
+        .Width = static_cast<float>(m_width), .Height = static_cast<float>(m_height),
+        .MinDepth = 0.0f, .MaxDepth = 1.0f,
+    };
     m_context->RSSetViewports(1, &vp);
 
     Matrix4 viewProj = settings.proj * settings.view;

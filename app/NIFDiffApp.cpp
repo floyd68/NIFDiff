@@ -10,6 +10,7 @@
 #include <Core.h>
 
 #include <filesystem>
+#include <string_view>
 #include <shellapi.h>
 #include <objbase.h>
 
@@ -29,20 +30,20 @@ namespace
         return (std::filesystem::path(exePath).parent_path() / kIniFileName).wstring();
     }
 
-    std::vector<std::wstring> SplitPipeList(const std::wstring& s)
+    std::vector<std::wstring> SplitPipeList(std::wstring_view s)
     {
         std::vector<std::wstring> out;
         std::size_t start = 0;
         while (start < s.size())
         {
             std::size_t bar = s.find(L'|', start);
-            if (bar == std::wstring::npos)
+            if (bar == std::wstring_view::npos)
                 bar = s.size();
-            std::wstring part = s.substr(start, bar - start);
-            while (!part.empty() && iswspace(part.front())) part.erase(part.begin());
-            while (!part.empty() && iswspace(part.back())) part.pop_back();
+            std::wstring_view part = s.substr(start, bar - start);
+            while (!part.empty() && iswspace(part.front())) part.remove_prefix(1);
+            while (!part.empty() && iswspace(part.back())) part.remove_suffix(1);
             if (!part.empty())
-                out.push_back(std::move(part));
+                out.emplace_back(part);
             start = bar + 1;
         }
         return out;
