@@ -1,4 +1,5 @@
 #include "NifCompareView.h"
+#include "IpcOpenRequest.h"
 
 #include <Backplate.h>
 #include <algorithm>
@@ -142,6 +143,64 @@ NifComparePane* NifCompareView::AddPane()
     return pane.get();
 }
 
+void NifCompareView::SetPaneCount(std::size_t count)
+{
+    count = (std::max)(kMinPanes, (std::min)(count, kMaxPanes));
+    if (count == m_panes.size())
+        return;
+
+    while (m_panes.size() < count)
+        m_panes.push_back(CreatePane());
+    while (m_panes.size() > count)
+        m_panes.pop_back();
+
+    RebuildHostTree();
+}
+
+bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+
+    NifComparePane* target = nullptr;
+    for (auto& pane : m_panes)
+    {
+        if (pane && pane->Document() == nullptr)
+        {
+            target = pane.get();
+            break;
+        }
+    }
+    if (!target)
+        target = AddPane(); // nullptr when already at kMaxPanes
+
+    if (!target)
+        return false;
+
+    std::string error;
+    if (!target->Load(path, &error))
+        return false;
+
+    Invalidate();
+    return true;
+}
+
+bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
+{
+    if (event.id == CMD_NIFDIFF_IPC_OPEN)
+    {
+        auto* req = reinterpret_cast<IpcOpenRequest*>(event.lParam);
+        if (req != nullptr)
+        {
+            req->opened = OpenIntoBestPane(req->path);
+            if (req->doneEvent != nullptr)
+                SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
+        }
+        return true;
+    }
+    return FD2D::SplitPanel::OnCommandEvent(event);
+}
+
 void NifCompareView::RebuildHostTree()
 {
     std::vector<std::shared_ptr<FD2D::Wnd>> wnds;
@@ -149,7 +208,22 @@ void NifCompareView::RebuildHostTree()
     for (auto& p : m_panes)
         wnds.push_back(p);
 
-    SetFirstChild(NifCompareSplitCoordinator::BuildEqualWidthHostTree(wnds));
+    std::shared_ptr<FD2D::Wnd> host = NifCompareSplitCoordinator::BuildEqualWidthHostTree(wnds);
+
+    // SplitPanel::SetFirstChild only ADDS the new child - it does not remove
+    // the previous one from the Children() collection, and every child in
+    // that collection keeps rendering (Wnd::OnRender walks all children).
+    // Without this removal the superseded host tree lingers with its stale
+    // layout rects, drawing ghost panes (visible as orphaned Open/Close
+    // strips after shrinking the pane count). FICture2 sidesteps the same
+    // FD2D behavior with ClearChildren(), which we can't use here - it would
+    // also drop the control strip and the splitter.
+    if (host && !m_hostName.empty() && host->Name() != m_hostName)
+        RemoveChild(m_hostName);
+    if (host)
+        m_hostName = host->Name();
+
+    SetFirstChild(host);
 
     // A new/removed child changes this panel's Measure/Arrange results, not
     // just its pixel content - Invalidate() alone only schedules a repaint

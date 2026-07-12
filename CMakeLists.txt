@@ -84,7 +84,11 @@ add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/Floar" "${CMAKE_BINARY_DIR}/_deps/
 # NIFDiff executable
 # ---------------------------------------------------------------------------
 add_executable(NIFDiff WIN32
+    app/AppIpc.h
+    app/AppIpc.cpp
     app/AppSettings.h
+    app/AppSetup.h
+    app/AppSetup.cpp
     app/FileDialog.h
     app/FileDialog.cpp
     app/NIFDiffApp.h
@@ -107,6 +111,7 @@ add_executable(NIFDiff WIN32
     render/D3D11Renderer.cpp
     render/TextureCache.h
     render/TextureCache.cpp
+    ui/IpcOpenRequest.h
     ui/NifViewport.h
     ui/NifViewport.cpp
     ui/NifComparePane.h

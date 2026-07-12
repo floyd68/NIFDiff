@@ -94,13 +94,23 @@ void NifViewport::RebuildScene()
     }
     if (any)
     {
+        // Frame the model's world-space bbox: orbit target at its center,
+        // distance proportional to its bounding radius, and the default
+        // slightly-elevated orbit so a fresh load (or Center/Reset View)
+        // always lands on the comfortable looking-down-at-the-model view
+        // rather than whatever angles the camera was left at.
         Vector3 center = (minB + maxB) * 0.5f;
         float radius = (maxB - minB).length() * 0.5f;
         m_camera.frame(center, (std::max)(radius, 1.0f));
+        m_camera.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
     }
     else
     {
+        // Empty pane: same elevated resting view aimed at the grid origin -
+        // a level (or upward-looking) camera at ground height renders the
+        // grid edge-on/from below, which reads as a broken viewport.
         m_camera.frame(Vector3(), 50.0f);
+        m_camera.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
     }
 }
 

@@ -47,6 +47,27 @@ public:
     // Returns the new pane, or nullptr if already at kMaxPanes.
     NifComparePane* AddPane();
 
+    // Grows or shrinks to exactly `count` panes (clamped to
+    // [kMinPanes, kMaxPanes]); shrinking drops panes from the end. Intended
+    // for startup/session-restore sizing BEFORE any load - unlike the Close
+    // button path this removes synchronously, so it must not be called from
+    // inside a pane's own event handler (see QueueClosePane's comment).
+    void SetPaneCount(std::size_t count);
+
+    // Loads `path` into the first empty pane, or into a newly added pane if
+    // every existing one is occupied (and the pane count allows growing).
+    // Returns false when all kMaxPanes panes are occupied - the caller (the
+    // IPC path, see OnCommandEvent) treats that as "start a new instance
+    // instead". Used by the single-instance IPC handler; safe for any other
+    // caller on the UI thread too.
+    bool OpenIntoBestPane(const std::wstring& path);
+
+    // Handles CMD_NIFDIFF_IPC_OPEN broadcast from the IPC server thread
+    // (see app/IpcOpenRequest.h), mirroring FICture2's
+    // ImageBrowser::HandleIpcCompareMessage: load via OpenIntoBestPane,
+    // record the outcome on the request, signal its event.
+    bool OnCommandEvent(const FD2D::CommandEvent& event) override;
+
     void SetResourceResolver(ResourceResolver* resolver);
     void InvalidateTextureCaches();
 
@@ -83,6 +104,7 @@ private:
     static void CALLBACK TimerThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
 
     std::vector<std::shared_ptr<NifComparePane>> m_panes;
+    std::wstring m_hostName; // current first-child host tree, removed on rebuild (see RebuildHostTree)
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
     ResourceResolver* m_resolver = nullptr;

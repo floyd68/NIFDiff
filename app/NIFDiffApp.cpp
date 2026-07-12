@@ -1,8 +1,12 @@
 #include "NIFDiffApp.h"
 
+#include "AppIpc.h"
 #include "AppSettings.h"
+#include "AppSetup.h"
 #include "FileDialog.h"
+#include "../ui/IpcOpenRequest.h"
 #include "../ui/NifCompareView.h"
+#include "../core/NifLog.h"
 #include "../core/ResourceResolver.h"
 
 #include <Application.h>
@@ -22,6 +26,7 @@ namespace
     constexpr wchar_t kSectionWindow[] = L"Window";
     constexpr wchar_t kSectionSession[] = L"Session";
     constexpr wchar_t kSectionResources[] = L"Resources";
+    constexpr wchar_t kSingleInstanceMutex[] = L"Local\\NIFDiff_SingleInstance";
 
     std::wstring GetIniFilePath()
     {
@@ -113,6 +118,10 @@ namespace
         }
     }
 
+    // Parameterless launch: restore the last-opened session, with the pane
+    // count sized to exactly the files that still exist. First run (no
+    // session keys yet) or every remembered file having since vanished both
+    // degrade to a single empty pane rather than the two-pane default.
     void LoadAndOpenInitialSession(NifCompareView& view, const AppSettings& settings)
     {
         std::vector<std::wstring> paths;
@@ -123,7 +132,16 @@ namespace
             if (!path.empty() && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
                 paths.push_back(std::move(path));
         }
-        LoadFilesIntoPanes(view, paths);
+
+        if (paths.empty())
+        {
+            view.SetPaneCount(1);
+            return;
+        }
+
+        view.SetPaneCount(paths.size());
+        for (std::size_t i = 0; i < paths.size() && i < view.PaneCount(); ++i)
+            view.Pane(i).Load(paths[i]);
     }
 
     bool ReadWindowPlacement(const AppSettings& settings, RECT& outRect, int& outShowCmd)
@@ -203,6 +221,36 @@ namespace
 
 int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 {
+    const std::vector<std::wstring> cmdFiles = GetInitialFilesFromCommandLine();
+
+    // Single-instance detection (named mutex), same shape as FICture2's:
+    // when another instance is already running and this launch carries
+    // exactly one .nif path (the Explorer file-association case), forward it
+    // over IPC so the running compare window gains a pane instead of a
+    // second window appearing. Multi-file launches (someone explicitly
+    // requesting a particular side-by-side set) and empty launches keep
+    // starting their own instance.
+    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, kSingleInstanceMutex);
+    const bool hadExistingInstance = (instanceMutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS);
+
+    if (hadExistingInstance && cmdFiles.size() == 1)
+    {
+        // Let the (background) running instance take foreground when it
+        // accepts the file - this fresh process currently holds that right.
+        AllowSetForegroundWindow(ASFW_ANY);
+
+        AppIpc::Decision decision = AppIpc::Decision::Ignore;
+        const bool sent = AppIpc::TrySendPath(cmdFiles.front(), decision);
+        if (sent && decision == AppIpc::Decision::OpenedInPane)
+        {
+            NIFLOG_INFO("[IPC] Client: file opened in existing instance - exiting.");
+            CloseHandle(instanceMutex);
+            return 0;
+        }
+        // Server unavailable, or all 4 panes occupied (Ignore): continue as
+        // a new instance.
+    }
+
     const bool oleOwned = SUCCEEDED(OleInitialize(nullptr));
 
     auto& app = FD2D::Application::Instance();
@@ -211,11 +259,17 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     initContext.instance = hInstance;
     if (FAILED(app.Initialize(initContext)))
     {
+        if (instanceMutex) CloseHandle(instanceMutex);
         if (oleOwned) OleUninitialize();
         return -1;
     }
 
     const std::wstring iniPath = GetIniFilePath();
+
+    // First-run: offer to register the per-user .nif association (asked
+    // once, recorded in the INI - see AppSetup.h).
+    AppSetup::RunFirstRunAssociationPromptIfNeeded(iniPath);
+
     const AppSettings settings = AppSettings::Load(iniPath);
 
     auto resolver = std::make_shared<ResourceResolver>();
@@ -259,6 +313,80 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         std::weak_ptr<NifCompareView> weakView = compareView;
         std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
         std::weak_ptr<ResourceResolver> weakResolver = resolver;
+
+        // ---------------------------------------------------------------
+        // Start the IPC server as soon as the HWND exists (FICture2 starts
+        // it pre-AddWnd for the same reason: the client's connect budget is
+        // 500ms, so the pipe must be listening before any further startup
+        // work). The callback runs on the IPC thread; it marshals the
+        // request onto the UI thread via WM_FD2D_BROADCAST (handled by
+        // NifCompareView::OnCommandEvent) and waits up to 800ms.
+        // ---------------------------------------------------------------
+        if (!hadExistingInstance)
+        {
+            AppIpc::StartServer([weakBackplate](const std::wstring& path) -> AppIpc::Decision
+            {
+                auto bp = weakBackplate.lock();
+                if (!bp || bp->Window() == nullptr)
+                {
+                    NIFLOG_WARN("[IPC] Server: backplate expired or window gone - ignoring.");
+                    return AppIpc::Decision::Ignore;
+                }
+
+                HANDLE doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                if (doneEvent == nullptr)
+                    return AppIpc::Decision::Ignore;
+
+                auto* req = new IpcOpenRequest();
+                req->path = path;
+                req->doneEvent = doneEvent;
+                req->opened = false;
+
+                auto* bm = new FD2D::Backplate::BroadcastMessage();
+                bm->message = CMD_NIFDIFF_IPC_OPEN;
+                bm->wParam = 0;
+                bm->lParam = reinterpret_cast<LPARAM>(req);
+
+                if (!PostMessageW(bp->Window(), FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(bm)))
+                {
+                    NIFLOG_ERROR("[IPC] Server: PostMessageW failed (err={}) - ignoring.", GetLastError());
+                    CloseHandle(doneEvent);
+                    delete req;
+                    delete bm;
+                    return AppIpc::Decision::Ignore;
+                }
+
+                const DWORD wait = WaitForSingleObject(doneEvent, 800);
+                if (wait != WAIT_OBJECT_0)
+                {
+                    // Deliberate deviation from FICture2's original, which
+                    // deletes req and closes the event here: the posted
+                    // message still references them, so a UI thread that
+                    // processes it *after* this timeout would touch freed
+                    // memory / a recycled handle. Abandon them instead - a
+                    // one-allocation leak on an exceptional path.
+                    NIFLOG_WARN("[IPC] Server: UI thread did not respond within 800ms - "
+                        "returning Ignore (request intentionally abandoned, not freed).");
+                    return AppIpc::Decision::Ignore;
+                }
+
+                AppIpc::Decision decision = AppIpc::Decision::Ignore;
+                if (req->opened)
+                {
+                    decision = AppIpc::Decision::OpenedInPane;
+                    // Bring the compare window forward; the sending process
+                    // granted us foreground rights via
+                    // AllowSetForegroundWindow before connecting.
+                    if (IsIconic(bp->Window()))
+                        ShowWindowAsync(bp->Window(), SW_RESTORE);
+                    SetForegroundWindow(bp->Window());
+                }
+
+                CloseHandle(doneEvent);
+                delete req;
+                return decision;
+            });
+        }
 
         compareView->SetOnPaneOpenRequested([weakBackplate](NifComparePane& pane)
         {
@@ -362,7 +490,6 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             SaveWindowPlacement(iniPath, hwnd);
         });
 
-        const std::vector<std::wstring> cmdFiles = GetInitialFilesFromCommandLine();
         if (!cmdFiles.empty())
         {
             LoadFilesIntoPanes(*compareView, cmdFiles);
@@ -382,6 +509,11 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 
     if (oleOwned)
         OleUninitialize();
+
+    // Held (not just created) for the entire lifetime so a second instance's
+    // ERROR_ALREADY_EXISTS check stays accurate; release last.
+    if (instanceMutex)
+        CloseHandle(instanceMutex);
 
     return result;
 }

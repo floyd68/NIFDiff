@@ -16,10 +16,26 @@ namespace nsk
 class Camera
 {
 public:
+    // Default orbit for a fresh/reset view: eye raised above the target,
+    // looking gently down (~20 degrees) - the typical 3D-editor resting
+    // view. Pitch sign: eyePosition() = target - forward*distance with
+    // forward.y = sin(pitch), so a NEGATIVE pitch puts the eye ABOVE the
+    // target (a positive one would leave the camera underground, staring at
+    // the grid's underside).
+    static constexpr float kDefaultYaw = 0.0f;
+    static constexpr float kDefaultPitch = -0.35f;
+
     void orbit(float deltaYawRad, float deltaPitchRad)
     {
         m_yaw += deltaYawRad;
         m_pitch = std::clamp(m_pitch + deltaPitchRad, -1.55f, 1.55f); // avoid gimbal flip at the poles
+    }
+
+    // Absolute orbit angles (same clamping as orbit()).
+    void setOrbit(float yawRad, float pitchRad)
+    {
+        m_yaw = yawRad;
+        m_pitch = std::clamp(pitchRad, -1.55f, 1.55f);
     }
 
     void pan(float dxWorld, float dyWorld)
@@ -127,8 +143,8 @@ private:
 
     Vector3 m_target;
     float m_distance = 200.0f;
-    float m_yaw = 0.0f;
-    float m_pitch = 0.2f;
+    float m_yaw = kDefaultYaw;
+    float m_pitch = kDefaultPitch;
 };
 
 } // namespace nsk
