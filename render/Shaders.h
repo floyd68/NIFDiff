@@ -61,7 +61,7 @@ namespace nsk
 //   128   environment cube map bound    524288  effect: greyscale-to-palette color (palette in t8)
 //   256   env mask texture bound        1048576 effect: greyscale-to-palette alpha
 //   512   height/parallax map           2097152 effect: weapon blood
-//   1024  skin/hair tint color
+//   1024  skin/hair tint color         4194304 alpha test (NiAlphaProperty bit 9) - clip vs gAlphaTest
 //   2048  specular enabled (SLSF1 bit 0)
 inline const char* kLitShaderHLSL = R"(
 cbuffer PerFrame : register(b0)
@@ -87,7 +87,8 @@ cbuffer PerObject : register(b1)
     float4   gInnerParams;   // multilayer: Inner Texture Scale (xy), Inner Thickness (z), Outer Refraction (w)
     float4   gFalloffParams; // effect: Falloff Start Angle, Stop Angle, Start Opacity, Stop Opacity
     uint     gFlags;         // feature bitmask - see table above
-    float3   gPad;
+    float    gAlphaTest;     // alpha-test threshold (NiAlphaProperty Threshold / 255), used when flag 4194304 is set
+    float2   gPad;
 };
 
 Texture2D    gDiffuseTex   : register(t0);
@@ -222,6 +223,8 @@ float4 PSMain(PSInput input) : SV_TARGET
             a = gAuxTex.Sample(gSampler, lu).a;
         }
 
+        if (gFlags & 4194304)                                        // NiAlphaProperty alpha test
+            clip(a - gAlphaTest);
         return float4(rgb * gParams.x, a);                           // lines 98-99 (gParams.x = Base Color Scale)
     }
 
@@ -374,6 +377,8 @@ float4 PSMain(PSInput input) : SV_TARGET
     color = Tonemap(color) / Tonemap(float3(1, 1, 1));
 
     float alpha = input.color.a * baseMap.a * gGlowColor.a;
+    if (gFlags & 4194304)                       // NiAlphaProperty alpha test (GL_ALPHA_TEST equivalent)
+        clip(alpha - gAlphaTest);
     return float4(color, alpha);
 }
 )";

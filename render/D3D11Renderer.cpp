@@ -31,7 +31,8 @@ namespace
         float innerParams[4];    // multilayer: inner scale xy, inner thickness, outer refraction
         float falloffParams[4];  // effect: start angle, stop angle, start opacity, stop opacity
         std::uint32_t flags;     // feature bitmask - see Shaders.h's table / kLit* below
-        float pad[3];
+        float alphaTest;         // alpha-test threshold, used when kLitAlphaTest is set
+        float pad[2];
     };
     struct CBPerFrameUnlit { float viewProj[16]; };
     struct CBPerObjectUnlit { float world[16]; };
@@ -62,6 +63,7 @@ namespace
     constexpr std::uint32_t kLitEffectGreyscaleColor = 524288;
     constexpr std::uint32_t kLitEffectGreyscaleAlpha = 1048576;
     constexpr std::uint32_t kLitEffectWeaponBlood = 2097152;
+    constexpr std::uint32_t kLitAlphaTest         = 4194304; // NiAlphaProperty alpha test -> clip()
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
@@ -237,6 +239,24 @@ bool D3D11Renderer::CreateStateObjects()
     rasterNoCull.CullMode = D3D11_CULL_NONE; // SLSF2_Double_Sided materials
     m_device->CreateRasterizerState(&rasterNoCull, &m_rasterSolidNoCull);
 
+    // SLSF1_Decal / SLSF1_Dynamic_Decal materials: pull the depth toward the
+    // camera so a decal lying on (or a hair above) its base surface always
+    // wins the depth test instead of z-fighting it - the D3D equivalent of
+    // NifSkope's glPolygonOffset(-1.0, -1.0) (renderer.cpp). The constant
+    // term is a few 24-bit-depth ulps rather than GL's single "smallest
+    // resolvable difference" unit because the fixed 1..100000 near/far range
+    // (NifViewport.cpp) leaves fewer effective depth bits than NifSkope's
+    // bounds-fitted planes; visually the offset is still sub-unit at typical
+    // framing distances.
+    D3D11_RASTERIZER_DESC rasterDecal = rasterSolid;
+    rasterDecal.DepthBias = -4;
+    rasterDecal.SlopeScaledDepthBias = -1.0f;
+    m_device->CreateRasterizerState(&rasterDecal, &m_rasterDecal);
+
+    D3D11_RASTERIZER_DESC rasterDecalNoCull = rasterDecal;
+    rasterDecalNoCull.CullMode = D3D11_CULL_NONE;
+    m_device->CreateRasterizerState(&rasterDecalNoCull, &m_rasterDecalNoCull);
+
     D3D11_RASTERIZER_DESC rasterWire = rasterSolid;
     rasterWire.FillMode = D3D11_FILL_WIREFRAME;
     rasterWire.CullMode = D3D11_CULL_NONE;
@@ -252,7 +272,8 @@ bool D3D11Renderer::CreateStateObjects()
     };
     m_device->CreateSamplerState(&sampDesc, &m_sampler);
 
-    return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterSolidNoCull && m_rasterWireframe && m_sampler;
+    return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterSolidNoCull
+        && m_rasterDecal && m_rasterDecalNoCull && m_rasterWireframe && m_sampler;
 }
 
 bool D3D11Renderer::Resize(UINT width, UINT height)
@@ -622,6 +643,11 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                 if (mat.greyscaleAlpha && hasAux)     flags |= kLitEffectGreyscaleAlpha;
                 if (mat.hasWeaponBlood)               flags |= kLitEffectWeaponBlood;
             }
+            if (mat.hasAlphaTest)
+            {
+                flags |= kLitAlphaTest;
+                cbObj.alphaTest = mat.alphaTestThreshold;
+            }
             cbObj.flags = flags;
 
             ID3D11ShaderResourceView* srvs[9] = {
@@ -641,7 +667,12 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
 
             m_context->OMSetBlendState(mat.hasAlphaBlend ? m_blendAlpha.Get() : m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
             if (!settings.wireframe)
-                m_context->RSSetState(mat.isDoubleSided ? m_rasterSolidNoCull.Get() : m_rasterSolid.Get());
+            {
+                if (mat.isDecal)
+                    m_context->RSSetState(mat.isDoubleSided ? m_rasterDecalNoCull.Get() : m_rasterDecal.Get());
+                else
+                    m_context->RSSetState(mat.isDoubleSided ? m_rasterSolidNoCull.Get() : m_rasterSolid.Get());
+            }
 
             UINT stride = sizeof(Vertex), offset = 0;
             ID3D11Buffer* vb = gpu->vertexBuffer.Get();

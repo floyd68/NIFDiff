@@ -109,6 +109,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthDefault;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterSolid;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterSolidNoCull; // SLSF2_Double_Sided materials
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterDecal;       // SLSF1_(Dynamic_)Decal: negative depth bias (glPolygonOffset(-1,-1) equivalent)
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterDecalNoCull;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterWireframe;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_sampler;
 

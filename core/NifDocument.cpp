@@ -1177,6 +1177,7 @@ void NifDocument::parseBSEffectShaderProperty(NifIStream& in, int blockIndex)
     mat.greyscaleColor = sf1(4) != 0;                             // SLSF1_Greyscale_To_PaletteColor
     mat.greyscaleAlpha = sf1(5) != 0;                              // SLSF1_Greyscale_To_PaletteAlpha
     mat.isDoubleSided = sf2(4) != 0;                                // SLSF2_Double_Sided
+    mat.isDecal = sf1(26) || sf1(27);                                // SLSF1_Decal / SLSF1_Dynamic_Decal (same bits in FO4's word)
     if (m_bsVersion < kBsVerFO4)
         mat.hasWeaponBlood = sf2(17) != 0;                          // SLSF2_Weapon_Blood
     mat.hasSpecular = false;                                       // effect shader is unlit - no specular term
@@ -1221,13 +1222,13 @@ void NifDocument::parseNiAlphaProperty(NifIStream& in, int blockIndex)
     readObjectNetName(in, false);
 
     std::uint16_t flags = in.u16();                             // Flags (AlphaFlags), nif.xml line 3978
-    in.u8();                                                     // Threshold, line 3979
+    std::uint8_t threshold = in.u8();                            // Threshold, line 3979
 
     // Recorded onto whichever material already references this alpha
     // property block, if any, once buildHierarchyAndRoots() links shapes to
     // their shader/alpha property indices; for now stash the flag directly
     // keyed by this block's index for that lookup.
-    m_pendingAlphaFlags[blockIndex] = flags;
+    m_pendingAlphaFlags[blockIndex] = { flags, threshold };
 }
 
 // --- Hierarchy + material/alpha resolution ----------------------------------
@@ -1298,6 +1299,7 @@ void NifDocument::buildHierarchyAndRoots()
         mat.hasEmittance  = sf1(22) != 0;                      // SLSF1_Own_Emit
         mat.hasGlowMap    = st == 2 && sf2(6) && !mat.glowTexture.empty();   // ST_GlowShader + SLSF2_Glow_Map
         mat.isDoubleSided = sf2(4) != 0;                        // SLSF2_Double_Sided
+        mat.isDecal = sf1(26) || sf1(27);                       // SLSF1_Decal / SLSF1_Dynamic_Decal (same bits in FO4's word)
         mat.hasModelSpaceNormals = sf1(12) != 0;                 // SLSF1_Model_Space_Normals (sk_msn path)
 
         if (skyrimStream)
@@ -1325,9 +1327,14 @@ void NifDocument::buildHierarchyAndRoots()
         mat.useEnvironmentMask = mat.hasEnvironmentMap && !mat.envMaskTexture.empty();
     }
 
-    // Apply alpha blending flag (bit 0 of AlphaFlags means "alpha blending
-    // enabled", nif.xml AlphaFlags bitfield) onto materials referenced by a
+    // Apply the NiAlphaProperty's blend/test state (nif.xml AlphaFlags
+    // bitfield: bit 0 = alpha blending enabled, bit 9 = alpha testing
+    // enabled, bits 10-12 = test function) onto materials referenced by a
     // shape whose Alpha Property points at a parsed NiAlphaProperty block.
+    // The test function is almost always GREATER (4) in real content; the
+    // shader implements the test as clip(alpha - threshold), i.e. the
+    // GREATER/GEQUAL family, and other functions are not distinguished -
+    // same simplification NifSkope's shader path effectively renders with.
     for (const auto& node : m_nodes)
     {
         if (!node.isShape || node.alphaPropertyIndex < 0)
@@ -1337,7 +1344,12 @@ void NifDocument::buildHierarchyAndRoots()
             continue;
         auto matIt = m_materials.find(node.shaderPropertyIndex);
         if (matIt != m_materials.end())
-            matIt->second.hasAlphaBlend = (flagIt->second & 0x1) != 0;
+        {
+            const auto [alphaFlags, threshold] = flagIt->second;
+            matIt->second.hasAlphaBlend = (alphaFlags & 0x1) != 0;
+            matIt->second.hasAlphaTest = (alphaFlags & 0x200) != 0;
+            matIt->second.alphaTestThreshold = static_cast<float>(threshold) / 255.0f;
+        }
     }
 
     // Fall back to a skin partition's reconstructed geometry for skinned

@@ -135,7 +135,13 @@ struct NifMaterial
     bool useEnvironmentMask = false;// hasEnvironmentMap + slot 5 non-empty (else normal map alpha masks)
     bool hasTintColor = false;      // shader type 5 (skin) or 6 (hair)
     bool isDoubleSided = false;     // SLSF2_Double_Sided (bit 4)
+    bool isDecal = false;           // SLSF1_Decal (bit 26) or SLSF1_Dynamic_Decal (bit 27); same bit
+                                    // positions in the Skyrim and FO4 SF1 words. The renderer draws
+                                    // these with a depth bias (NifSkope: glPolygonOffset(-1,-1)) so
+                                    // coplanar overlay meshes don't z-fight their base surface.
     bool hasAlphaBlend = false;     // from the shape's NiAlphaProperty (not this block)
+    bool hasAlphaTest = false;      // NiAlphaProperty alpha-test enable (AlphaFlags bit 9)
+    float alphaTestThreshold = 0.0f; // NiAlphaProperty Threshold / 255, for the shader's clip()
 
     bool hasModelSpaceNormals = false;  // SLSF1_Model_Space_Normals (bit 12) - sk_msn.frag path
     bool hasSpecularMap = false;        // SLSF1_Specular + slot 7 non-empty (MSN external spec mask)
@@ -392,7 +398,7 @@ private:
     // precede the block that references them in file order.
     std::unordered_map<std::int32_t, std::vector<std::int32_t>> m_pendingChildren;        // NiNode block index -> child block indices
     std::unordered_map<std::int32_t, std::int32_t> m_pendingMaterialTextureSetRef;         // shader property block index -> texture set block index
-    std::unordered_map<std::int32_t, std::uint16_t> m_pendingAlphaFlags;                   // NiAlphaProperty block index -> AlphaFlags
+    std::unordered_map<std::int32_t, std::pair<std::uint16_t, std::uint8_t>> m_pendingAlphaFlags; // NiAlphaProperty block index -> (AlphaFlags, Threshold)
     std::unordered_map<std::int32_t, std::int32_t> m_skinInstanceToPartitionRef;           // NiSkinInstance/BSDismemberSkinInstance block index -> NiSkinPartition block index
     std::unordered_map<std::int32_t, NifGeometry> m_skinPartitionGeometries;               // NiSkinPartition block index -> reconstructed geometry (global vertex buffer + all partitions' triangles, remapped)
     std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>> m_skinPartitionWeights; // NiSkinPartition block index -> per-global-vertex bone weights, parallel to m_skinPartitionGeometries' positions
