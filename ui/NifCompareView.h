@@ -1,5 +1,5 @@
-// NifCompareView.h - FICture2-style top-level layout: a dynamic 2-4 pane
-// 3D compare row plus a shared bottom control strip.
+// NifCompareView.h - FICture2-style top-level layout: a dynamic 1-8 pane
+// 3D compare grid plus a shared bottom control strip.
 //
 // Layout: outer top/bottom FD2D::SplitPanel (first = views host, second =
 // NifCompareControlPanel), the same shape as FICture2's ImageBrowser
@@ -8,7 +8,8 @@
 // liteviewer's original fixed left/right SplitPanel + right-side sidebar.
 // The "views host" is rebuilt on every pane add/remove via
 // NifCompareSplitCoordinator::BuildEqualWidthHostTree, mirroring FICture2's
-// own ImageBrowserSplitCoordinator (up to 4 equal-width panes).
+// own ImageBrowserSplitCoordinator but extended to a two-row grid: 1-4
+// panes in a single row, 5-6 as 3x2, 7-8 as 4x2.
 #pragma once
 
 #include "NifComparePane.h"
@@ -31,7 +32,7 @@ public:
     explicit NifCompareView(const std::wstring& name);
 
     static constexpr std::size_t kMinPanes = 1;
-    static constexpr std::size_t kMaxPanes = 4;
+    static constexpr std::size_t kMaxPanes = 8;
     static constexpr std::size_t kDefaultInitialPanes = 2;
 
     std::size_t PaneCount() const { return m_panes.size(); }
