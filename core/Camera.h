@@ -129,15 +129,19 @@ public:
     }
 
 private:
+    // Same handedness as viewMatrix() (right = worldUp x forward, up =
+    // forward x right), so pan()'s +x really is screen-right. The previous
+    // forward x worldUp produced the NEGATED screen-right (up came out
+    // identical), which made horizontal pan move against the drag.
     void basisVectors(Vector3& right, Vector3& up) const
     {
         Vector3 forward = forwardVector();
         Vector3 worldUp(0.0f, 1.0f, 0.0f);
-        right = Vector3::crossproduct(forward, worldUp);
+        right = Vector3::crossproduct(worldUp, forward);
         if (right.squaredLength() < 1e-8f)
             right = Vector3(1.0f, 0.0f, 0.0f);
         right.normalize();
-        up = Vector3::crossproduct(right, forward);
+        up = Vector3::crossproduct(forward, right);
         up.normalize();
     }
 
