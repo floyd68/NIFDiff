@@ -33,7 +33,7 @@
 # NIFDiff's actual logging).
 cmake_minimum_required(VERSION 3.21)
 
-project(NIFDiff LANGUAGES C CXX)
+project(NIFDiff VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -143,6 +143,8 @@ target_compile_definitions(NIFDiff PRIVATE
     UNICODE
     _UNICODE
     NOMINMAX
+    # Shown by the context menu's About box (see NIFDiffApp.cpp).
+    "NIFDIFF_VERSION_WSTR=L\"${PROJECT_VERSION}\""
 )
 
 target_link_libraries(NIFDiff PRIVATE

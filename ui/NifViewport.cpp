@@ -2,6 +2,7 @@
 #include <Backplate.h>
 #include <Util.h>
 #include <cmath>
+#include <cstdlib>
 #include <algorithm>
 #include <filesystem>
 
@@ -232,7 +233,7 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         if (!event.hasPoint || !FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
             break;
         if (event.button == MouseButton::Left) { m_dragging = true; m_lastMousePt = event.point; RequestFocus(); return true; }
-        if (event.button == MouseButton::Middle || event.button == MouseButton::Right) { m_panning = true; m_lastMousePt = event.point; RequestFocus(); return true; }
+        if (event.button == MouseButton::Middle || event.button == MouseButton::Right) { m_panning = true; m_panMoved = false; m_panDownPt = event.point; m_lastMousePt = event.point; RequestFocus(); return true; }
         break;
 
     case InputEventType::MouseUp:
@@ -240,7 +241,16 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // the drag/pan; otherwise fall through so it doesn't swallow mouse-up
         // events that belong to some other control (e.g. releasing a Splitter drag).
         if (event.button == MouseButton::Left && m_dragging) { m_dragging = false; return true; }
-        if ((event.button == MouseButton::Middle || event.button == MouseButton::Right) && m_panning) { m_panning = false; return true; }
+        if ((event.button == MouseButton::Middle || event.button == MouseButton::Right) && m_panning)
+        {
+            m_panning = false;
+            // A right-click that never moved past the click-jitter threshold
+            // is not a pan: leave it unhandled so it bubbles up to
+            // NifCompareView, which opens the app context menu.
+            if (event.button == MouseButton::Right && !m_panMoved)
+                break;
+            return true;
+        }
         break;
 
     case InputEventType::MouseMove:
@@ -258,6 +268,11 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         }
         if (m_panning)
         {
+            if (!m_panMoved &&
+                (std::abs(event.point.x - m_panDownPt.x) > 3 || std::abs(event.point.y - m_panDownPt.y) > 3))
+            {
+                m_panMoved = true;
+            }
             float scale = m_camera.distance() * 0.0015f;
             m_camera.pan(-dx * scale, dy * scale);
             m_lastMousePt = event.point;

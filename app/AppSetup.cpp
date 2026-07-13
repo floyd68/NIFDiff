@@ -122,6 +122,67 @@ namespace
         GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
         return exePath;
     }
+
+    // Deleting something that is already gone still counts as success: the
+    // goal is "not registered afterwards", not "was registered before".
+    bool DeleteRegTree(HKEY root, const std::wstring& subKey)
+    {
+        const LONG rc = RegDeleteTreeW(root, subKey.c_str());
+        return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
+    }
+
+    bool DeleteRegValue(HKEY root, const std::wstring& subKey, const wchar_t* valueName)
+    {
+        const LONG rc = RegDeleteKeyValueW(root, subKey.c_str(), valueName);
+        return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
+    }
+
+    std::wstring ReadRegSzValue(HKEY root, const std::wstring& subKey, const wchar_t* valueNameOrNull)
+    {
+        wchar_t buffer[512] {};
+        DWORD bytes = sizeof(buffer) - sizeof(wchar_t);
+        DWORD type = 0;
+        const LONG rc = RegGetValueW(root, subKey.c_str(), valueNameOrNull,
+                                     RRF_RT_REG_SZ, &type, buffer, &bytes);
+        if (rc != ERROR_SUCCESS)
+            return {};
+        return buffer;
+    }
+
+    bool UnregisterPerUserFileAssociations(const std::wstring& exePath)
+    {
+        const std::wstring exeName = std::filesystem::path(exePath).filename().wstring();
+        bool ok = true;
+
+        // Direct extension mapping: only clear the (Default) value when it
+        // still points at our ProgID - another app may have claimed it since.
+        for (const std::wstring& ext : SupportedExtensions())
+        {
+            if (ext.empty() || ext[0] != L'.')
+                continue;
+            const std::wstring extKey = L"Software\\Classes\\" + ext;
+            if (_wcsicmp(ReadRegSzValue(HKEY_CURRENT_USER, extKey, nullptr).c_str(), kProgId) == 0)
+                ok = ok && DeleteRegValue(HKEY_CURRENT_USER, extKey, nullptr);
+            ok = ok && DeleteRegTree(HKEY_CURRENT_USER, extKey + L"\\OpenWithProgids\\" + kProgId);
+        }
+
+        // Legacy Application + OpenWith metadata.
+        if (!exeName.empty())
+            ok = ok && DeleteRegTree(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName);
+
+        // Capabilities model (the app writes no other registry state under
+        // Software\NIFDiff - settings live in NIFDiff.ini next to the exe).
+        ok = ok && DeleteRegValue(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", kAppName);
+        ok = ok && DeleteRegTree(HKEY_CURRENT_USER, std::wstring(L"Software\\") + kAppName);
+
+        // ProgID last - AreFileAssociationsRegistered keys off its presence.
+        ok = ok && DeleteRegTree(HKEY_CURRENT_USER, std::wstring(L"Software\\Classes\\") + kProgId);
+
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+
+        NIFLOG_INFO("[Setup] Per-user .nif association removal {}.", ok ? "succeeded" : "partially failed");
+        return ok;
+    }
 }
 
 namespace nsk::AppSetup
@@ -154,5 +215,30 @@ namespace nsk::AppSetup
             return false;
 
         return RegisterPerUserFileAssociations(GetExePath());
+    }
+
+    bool UnregisterFileAssociations(HWND owner)
+    {
+        const int choice = MessageBoxW(
+            owner,
+            L"Remove the per-user .nif file association for NIFDiff?\n"
+            L"(Explorer will fall back to whatever handler is registered next.)\n\n"
+            L"Do you want to remove it now?",
+            L"NIFDiff - File Associations",
+            MB_ICONQUESTION | MB_YESNO);
+        if (choice != IDYES)
+            return false;
+
+        return UnregisterPerUserFileAssociations(GetExePath());
+    }
+
+    bool AreFileAssociationsRegistered()
+    {
+        HKEY key = nullptr;
+        const std::wstring progIdKey = std::wstring(L"Software\\Classes\\") + kProgId;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, progIdKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS)
+            return false;
+        RegCloseKey(key);
+        return true;
     }
 }

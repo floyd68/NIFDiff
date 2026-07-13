@@ -11,13 +11,23 @@
 
 #include <chrono>
 #include <cstdint>
+#include <future>
 #include <thread>
 #include <vector>
 
 namespace
 {
     constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\NIFDiff_IPC";
-    constexpr std::uint32_t kProtocolVersion = 1;
+    constexpr std::uint32_t kProtocolVersion = 2; // v2: Waiting ack precedes the final Decision
+    // Distinct from every Decision value; tells the client "request accepted,
+    // final decision follows - keep waiting".
+    constexpr std::uint32_t kWaitingAck = 0xFFFFFFFFu;
+
+    // Staged client hard timeouts + the server keep-alive cadence that feeds
+    // stage 3 (see AppIpc.h's protocol comment for the full ladder).
+    constexpr DWORD kRequestResponseTimeoutMs = 500; // request sent -> first server message
+    constexpr DWORD kPostAckTimeoutMs = 2000;        // silence allowed after each Waiting ack
+    constexpr DWORD kKeepAliveIntervalMs = 500;      // server refreshes the ack this often
 
     bool WriteAll(HANDLE h, const void* data, DWORD bytes)
     {
@@ -51,6 +61,48 @@ namespace
         return true;
     }
 
+    // Client-side deadline-bounded I/O: the client opens its pipe handle
+    // FILE_FLAG_OVERLAPPED so every read/write carries a hard timeout - a
+    // plain blocking ReadFile could hang forever on a frozen server, which
+    // is exactly what the staged client timeouts exist to prevent. Handles
+    // partial transfers (byte-mode pipe) by looping under one deadline.
+    bool OverlappedIo(HANDLE h, HANDLE event, bool isWrite, void* data, DWORD bytes, DWORD timeoutMs)
+    {
+        std::uint8_t* p = static_cast<std::uint8_t*>(data);
+        DWORD remaining = bytes;
+        const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+        while (remaining > 0)
+        {
+            OVERLAPPED ov {};
+            ov.hEvent = event;
+            ResetEvent(event);
+            const BOOL started = isWrite
+                ? WriteFile(h, p, remaining, nullptr, &ov)
+                : ReadFile(h, p, remaining, nullptr, &ov);
+            if (!started && GetLastError() != ERROR_IO_PENDING)
+                return false;
+
+            const ULONGLONG now = GetTickCount64();
+            const DWORD waitMs = now < deadline ? static_cast<DWORD>(deadline - now) : 0;
+            if (WaitForSingleObject(event, waitMs) != WAIT_OBJECT_0)
+            {
+                // Hard timeout. Cancel and wait for the cancellation to
+                // complete so `ov` may safely leave scope.
+                CancelIoEx(h, &ov);
+                DWORD ignored = 0;
+                GetOverlappedResult(h, &ov, &ignored, TRUE);
+                return false;
+            }
+
+            DWORD transferred = 0;
+            if (!GetOverlappedResult(h, &ov, &transferred, FALSE) || transferred == 0)
+                return false;
+            p += transferred;
+            remaining -= transferred;
+        }
+        return true;
+    }
+
     bool HandleOneClient(HANDLE pipe, const std::function<AppIpc::Decision(const std::wstring&)>& onRequest)
     {
         std::uint32_t version = 0;
@@ -76,9 +128,37 @@ namespace
             buf.push_back(L'\0');
 
         const std::wstring path(buf.data());
+
+        // Park the client before consulting the app: onRequest may block for
+        // its whole response budget (waiting for the UI window to exist and
+        // then for the UI thread to process the open). The client allows
+        // kPostAckTimeoutMs of silence after each ack, so refresh the ack
+        // every kKeepAliveIntervalMs while the decision is pending - a
+        // healthy-but-busy server keeps its client parked, a frozen one
+        // trips the client's stage-3 hard timeout instead of hanging it.
+        const std::uint32_t ack = kWaitingAck;
+        if (!WriteAll(pipe, &ack, sizeof(ack)))
+            return false;
+
         AppIpc::Decision decision = AppIpc::Decision::Ignore;
         if (onRequest)
-            decision = onRequest(path);
+        {
+            std::future<AppIpc::Decision> pending = std::async(std::launch::async,
+                [&onRequest, &path] { return onRequest(path); });
+            while (pending.wait_for(std::chrono::milliseconds(kKeepAliveIntervalMs)) !=
+                   std::future_status::ready)
+            {
+                if (!WriteAll(pipe, &ack, sizeof(ack)))
+                {
+                    // Client gave up or died. Let the app callback finish
+                    // (bounded by its own response budget) and drop the
+                    // result - there is nobody left to answer.
+                    pending.wait();
+                    return false;
+                }
+            }
+            decision = pending.get();
+        }
 
         const std::uint32_t resp = static_cast<std::uint32_t>(decision);
         return WriteAll(pipe, &resp, sizeof(resp));
@@ -119,11 +199,19 @@ namespace AppIpc
                     continue;
                 }
 
-                (void)HandleOneClient(pipe, onRequest);
+                // Per-client worker: HandleOneClient can block for the app
+                // callback's whole response budget, and consecutive Explorer
+                // opens connect faster than that - serving them serially
+                // would let a later client's 500ms connect budget expire
+                // while an earlier request is still waiting on the UI.
+                std::thread([pipe, onRequest]()
+                {
+                    (void)HandleOneClient(pipe, onRequest);
 
-                FlushFileBuffers(pipe);
-                DisconnectNamedPipe(pipe);
-                CloseHandle(pipe);
+                    FlushFileBuffers(pipe);
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }).detach();
             }
         }).detach();
     }
@@ -154,8 +242,10 @@ namespace AppIpc
         HANDLE h = INVALID_HANDLE_VALUE;
         while (std::chrono::steady_clock::now() < deadline)
         {
+            // FILE_FLAG_OVERLAPPED: all pipe I/O below runs through
+            // OverlappedIo so each stage carries its own hard timeout.
             h = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                            OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
             if (h != INVALID_HANDLE_VALUE)
                 break;
 
@@ -189,23 +279,41 @@ namespace AppIpc
             return false;
         }
 
-        const std::wstring payload = path + L'\0';
-        const std::uint32_t version = kProtocolVersion;
-        const std::uint32_t payloadBytes = static_cast<std::uint32_t>(payload.size() * sizeof(wchar_t));
+        HANDLE ioEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (ioEvent == nullptr)
+        {
+            CloseHandle(h);
+            return false;
+        }
 
+        std::wstring payload = path + L'\0';
+        std::uint32_t version = kProtocolVersion;
+        std::uint32_t payloadBytes = static_cast<std::uint32_t>(payload.size() * sizeof(wchar_t));
+
+        // Stage 2: the whole request plus the first server message must fit
+        // in kRequestResponseTimeoutMs each - a server that accepted the
+        // connection but never acks is not actually serving.
         bool ok = true;
-        ok = ok && WriteAll(h, &version, sizeof(version));
-        ok = ok && WriteAll(h, &payloadBytes, sizeof(payloadBytes));
-        ok = ok && WriteAll(h, payload.data(), payloadBytes);
+        ok = ok && OverlappedIo(h, ioEvent, true, &version, sizeof(version), kRequestResponseTimeoutMs);
+        ok = ok && OverlappedIo(h, ioEvent, true, &payloadBytes, sizeof(payloadBytes), kRequestResponseTimeoutMs);
+        ok = ok && OverlappedIo(h, ioEvent, true, payload.data(), payloadBytes, kRequestResponseTimeoutMs);
 
         std::uint32_t resp = 0;
-        ok = ok && ReadAll(h, &resp, sizeof(resp));
+        ok = ok && OverlappedIo(h, ioEvent, false, &resp, sizeof(resp), kRequestResponseTimeoutMs);
 
+        // Stage 3: parked on Waiting acks. The server refreshes the ack
+        // every kKeepAliveIntervalMs while the request is pending, so more
+        // than kPostAckTimeoutMs of silence means it froze or died - stop
+        // waiting and run standalone.
+        while (ok && resp == kWaitingAck)
+            ok = OverlappedIo(h, ioEvent, false, &resp, sizeof(resp), kPostAckTimeoutMs);
+
+        CloseHandle(ioEvent);
         CloseHandle(h);
 
         if (!ok)
         {
-            NIFLOG_ERROR("[IPC] Client: pipe I/O failed during send/recv.");
+            NIFLOG_ERROR("[IPC] Client: pipe I/O failed or timed out during send/recv.");
             return false;
         }
 

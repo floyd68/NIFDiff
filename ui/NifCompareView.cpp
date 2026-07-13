@@ -201,6 +201,27 @@ bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
     return FD2D::SplitPanel::OnCommandEvent(event);
 }
 
+bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
+{
+    if (FD2D::SplitPanel::OnInputEvent(event))
+        return true;
+
+    if (event.type == FD2D::InputEventType::MouseUp &&
+        event.button == FD2D::MouseButton::Right &&
+        event.hasPoint &&
+        m_onContextMenuRequested)
+    {
+        m_onContextMenuRequested(event.point);
+        return true;
+    }
+    return false;
+}
+
+void NifCompareView::SetOnContextMenuRequested(std::function<void(POINT)> handler)
+{
+    m_onContextMenuRequested = std::move(handler);
+}
+
 void NifCompareView::RebuildHostTree()
 {
     std::vector<std::shared_ptr<FD2D::Wnd>> wnds;

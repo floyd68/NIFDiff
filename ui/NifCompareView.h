@@ -68,6 +68,16 @@ public:
     // record the outcome on the request, signal its event.
     bool OnCommandEvent(const FD2D::CommandEvent& event) override;
 
+    // Catches right-clicks no child consumed (viewport right-*drags* pan the
+    // camera and are consumed there; plain right-clicks bubble up to here -
+    // see NifViewport::OnInputEvent's MouseUp case) and requests the
+    // app-level context menu. The app shell owns the actual menu (About /
+    // file association / Exit live at the app level, not in this view).
+    bool OnInputEvent(const FD2D::InputEvent& event) override;
+
+    // `clientPt` is in window client coordinates.
+    void SetOnContextMenuRequested(std::function<void(POINT clientPt)> handler);
+
     void SetResourceResolver(ResourceResolver* resolver);
     void InvalidateTextureCaches();
 
@@ -110,6 +120,7 @@ private:
     ResourceResolver* m_resolver = nullptr;
 
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
+    std::function<void(POINT)> m_onContextMenuRequested;
 
     bool m_syncViews = true;
     bool m_syncLighting = true;

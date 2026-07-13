@@ -22,4 +22,12 @@ namespace nsk::AppSetup
 
     // Manual action: prompt and register the per-user (HKCU) association.
     bool RegisterFileAssociations(HWND owner);
+
+    // Manual action: prompt and remove everything RegisterFileAssociations
+    // wrote (ProgID, Capabilities, Applications metadata, direct mapping).
+    bool UnregisterFileAssociations(HWND owner);
+
+    // True when the per-user ProgID from a previous registration is present.
+    // Used to pick which action the app context menu offers.
+    bool AreFileAssociationsRegistered();
 }

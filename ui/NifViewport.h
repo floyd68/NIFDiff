@@ -89,6 +89,8 @@ private:
 
     bool m_dragging = false;
     bool m_panning = false;
+    bool m_panMoved = false; // pan actually moved (right-click without movement bubbles up for the app context menu)
+    POINT m_panDownPt {};
     POINT m_lastMousePt {};
 
     CameraChangedHandler m_onCameraChanged {};

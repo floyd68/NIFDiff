@@ -4,10 +4,29 @@
 // instance, which loads it into a compare pane instead of opening another
 // window - the natural behavior for a compare tool.
 //
-// Protocol (identical to FICture2's, distinct pipe name):
+// Protocol v2 (FICture2's v1 plus a Waiting ack, distinct pipe name):
 //   client -> server : u32 protocol version, u32 payload byte count,
 //                      UTF-16 null-terminated path
-//   server -> client : u32 Decision
+//   server -> client : u32 Waiting ack (sent immediately on receipt,
+//                      repeated every 500ms while the request is parked),
+//                      then u32 Decision
+//
+// The Waiting ack decouples the client's patience from the server's UI
+// thread: while the server's onRequest callback is still deciding (e.g.
+// the primary instance is scanning game archives at startup), the repeated
+// acks keep the client parked. This is what lets Explorer-driven
+// consecutive opens land in the first instance's panes even while that
+// instance is still booting.
+//
+// The client never trusts the server unconditionally - it applies staged
+// hard timeouts so no unpredictable server state can hang it:
+//   1. No single-instance mutex -> no IPC at all, run standalone
+//      (the caller's check in NIFDiffApp.cpp).
+//   2. Pipe connect + first server message: 500ms each. No Waiting ack in
+//      time means the server is not actually serving - run standalone.
+//   3. After each Waiting ack: 2s of silence allowed. A healthy-but-busy
+//      server refreshes the ack twice per second, so tripping this means
+//      the server froze or died mid-exchange - run standalone.
 #pragma once
 
 #include <functional>
@@ -23,11 +42,15 @@ namespace AppIpc
 
     // Starts a lightweight named-pipe server in a background thread.
     // Incoming requests contain a single UTF-16 file path. The callback runs
-    // on the server thread and returns whether the request was handled.
+    // on a per-client worker thread (so one slow request cannot starve the
+    // accept loop when several instances launch back-to-back) and may block
+    // for its whole response budget; the client is parked on the Waiting ack
+    // meanwhile. Returns whether the request was handled.
     void StartServer(const std::function<Decision(const std::wstring&)>& onRequest);
 
     // Tries to send a single file path to an existing server and receive a
     // decision. Returns false if the server is not available (no pipe /
-    // connection error).
+    // connection error). Blocks past the connect stage until the server's
+    // final Decision (bounded by the server-side response budget).
     bool TrySendPath(const std::wstring& path, Decision& outDecision);
 }
