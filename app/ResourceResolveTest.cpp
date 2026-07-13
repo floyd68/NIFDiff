@@ -18,8 +18,41 @@ static void WriteDummyFile(const fs::path& p, const char* bytes, std::size_t n)
     out.write(bytes, static_cast<std::streamsize>(n));
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    // Live query mode: ResourceResolveTest <relativePath>... resolves each
+    // argument against the detected Game Data (loose + archives) and reports
+    // where it was found - a quick way to diagnose "texture shows white in
+    // the viewer" cases without attaching a debugger to the app.
+    if (argc > 1)
+    {
+        const auto detected = nsk::ResourceResolver::DetectGameDataFolders();
+        if (detected.empty())
+        {
+            std::cout << "no Game Data folder detected\n";
+            return 1;
+        }
+        nsk::ResourceResolver live;
+        live.SetAutoLoadArchives(true);
+        live.SetGameData(detected.front());
+        std::wcout << L"GameData=" << live.GameData() << L" archives=" << live.ArchiveCount() << L"\n";
+        int misses = 0;
+        for (int i = 1; i < argc; ++i)
+        {
+            auto hit = live.Find(argv[i]);
+            if (!hit.ok())
+            {
+                std::cout << "MISS: " << argv[i] << "\n";
+                ++misses;
+            }
+            else if (!hit.diskPath.empty())
+                std::wcout << L"LOOSE: " << hit.diskPath << L"\n";
+            else
+                std::cout << "ARCHIVE: " << argv[i] << " (" << hit.data.size() << " bytes)\n";
+        }
+        return misses == 0 ? 0 : 1;
+    }
+
     const fs::path root = fs::temp_directory_path() / "niflite_resource_test";
     std::error_code ec;
     fs::remove_all(root, ec);
