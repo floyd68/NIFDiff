@@ -13,6 +13,7 @@
 
 #include <DockPanel.h>
 #include <Button.h>
+#include <Text.h>
 #include <functional>
 #include <memory>
 #include <string>
@@ -38,7 +39,10 @@ public:
     void SetOnClose(std::function<void()> handler);
 
 private:
+    void UpdatePathLabel();
+
     std::shared_ptr<NifViewport> m_viewport;
+    std::shared_ptr<FD2D::Text> m_pathLabel; // top strip: full path of the loaded .nif
     std::shared_ptr<FD2D::Button> m_openBtn;
     std::shared_ptr<FD2D::Button> m_closeBtn;
     std::unique_ptr<NifDocument> m_doc;
