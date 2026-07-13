@@ -1,90 +1,62 @@
+// TextureCache.cpp - DDS decode + D3D11 SRV creation via DirectXTex.
+//
+// History note: the original liteviewer port decoded DDS with gli (a GL-
+// oriented image library it inherited from NifSkope's OpenGL lineage) and
+// hand-built the D3D11 texture descs/subresources from gli's layout. Now
+// that the renderer is D3D11-native, DirectXTex is the canonical path and
+// strictly more capable: full mip chains and cube maps come through
+// CreateShaderResourceView() automatically (the gli version uploaded 2D +
+// cube only, with hand-rolled pitch math), legacy/odd DDS header variants
+// that gli rejects are handled, and LoadFromDDSFile takes a wide path
+// natively - which also fixes the old toNarrow() '& 0x7F' truncation that
+// silently broke loose-file textures under non-ASCII (e.g. Korean) paths.
+// ImageCore was considered but its DecodedImage payload is an image-viewer
+// contract (mip0-only, 2D-only, premultiplied BGRA8) that cannot carry the
+// mips/cubemaps this renderer needs.
 #include "TextureCache.h"
 #include "../core/ResourceResolver.h"
 
-#include <gli/gli.hpp>
-#include <gli/dx.hpp>
-#include <vector>
+#include <DirectXTex.h>
 
 namespace nsk
 {
 namespace
 {
-    std::string toNarrow(const std::wstring& w)
-    {
-        std::string s(w.size(), '\0');
-        for (std::size_t i = 0; i < w.size(); ++i)
-            s[i] = static_cast<char>(w[i] & 0x7Fu);
-        return s;
-    }
-
-    // Row pitch of one mip level, honoring block compression.
-    UINT GliLevelPitch(const gli::texture& tex, std::size_t level)
-    {
-        gli::ivec3 blockExtent = gli::block_extent(tex.format());
-        std::size_t blockSize = gli::block_size(tex.format());
-        std::size_t blocksWide = static_cast<std::size_t>((tex.extent(level).x + blockExtent.x - 1) / blockExtent.x);
-        if (blocksWide == 0) blocksWide = 1;
-        return static_cast<UINT>(blocksWide * blockSize);
-    }
-
-    ID3D11ShaderResourceView* UploadGli(
+    ID3D11ShaderResourceView* UploadScratch(
         ID3D11Device* device,
-        gli::texture tex,
+        const DirectX::ScratchImage& scratch,
+        const DirectX::TexMetadata& metadata,
         std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>& cache,
         const std::string& cacheKey)
     {
-        // TARGET_CUBE covers environment cube maps (BSShaderTextureSet slot
-        // 4, sampled by the lit shader's TextureCube) - see the cube branch
-        // below. Anything else (3D/array) has no consumer in this renderer.
-        const bool isCube = tex.target() == gli::TARGET_CUBE;
-        if (!device || tex.empty() || (tex.target() != gli::TARGET_2D && !isCube))
+        if (!device || scratch.GetImageCount() == 0)
             return nullptr;
 
-        gli::dx dxTranslator;
-        gli::dx::format const& fmt = dxTranslator.translate(tex.format());
-        DXGI_FORMAT dxgiFormat = static_cast<DXGI_FORMAT>(fmt.DXGIFormat.DDS);
-        if (dxgiFormat == DXGI_FORMAT_UNKNOWN)
-            return nullptr;
-
-        const UINT mipLevels = static_cast<UINT>(tex.levels());
-        const UINT faces = isCube ? 6u : 1u;
-        const D3D11_TEXTURE2D_DESC desc {
-            .Width = static_cast<UINT>(tex.extent(0).x),
-            .Height = static_cast<UINT>(tex.extent(0).y),
-            .MipLevels = mipLevels,
-            .ArraySize = faces,
-            .Format = dxgiFormat,
-            .SampleDesc = { .Count = 1 },
-            .Usage = D3D11_USAGE_IMMUTABLE,
-            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
-            .MiscFlags = isCube ? UINT(D3D11_RESOURCE_MISC_TEXTURECUBE) : 0u,
-        };
-
-        // D3D11 subresource order: face-major (face0 mip0..N, face1 mip0..N,
-        // ...). gli's cube accessor is data(layer, face, level).
-        std::vector<D3D11_SUBRESOURCE_DATA> subresources(static_cast<std::size_t>(mipLevels) * faces);
-        for (UINT face = 0; face < faces; ++face)
-        {
-            for (UINT level = 0; level < mipLevels; ++level)
-            {
-                D3D11_SUBRESOURCE_DATA& sub = subresources[static_cast<std::size_t>(face) * mipLevels + level];
-                sub.pSysMem = tex.data(0, face, level);
-                sub.SysMemPitch = GliLevelPitch(tex, level);
-                sub.SysMemSlicePitch = static_cast<UINT>(tex.size(level));
-            }
-        }
-
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> d3dTex;
-        if (FAILED(device->CreateTexture2D(&desc, subresources.data(), &d3dTex)))
-            return nullptr;
-
+        // Handles 2D/mip-chain/cube-map/array layouts from the DDS metadata
+        // (a cube map DDS yields a TEXTURECUBE-dimension SRV, which the lit
+        // shader's TextureCube at t4 requires).
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-        if (FAILED(device->CreateShaderResourceView(d3dTex.Get(), nullptr, &srv)))
+        if (FAILED(DirectX::CreateShaderResourceView(
+                device, scratch.GetImages(), scratch.GetImageCount(), metadata, &srv)))
+        {
             return nullptr;
+        }
 
         auto [it, inserted] = cache.emplace(cacheKey, srv);
         (void)inserted;
         return it->second.Get();
+    }
+
+    // UTF-8 narrowing for cache keys only (never used as a filesystem path -
+    // DirectXTex loads via the wide path directly).
+    std::string ToUtf8(const std::wstring& w)
+    {
+        if (w.empty())
+            return {};
+        const int len = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+        std::string s(static_cast<std::size_t>(len), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), len, nullptr, nullptr);
+        return s;
     }
 }
 
@@ -119,15 +91,22 @@ ID3D11ShaderResourceView* TextureCache::GetOrCreateFallback()
 
 ID3D11ShaderResourceView* TextureCache::LoadFromDisk(const std::wstring& fullPath)
 {
-    std::string narrowPath = toNarrow(fullPath);
-    return UploadGli(m_device, gli::load(narrowPath), m_cache, narrowPath);
+    DirectX::TexMetadata metadata {};
+    DirectX::ScratchImage scratch;
+    if (FAILED(DirectX::LoadFromDDSFile(fullPath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, scratch)))
+        return nullptr;
+    return UploadScratch(m_device, scratch, metadata, m_cache, ToUtf8(fullPath));
 }
 
 ID3D11ShaderResourceView* TextureCache::LoadFromMemory(std::span<const std::uint8_t> data, const std::string& cacheKey)
 {
     if (data.empty())
         return nullptr;
-    return UploadGli(m_device, gli::load(reinterpret_cast<char const*>(data.data()), data.size()), m_cache, cacheKey);
+    DirectX::TexMetadata metadata {};
+    DirectX::ScratchImage scratch;
+    if (FAILED(DirectX::LoadFromDDSMemory(data.data(), data.size(), DirectX::DDS_FLAGS_NONE, &metadata, scratch)))
+        return nullptr;
+    return UploadScratch(m_device, scratch, metadata, m_cache, cacheKey);
 }
 
 ID3D11ShaderResourceView* TextureCache::GetOrLoad(const std::string& relativePath)

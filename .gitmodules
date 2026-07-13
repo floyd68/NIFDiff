@@ -7,12 +7,6 @@
 [submodule "third_party/Floar"]
 	path = third_party/Floar
 	url = https://github.com/floyd68/Floar.git
-[submodule "third_party/ImageCore"]
-	path = third_party/ImageCore
-	url = https://github.com/floyd68/ImageCore.git
 [submodule "third_party/external/spdlog"]
 	path = third_party/external/spdlog
 	url = https://github.com/gabime/spdlog.git
-[submodule "third_party/external/gli"]
-	path = third_party/external/gli
-	url = https://github.com/g-truc/gli.git

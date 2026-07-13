@@ -8,14 +8,12 @@
 // blank in NIFDiff" report can be answered by opening one log file after
 // reproducing in either tool.
 //
-// Not routed through third_party/AppLog.h: that header's FIC2_LOG_* macros
-// forward to a "fic2" logger that is only ever registered by AppLog::Init,
-// and AppLog.cpp itself is deliberately not vendored yet (see AppLog.h's
-// own comment / README.md) - i.e. those macros are silent no-ops in this
-// repo today. This is a small, self-initializing, header-only spdlog logger
-// scoped to core/ instead, so it actually produces output without first
-// vendoring/wiring AppLog.cpp's full Init/Shutdown lifecycle through the app
-// shell (a separate, larger task - see README.md's "Next steps").
+// Not modeled on FICture2's AppLog.h (whose FIC2_LOG_* macros need
+// AppLog::Init/Shutdown wired through the app shell before they do
+// anything; a vendored copy of that header lived at third_party/ until the
+// dependency cleanup removed it unused). This is a small, self-initializing,
+// header-only spdlog logger scoped to core/ instead, so it produces output
+// with zero app-shell wiring.
 #pragma once
 
 #pragma warning(push)

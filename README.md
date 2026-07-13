@@ -21,7 +21,7 @@ confirmed with an actual `cmake --build build --config Debug` run producing
 verification of loading NIF files into panes, dynamically adding/removing
 panes (up to 4, equal-width), and camera/lighting sync across panes.
 
-Third-party submodules (`FD2D`, `ImageCore`, `Floar`, `external/DirectXTex`,
+Third-party submodules (`FD2D`, `Floar`, `external/DirectXTex`,
 `external/spdlog`) are independent clones from their GitHub URLs, not
 references into the local `D:\Works\Ficture2` checkout - this repo owns its
 own copies.
@@ -47,11 +47,11 @@ What NIFDiff carries over from FICture2 directly:
   swapchain) FICture2's whole UI is built on.
 - **Floar** - VFS/BSA-BA2 archive support (FICture2 already browses `.ba2`
   archives for textures; NIFDiff needs the same search order for meshes).
-- **ImageCore** / **external/DirectXTex** - the decode pipeline NIFDiff's
-  future `TextureCache` will reuse for material textures on NIF models.
-- **`CommonUtil.h`** / **`AppLog.h`** - small vendored headers FD2D expects
-  as `../CommonUtil.h`/`../AppLog.h` next to itself (see
-  `third_party/CommonUtil.h`/`AppLog.h`).
+- **external/DirectXTex** - DDS decode + D3D11 SRV creation for
+  `render/TextureCache.cpp` (material textures on NIF models). ImageCore
+  and the vendored `CommonUtil.h`/`AppLog.h` headers were carried over too
+  but removed in a later dependency cleanup once FD2D stopped requiring
+  them - see CMakeLists.txt's dependency notes.
 - Its **side-by-side compare composition pattern** - the planned NIF
   Compare view (see below) is meant to explicitly mirror FICture2's own
   `ImageBrowser`-pair-plus-controls layout (two panes + a shared bottom
@@ -85,8 +85,8 @@ the long-standing Qt-based NIF editor:
 - `render/D3D11Renderer.h/.cpp` / `render/TextureCache.h/.cpp` replace
   NifSkope's Qt/OpenGL `src/gl/renderer.cpp/.h` and
   `gltex.cpp`+`gltexloaders.cpp` with a D3D11 draw path (feeding off
-  FICture2's ImageCore/DirectXTex decode pipeline instead of NifSkope's
-  own texture loaders).
+  DirectXTex for DDS decode/SRV creation instead of NifSkope's own
+  texture loaders).
 - `ui/NifCompareView.h/.cpp` reimplements the layout of NifSkope's own
   `src/ui/nifdiffviewer.cpp`/`.h` (the Qt `File -> NIF Diff Viewer...`
   feature), documented in `D:\Works\nifskope\NIF_DIFF_VIEWER.md` - laid
@@ -119,9 +119,8 @@ ui/                NifViewport (single 3D view), NifComparePane (view + Open/Clo
                    NifCompareControlPanel (bottom strip), NifCompareView (top-level)
 schema_reference/  nif.xml reference (vendored from niftools/nifxml, not parsed at runtime)
 test_assets/       5 Skyrim SE/Fallout 4 smoke-test .nif fixtures
-third_party/       git submodules: FD2D, Floar, ImageCore, external/DirectXTex,
-                   external/spdlog, external/gli (header-only DDS decode) +
-                   vendored third_party/CommonUtil.h, third_party/AppLog.h
+third_party/       git submodules: FD2D, Floar, external/DirectXTex (DDS decode
+                   + D3D11 SRV creation), external/spdlog
 CMakeLists.txt     sets up third-party wiring + NIFDiff/NifValidate/ResourceResolveTest targets
 GenerateVS2026.ps1/.bat   configures a VS2026 solution under build/
 ```

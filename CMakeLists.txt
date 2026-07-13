@@ -13,26 +13,24 @@
 # Dependencies live as git submodules
 # under third_party/ (never as hard-coded paths into another local checkout):
 #   - FD2D          https://github.com/floyd68/FD2D.git
-#   - ImageCore     https://github.com/floyd68/ImageCore.git
-#   - DirectXTex    https://github.com/floyd68/DirectXTex.git
 #   - Floar         https://github.com/floyd68/Floar.git
 #                   (VirtualPath/VFS + BSA/BA2; nested zlib/xz/libarchive)
+#   - DirectXTex    https://github.com/floyd68/DirectXTex.git, at
+#                   third_party/external/DirectXTex (DDS decode + D3D11 SRV
+#                   creation for render/TextureCache.cpp)
 #   - spdlog        https://github.com/gabime/spdlog.git, at
 #                   third_party/external/spdlog (header-only; FD2D's own
 #                   CMakeLists.txt adds its include/ path relative to its
 #                   own location, so it needs no wiring here)
-#   - gli           https://github.com/g-truc/gli.git, at
-#                   third_party/external/gli (header-only DDS decode for
-#                   render/TextureCache.cpp; not a floyd68 project, so it
-#                   lives under external/ alongside DirectXTex/spdlog rather
-#                   than directly under third_party/ like FD2D/Floar/ImageCore)
-#   - CommonUtil.h  small header-only util still included by FD2D as
-#                   ../CommonUtil.h (vendored copy next to the FD2D submodule)
-#   - AppLog.h      startup-timing/logging macros FD2D includes as
-#                   ../AppLog.h (vendored copy next to the FD2D submodule;
-#                   AppLog.cpp/spdlog::init are NOT vendored, so the macros
-#                   are no-ops until NIFDiff wants real logging - see the
-#                   comment at the top of third_party/AppLog.h)
+#
+# Removed in the dependency cleanup (all were vestiges of FD2D's former
+# image-viewer stack, before it was slimmed to a handle-only Image widget):
+# the ImageCore submodule (was forced as an FD2D sibling; never called by
+# NIFDiff code), the gli submodule (the pre-DirectXTex DDS decoder inherited
+# from the OpenGL-era liteviewer port), and the vendored CommonUtil.h /
+# AppLog.h loose headers (FD2D no longer includes ../CommonUtil.h, and
+# AppLog.h's FIC2_LOG_* macros were never wired up here - core/NifLog.h is
+# NIFDiff's actual logging).
 cmake_minimum_required(VERSION 3.21)
 
 project(NIFDiff LANGUAGES C CXX)
@@ -64,11 +62,14 @@ function(nifdiff_set_cache_bool name value)
     set(${name} ${value} CACHE BOOL "Forced by NIFDiff" FORCE)
 endfunction()
 
-# DirectXTex: only decode/format-conversion via ImageCore.
+# DirectXTex: DDS decode + SRV creation for render/TextureCache.cpp.
 nifdiff_set_cache_bool(BUILD_TOOLS OFF)
 nifdiff_set_cache_bool(BUILD_SAMPLE OFF)
 nifdiff_set_cache_bool(BUILD_SHARED_LIBS OFF)
-nifdiff_set_cache_bool(BUILD_DX11 OFF)
+# BUILD_DX11 provides DirectXTexD3D11.cpp's CreateShaderResourceView/
+# CreateTexture helpers, which render/TextureCache.cpp uses for DDS -> SRV
+# upload.
+nifdiff_set_cache_bool(BUILD_DX11 ON)
 nifdiff_set_cache_bool(BUILD_DX12 OFF)
 
 # Floar: BSA/BA2 is enough for Bethesda texture search; skip ZIP/7z/RAR
@@ -76,7 +77,6 @@ nifdiff_set_cache_bool(BUILD_DX12 OFF)
 nifdiff_set_cache_bool(FLOAR_ENABLE_COMMON_ARCHIVES OFF)
 
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/external/DirectXTex" "${CMAKE_BINARY_DIR}/_deps/DirectXTex")
-add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/ImageCore" "${CMAKE_BINARY_DIR}/_deps/ImageCore")
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/FD2D" "${CMAKE_BINARY_DIR}/_deps/FD2D")
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/Floar" "${CMAKE_BINARY_DIR}/_deps/Floar")
 
@@ -133,13 +133,9 @@ target_include_directories(NIFDiff PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/render
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
-    ${NIFDIFF_THIRD_PARTY_ROOT}/external/gli
-    ${NIFDIFF_THIRD_PARTY_ROOT}/external/gli/external
     # core/NifLog.h logs via spdlog directly (header-only; see its own
     # comment for why this isn't routed through third_party/AppLog.h).
     ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
-    # CommonUtil.h lives at third_party/ for FD2D's "../CommonUtil.h" includes.
-    ${NIFDIFF_THIRD_PARTY_ROOT}
 )
 
 target_compile_definitions(NIFDiff PRIVATE
@@ -151,7 +147,6 @@ target_compile_definitions(NIFDiff PRIVATE
 
 target_link_libraries(NIFDiff PRIVATE
     FD2D
-    ImageCore
     DirectXTex
     Floar
     comctl32

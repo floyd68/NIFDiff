@@ -1,6 +1,6 @@
 // TextureCache.h - D3D11 upload half of NifSkope's TexCache.
 // Path resolution (Game Data / overrides / BSA) lives in ResourceResolver;
-// this class only decodes DDS (via gli) and creates SRVs.
+// this class only decodes DDS (via DirectXTex) and creates SRVs.
 #pragma once
 
 #include <d3d11_1.h>
