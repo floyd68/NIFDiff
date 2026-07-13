@@ -134,6 +134,7 @@ bool D3D11Renderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* contex
         makeSolid(0xFFFFFFFFu, m_whiteTexSRV);      // diffuse/env-mask default
         makeSolid(0xFF000000u, m_blackTexSRV);       // glow/backlight default (no contribution)
         makeSolid(0xFFFF8080u, m_flatNormalSRV);     // (0.5,0.5,1,1) ABGR: flat normal + full spec mask; also NifSkope's default_n LightMask stand-in
+        makeSolid(0xFFFF00FFu, m_missingTexSRV);     // magenta (1,0,1): a material's diffuse path that fails to RESOLVE renders loudly instead of blending in as white
     }
 
     BuildGridAndAxesGeometry();
@@ -586,6 +587,17 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             const std::string kNone;
 
             auto [diffuseSrv, hasDiffuse] = resolve(mat.diffuseTexture, m_whiteTexSRV.Get());
+            if (!hasDiffuse && !mat.diffuseTexture.empty())
+            {
+                // The material NAMES a diffuse texture but it didn't resolve
+                // (missing loose file/archive entry or a failed decode):
+                // sample the magenta marker instead of degrading to the
+                // untextured white path, so missing content is unmissable.
+                // Materials with no diffuse path at all keep the white
+                // constant - that's authored, not broken.
+                diffuseSrv = m_missingTexSRV.Get();
+                hasDiffuse = true;
+            }
             auto [normalSrv, hasNormal] = resolve(mat.normalTexture, m_flatNormalSRV.Get());
             auto [cubeSrv, hasCube] = resolve(mat.hasCubeMap ? mat.cubeTexture : kNone, nullptr);
             auto [envMaskSrv, hasEnvMask] = resolve(mat.useEnvironmentMask ? mat.envMaskTexture : kNone, m_whiteTexSRV.Get());

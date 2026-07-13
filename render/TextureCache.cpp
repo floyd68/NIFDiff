@@ -66,29 +66,6 @@ TextureCache::TextureCache(ID3D11Device* device, ResourceResolver* resolver)
 {
 }
 
-ID3D11ShaderResourceView* TextureCache::GetOrCreateFallback()
-{
-    if (m_fallback)
-        return m_fallback.Get();
-    if (!m_device)
-        return nullptr;
-
-    std::uint32_t grayPixel = 0xFF808080u;
-    const D3D11_TEXTURE2D_DESC td {
-        .Width = 1, .Height = 1, .MipLevels = 1, .ArraySize = 1,
-        .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-        .SampleDesc = { .Count = 1 },
-        .Usage = D3D11_USAGE_IMMUTABLE,
-        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
-    };
-    const D3D11_SUBRESOURCE_DATA sd { .pSysMem = &grayPixel, .SysMemPitch = sizeof(grayPixel) };
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-    if (FAILED(m_device->CreateTexture2D(&td, &sd, &tex)))
-        return nullptr;
-    m_device->CreateShaderResourceView(tex.Get(), nullptr, &m_fallback);
-    return m_fallback.Get();
-}
-
 ID3D11ShaderResourceView* TextureCache::LoadFromDisk(const std::wstring& fullPath)
 {
     DirectX::TexMetadata metadata {};
@@ -125,15 +102,10 @@ ID3D11ShaderResourceView* TextureCache::GetOrLoad(const std::string& relativePat
             loaded = LoadFromMemory(found.data, "bsa:" + relativePath);
     }
 
-    if (loaded)
-    {
-        m_cache[relativePath] = loaded;
-        return loaded;
-    }
-
-    ID3D11ShaderResourceView* fallback = GetOrCreateFallback();
-    m_cache[relativePath] = fallback;
-    return fallback;
+    // Cache the result either way - a null entry records "tried and missing"
+    // so failed paths don't re-run the resolver chain on every frame.
+    m_cache[relativePath] = loaded;
+    return loaded;
 }
 
 } // namespace nsk

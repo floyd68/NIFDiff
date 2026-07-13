@@ -117,6 +117,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_whiteTexSRV;     // 1x1 white fallback (diffuse / env-mask)
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_blackTexSRV;     // 1x1 black fallback (glow / backlight)
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_flatNormalSRV;   // 1x1 flat normal + full spec mask
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_missingTexSRV;   // 1x1 magenta: named-but-unresolved diffuse marker
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_gridAxesVB;
     UINT m_gridVertexCount = 0;
