@@ -467,7 +467,12 @@ bool NifViewport::HasActiveParallax()
         const NifMaterial& m = mesh.material;
         if (m.isPBR)
             continue; // authored displacement_scale, not slider-driven
-        if (m.hasHeightMap)
+        // The material must WANT parallax and its _p must actually resolve:
+        // parallax-edition mod meshes routinely ship ST_Heightmap materials
+        // whose height texture is absent from the install (the renderer
+        // already degrades those to no-POM), so path presence alone would
+        // light the slider/toggle for a control that changes nothing.
+        if (m.hasHeightMap && m_textures && m_textures->GetOrLoad(m.heightTexture) != nullptr)
             return true;
         if (m.hasEnvironmentMap && !m.envMaskTexture.empty() && m_textures
             && m_textures->HasComplexMaterialAlpha(m.envMaskTexture)
@@ -483,7 +488,9 @@ bool NifViewport::HasParallaxMaterials()
         return true;
     for (const RenderMesh& mesh : m_meshes)
     {
-        if (mesh.material.isPBR && !mesh.material.heightTexture.empty())
+        // Same resolution requirement as HasActiveParallax above.
+        if (mesh.material.isPBR && !mesh.material.heightTexture.empty()
+            && m_textures && m_textures->GetOrLoad(mesh.material.heightTexture) != nullptr)
             return true;
     }
     return false;
