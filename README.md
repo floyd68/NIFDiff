@@ -118,6 +118,10 @@ own copies.
   pane carries material it would affect. OFF renders the closest legacy
   interpretation instead: no POM/displacement, complex materials as
   plain env-mapped surfaces, True PBR through the vanilla lit path.
+- **Render-channel toggles** (CHANNELS group): switch Diffuse (white),
+  Vertex Colors, Specular (legacy AND PBR GGX), Emissive, or Lighting
+  (raw unlit texture) off one at a time to isolate which shading input
+  makes two panes differ.
 
 ## Origins
 

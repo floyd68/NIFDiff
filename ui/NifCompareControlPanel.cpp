@@ -177,6 +177,45 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
 
     materials->AddChild(matRow);
 
+    // --- CHANNELS: render-channel isolation toggles -----------------------
+    // Diff analysis: switch one shading input off at a time to find which
+    // channel makes two panes differ. All on by default; unlike the
+    // MATERIALS toggles these stay enabled regardless of content (every
+    // lit mesh has all five inputs conceptually).
+    auto channels = makeGroup(L"Channels", L"CHANNELS");
+    auto chRow = makeRow(name + L"_ChRow", 10.0f);
+
+    auto chCol1 = makeColumn(name + L"_ChCol1", 4.0f);
+    m_texturesChk = std::make_shared<FD2D::CheckBox>(L"ChannelTextures");
+    m_texturesChk->SetLabel(L"Diffuse");
+    m_texturesChk->SetChecked(true);
+    chCol1->AddChild(m_texturesChk);
+
+    m_vertexColorsChk = std::make_shared<FD2D::CheckBox>(L"ChannelVertexColors");
+    m_vertexColorsChk->SetLabel(L"Vtx Color");
+    m_vertexColorsChk->SetChecked(true);
+    chCol1->AddChild(m_vertexColorsChk);
+
+    m_specularChk = std::make_shared<FD2D::CheckBox>(L"ChannelSpecular");
+    m_specularChk->SetLabel(L"Specular");
+    m_specularChk->SetChecked(true);
+    chCol1->AddChild(m_specularChk);
+    chRow->AddChild(chCol1);
+
+    auto chCol2 = makeColumn(name + L"_ChCol2", 4.0f);
+    m_glowChk = std::make_shared<FD2D::CheckBox>(L"ChannelGlow");
+    m_glowChk->SetLabel(L"Emissive");
+    m_glowChk->SetChecked(true);
+    chCol2->AddChild(m_glowChk);
+
+    m_lightingChk = std::make_shared<FD2D::CheckBox>(L"ChannelLighting");
+    m_lightingChk->SetLabel(L"Lighting");
+    m_lightingChk->SetChecked(true);
+    chCol2->AddChild(m_lightingChk);
+    chRow->AddChild(chCol2);
+
+    channels->AddChild(chRow);
+
     // --- RESOURCES: Game Data / override folders -------------------------
     auto resources = makeGroup(L"Resources", L"RESOURCES");
 
@@ -270,6 +309,11 @@ float NifCompareControlPanel::ParallaxHeightValue() const { return m_parallaxSli
 void NifCompareControlPanel::SetOnParallaxEnabledChanged(std::function<void(bool)> handler) { m_parallaxChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnComplexMaterialEnabledChanged(std::function<void(bool)> handler) { m_complexMaterialChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnPBREnabledChanged(std::function<void(bool)> handler) { m_pbrChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnTexturesEnabledChanged(std::function<void(bool)> handler) { m_texturesChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnVertexColorsEnabledChanged(std::function<void(bool)> handler) { m_vertexColorsChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnSpecularEnabledChanged(std::function<void(bool)> handler) { m_specularChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnGlowEnabledChanged(std::function<void(bool)> handler) { m_glowChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnLightingEnabledChanged(std::function<void(bool)> handler) { m_lightingChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetParallaxToggleEnabled(bool enabled) { m_parallaxChk->SetEnabled(enabled); }
 void NifCompareControlPanel::SetComplexMaterialToggleEnabled(bool enabled) { m_complexMaterialChk->SetEnabled(enabled); }
 void NifCompareControlPanel::SetPBRToggleEnabled(bool enabled) { m_pbrChk->SetEnabled(enabled); }

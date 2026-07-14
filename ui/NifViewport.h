@@ -86,6 +86,12 @@ public:
     void SetEnableParallax(bool on) { m_settings.enableParallax = on; Invalidate(); }
     void SetEnableComplexMaterial(bool on) { m_settings.enableComplexMaterial = on; Invalidate(); }
     void SetEnablePBR(bool on) { m_settings.enablePBR = on; Invalidate(); }
+    // Render-channel toggles (CHANNELS group): isolate one shading input.
+    void SetEnableTextures(bool on)     { m_settings.enableTextures = on; Invalidate(); }
+    void SetEnableVertexColors(bool on) { m_settings.enableVertexColors = on; Invalidate(); }
+    void SetEnableSpecular(bool on)     { m_settings.enableSpecular = on; Invalidate(); }
+    void SetEnableGlow(bool on)         { m_settings.enableGlow = on; Invalidate(); }
+    void SetEnableLighting(bool on)     { m_settings.enableLighting = on; Invalidate(); }
     // NifSkope's "Show Hidden": opt NiAVObject-hidden subtrees (furniture
     // marker rigs, editor markers, bounds placeholders) back into the
     // scene. Rebuilds the mesh list, so the current selection is cleared.

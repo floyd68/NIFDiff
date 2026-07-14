@@ -85,6 +85,8 @@ namespace
     constexpr std::uint32_t kLitPBRSubsurface     = 16777216; // PBR: t7 = subsurface color map
     constexpr std::uint32_t kLitCMParallax        = 33554432; // complex material's alpha carries a real height field
     constexpr std::uint32_t kLitDisableCM         = 67108864; // UI toggle: treat complex materials as vanilla env masks
+    constexpr std::uint32_t kLitNoVertexColor     = 134217728; // UI channel: whiten vertex color rgb (VS), keep alpha
+    constexpr std::uint32_t kLitUnlit             = 268435456; // UI channel: lighting off - raw textured surface
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
@@ -950,6 +952,10 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                     | kLitHasSoftlight | kLitHasRimlight | kLitHasBacklight | kLitHasSpecularMap
                     | kLitHasDetailMask | kLitHasTintMask | kLitMultiLayer);
                 flags |= kLitPBR;
+                // The PBR shader gates its GGX specular on the same bit the
+                // legacy path uses, so the Specular channel toggle below
+                // covers both paths.
+                flags |= kLitHasSpecular;
                 if (hasHeight)                              flags |= kLitHasHeightMap; // displacement bound
                 if (hasEnvMask)                             flags |= kLitHasEnvMask;   // RMAOS bound
                 if (hasGlowTex)                             flags |= kLitHasGlowMap;   // emissive map bound
@@ -985,6 +991,13 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             // surface. Drop specular so the base albedo/normal show through.
             if (mat.isPBR && !pbrActive)
                 flags &= ~kLitHasSpecular;
+            // Render-channel toggles: mask one shading input at a time so
+            // pane differences can be isolated to a channel.
+            if (!settings.enableTextures)     flags &= ~kLitHasDiffuse;
+            if (!settings.enableVertexColors) flags |= kLitNoVertexColor;
+            if (!settings.enableSpecular)     flags &= ~kLitHasSpecular;
+            if (!settings.enableGlow)         flags &= ~(kLitHasEmit | kLitHasGlowMap);
+            if (!settings.enableLighting)     flags |= kLitUnlit;
             cbObj.flags = flags;
 
             ID3D11ShaderResourceView* srvs[9] = {

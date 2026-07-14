@@ -77,6 +77,14 @@ public:
     void SetComplexMaterialToggleEnabled(bool enabled);
     void SetPBRToggleEnabled(bool enabled);
 
+    // Render-channel toggles (CHANNELS group): switch one shading input
+    // off at a time to isolate why two panes differ. Always enabled.
+    void SetOnTexturesEnabledChanged(std::function<void(bool)> handler);
+    void SetOnVertexColorsEnabledChanged(std::function<void(bool)> handler);
+    void SetOnSpecularEnabledChanged(std::function<void(bool)> handler);
+    void SetOnGlowEnabledChanged(std::function<void(bool)> handler);
+    void SetOnLightingEnabledChanged(std::function<void(bool)> handler);
+
     // Resources (Game Data / Override folders).
     void SetOnBrowseGameData(std::function<void()> handler);
     void SetOnDetectGameData(std::function<void()> handler);
@@ -111,6 +119,11 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_parallaxChk;
     std::shared_ptr<FD2D::CheckBox> m_complexMaterialChk;
     std::shared_ptr<FD2D::CheckBox> m_pbrChk;
+    std::shared_ptr<FD2D::CheckBox> m_texturesChk;
+    std::shared_ptr<FD2D::CheckBox> m_vertexColorsChk;
+    std::shared_ptr<FD2D::CheckBox> m_specularChk;
+    std::shared_ptr<FD2D::CheckBox> m_glowChk;
+    std::shared_ptr<FD2D::CheckBox> m_lightingChk;
 
     std::shared_ptr<FD2D::Text> m_gameDataLabel;
     std::shared_ptr<FD2D::Text> m_overrideLabel;

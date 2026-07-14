@@ -45,6 +45,14 @@ struct RenderSettings
     bool enableParallax = true;
     bool enableComplexMaterial = true;
     bool enablePBR = true;
+
+    // Render-channel toggles (bottom strip CHANNELS group): switch one
+    // shading input off at a time to isolate why two panes differ.
+    bool enableTextures = true;     // off: diffuse sampled as white
+    bool enableVertexColors = true; // off: vertex color rgb whitened (alpha kept)
+    bool enableSpecular = true;     // off: legacy Blinn-Phong AND PBR GGX specular dropped
+    bool enableGlow = true;         // off: emissive/glow contributions dropped
+    bool enableLighting = true;     // off: raw textured surface (unlit)
     Color4 clearColor { 0.09f, 0.09f, 0.10f, 1.0f };
     bool showGrid = true;
     bool showAxes = true;

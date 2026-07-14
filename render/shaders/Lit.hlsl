@@ -64,6 +64,8 @@
 //                                        16777216 PBR: t7 holds the subsurface color map
 //                                        33554432 complex material alpha is a real height field (CM parallax on)
 //                                        67108864 UI toggle: treat complex materials as vanilla env masks
+//                                        134217728 UI channel: ignore vertex colors (rgb whitened in VS, alpha kept)
+//                                        268435456 UI channel: lighting off - raw textured surface
 cbuffer PerFrame : register(b0)
 {
     row_major float4x4 gViewProj;
@@ -133,7 +135,10 @@ PSInput VSMain(VSInput input)
     output.normalWS = normalize(mul(gWorld, float4(input.normal, 0.0f)).xyz);
     output.tangentWS = normalize(mul(gWorld, float4(input.tangent, 0.0f)).xyz);
     output.uv = input.uv * gUvTransform.xy + gUvTransform.zw;
-    output.color = input.color;
+    // Vertex-color channel toggle: whiten the rgb here so every consumer
+    // downstream (legacy albedo, PBR albedo, effect shaders) is covered in
+    // one place; vertex ALPHA is kept - it carries blending, not tint.
+    output.color = (gFlags & 134217728) ? float4(1.0f, 1.0f, 1.0f, input.color.a) : input.color;
     return output;
 }
 
@@ -465,6 +470,8 @@ float4 PSMain(PSInput input) : SV_TARGET
         float G = (NdotV / (NdotV * (1.0f - k) + k)) * (NdotL / (NdotL * (1.0f - k) + k));
         float3 F = F0 + (1.0f - F0) * pow(1.0f - VdotH, 5.0f);
         float3 specBRDF = Dggx * G * F / max(4.0f * NdotV * NdotL, 1e-4f);
+        if ((gFlags & 2048) == 0) // specular channel toggle
+            specBRDF = float3(0, 0, 0);
 
         // The diffuse term drops the 1/PI (and the specular keeps a matching
         // PI) so overall brightness lines up with the legacy path's
@@ -507,7 +514,16 @@ float4 PSMain(PSInput input) : SV_TARGET
             colorP += subs.rgb * gSpecColor.rgb * gParams.y * wrap * gBrightness.xxx;
         }
 
-        colorP = Tonemap(colorP) / Tonemap(float3(1, 1, 1));
+        if (gFlags & 268435456)
+        {
+            // Lighting channel off: the raw textured surface, without the
+            // viewer's bake compensation or tonemapping.
+            colorP = base.rgb * input.color.rgb;
+        }
+        else
+        {
+            colorP = Tonemap(colorP) / Tonemap(float3(1, 1, 1));
+        }
         float alphaP = input.color.a * base.a * gGlowColor.a;
         if (gFlags & 4194304)
             clip(alphaP - gAlphaTest);
@@ -748,8 +764,18 @@ float4 PSMain(PSInput input) : SV_TARGET
     if (gFlags & 1024)
         albedo *= gTintColor.rgb;
 
-    float3 color = albedo * (diffuse + emissive) + spec;
-    color = Tonemap(color) / Tonemap(float3(1, 1, 1));
+    float3 color;
+    if (gFlags & 268435456)
+    {
+        // Lighting channel off: the raw textured surface (albedo already
+        // carries the base map, vertex color, env/cube and tint terms).
+        color = albedo;
+    }
+    else
+    {
+        color = albedo * (diffuse + emissive) + spec;
+        color = Tonemap(color) / Tonemap(float3(1, 1, 1));
+    }
 
     float alpha = input.color.a * baseMap.a * gGlowColor.a;
     if (gFlags & 4194304)                       // NiAlphaProperty alpha test (GL_ALPHA_TEST equivalent)

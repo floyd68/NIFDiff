@@ -116,6 +116,32 @@ NifCompareView::NifCompareView(const std::wstring& name)
         for (auto& p : m_panes)
             p->Viewport().SetEnablePBR(on);
     });
+
+    m_controls->SetOnTexturesEnabledChanged([this](bool on)
+    {
+        m_enableTextures = on;
+        for (auto& p : m_panes) p->Viewport().SetEnableTextures(on);
+    });
+    m_controls->SetOnVertexColorsEnabledChanged([this](bool on)
+    {
+        m_enableVertexColors = on;
+        for (auto& p : m_panes) p->Viewport().SetEnableVertexColors(on);
+    });
+    m_controls->SetOnSpecularEnabledChanged([this](bool on)
+    {
+        m_enableSpecular = on;
+        for (auto& p : m_panes) p->Viewport().SetEnableSpecular(on);
+    });
+    m_controls->SetOnGlowEnabledChanged([this](bool on)
+    {
+        m_enableGlow = on;
+        for (auto& p : m_panes) p->Viewport().SetEnableGlow(on);
+    });
+    m_controls->SetOnLightingEnabledChanged([this](bool on)
+    {
+        m_enableLighting = on;
+        for (auto& p : m_panes) p->Viewport().SetEnableLighting(on);
+    });
 }
 
 void NifCompareView::CreateInitialPanes()
@@ -142,6 +168,11 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetEnableComplexMaterial(m_enableComplexMaterial);
     pane->Viewport().SetEnablePBR(m_enablePBR);
     pane->Viewport().SetShowHiddenNodes(m_showHiddenNodes);
+    pane->Viewport().SetEnableTextures(m_enableTextures);
+    pane->Viewport().SetEnableVertexColors(m_enableVertexColors);
+    pane->Viewport().SetEnableSpecular(m_enableSpecular);
+    pane->Viewport().SetEnableGlow(m_enableGlow);
+    pane->Viewport().SetEnableLighting(m_enableLighting);
     WirePaneCallbacks(pane);
     return pane;
 }
