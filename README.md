@@ -95,16 +95,50 @@ the long-standing Qt-based NIF editor:
   [niftools/nifxml](https://github.com/niftools/nifxml) project that
   NifSkope itself uses, kept here for reference only (not parsed at
   build/run time - see `schema_reference/NOTES.md`).
-- `test_assets/*.nif` (once added) are small Skyrim SE/Fallout 4 NIF
-  fixtures used to smoke-test the parser.
+- `test_assets/*.nif` are small Skyrim SE/Fallout 4 NIF fixtures used to
+  smoke-test the parser - kept local-only (gitignored), since game-derived
+  meshes are not suitable for redistribution in a public repo.
 
-NifSkope is distributed under a permissive 3-clause-BSD-style license (see
-`D:\Works\nifskope\LICENSE.md`) that requires retaining its copyright
-notice and disclaimer in redistributed source/binaries derived from it.
-Keep that notice alongside any ported `core/`/`render/`/`ui` code that
-traces back to NifSkope sources - this is a separate, additional
-obligation on top of FICture2's own MIT license above, since the two
-pieces of ported code carry different licenses.
+NifSkope is distributed under a permissive 3-clause-BSD-style license that
+requires retaining its copyright notice and disclaimer in redistributed
+source/binaries derived from it. That notice is reproduced verbatim in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and must stay alongside
+any ported `core/`/`render/`/`ui` code that traces back to NifSkope
+sources - this is a separate, additional obligation on top of NIFDiff's
+own MIT license, since the two pieces of code carry different licenses.
+
+### ENB / Community Shaders / True PBR - conventions only
+
+The extended-material features (parallax `_p.dds`, ENB/CS "complex
+material" `_m.dds`, Community Shaders "True PBR" via PBRNifPatcher
+markings) implement community **file-format conventions**, not ported
+code:
+
+- The `_m.dds` channel layout (R=reflection, G=glossiness, B=metalness,
+  A=parallax height) and its "non-opaque coarsest mip" detection rule are
+  published texture-format conventions of the ENB / Community Shaders
+  ecosystem. ENB is closed-source; nothing of it is (or could be) included.
+- True PBR support reads PBRNifPatcher's flag/slot conventions
+  (SLSF2_Unused01 as the PBR marker, RMAOS packing) from the NIF; the
+  PBR shading itself is textbook GGX/Cook-Torrance written for this
+  viewer ("a credible preview, not CS-exact").
+- The parallax-occlusion-mapping and height-field self-shadow functions in
+  `render/shaders/Lit.hlsl` are an independent implementation of the
+  standard public technique (Tatarchuk, "Practical Parallax Occlusion
+  Mapping", GDC 2006). An earlier development revision ported Community
+  Shaders' GPL-3.0 `ExtendedMaterials.hlsli` here; it was rewritten
+  specifically to remove that GPL derivation, so the current tree contains
+  no Community Shaders code.
+
+## License
+
+NIFDiff is MIT licensed - see [LICENSE](LICENSE). Redistributions must
+also carry the third-party notices collected in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): the NifSkope BSD notice
+(for the ported NIF/3D logic), the LZ4 BSD-2 notice, and the MIT/zlib
+texts of FD2D, DirectXTex, spdlog, and zlib. That file also documents
+which referenced projects contributed *conventions only* with no code
+included (ENB, Community Shaders, PBRNifPatcher).
 
 ## Layout
 
@@ -118,7 +152,8 @@ ui/                NifViewport (single 3D view), NifComparePane (view + Open/Clo
                    NifCompareSplitCoordinator (2-4 pane equal-width layout),
                    NifCompareControlPanel (bottom strip), NifCompareView (top-level)
 schema_reference/  nif.xml reference (vendored from niftools/nifxml, not parsed at runtime)
-test_assets/       5 Skyrim SE/Fallout 4 smoke-test .nif fixtures
+test_assets/       local-only smoke-test .nif fixtures (gitignored - game-
+                   derived meshes are not redistributed with this repo)
 third_party/       git submodules: FD2D, Floar, external/DirectXTex (DDS decode
                    + D3D11 SRV creation), external/spdlog
 CMakeLists.txt     sets up third-party wiring + NIFDiff/NifValidate/ResourceResolveTest targets

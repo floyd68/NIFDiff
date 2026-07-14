@@ -46,6 +46,11 @@ cmake_install.cmake
 # App-level local state (window placement, last-opened files, Game Data path)
 *.ini
 
+# Local NIF fixtures for parser smoke-tests. Deliberately untracked: their
+# provenance (game-extracted meshes) makes them unsuitable for
+# redistribution in a public repo - keep your own copies here locally.
+test_assets/
+
 # Root directory build artifacts
 /*.exe
 /*.dll
