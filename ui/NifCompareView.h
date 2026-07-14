@@ -102,11 +102,17 @@ public:
     //
     // Also handles the application-wide keyboard shortcuts (KeyDown events
     // reach this view through Backplate's focused-then-broadcast routing):
-    //   F              Reset View            G  Grid       X  Axes
+    //   F              Reset View (all)      G  Grid       X  Axes
     //   W              Wireframe             H  Hidden
+    //   PgUp / PgDn    cycle camera preset
+    // and the pane-context ones, acting on the ACTIVE pane:
     //   1..8           select the active pane
-    //   PgUp / PgDn    cycle camera preset   Ctrl+O  Open into active pane
-    //   F12            Save Screenshot of the active pane
+    //   Tab / Shift+Tab  cycle the active pane
+    //   R              reset this pane's camera
+    //   Ctrl+O         open a file into this pane
+    //   Ctrl+W         close this pane        Del  clear its document
+    //   Ctrl+E         open its containing folder in Explorer
+    //   F12            save a screenshot of this pane
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
     // Explorer drag&drop (Backplate's OLE drop target, enabled by the app

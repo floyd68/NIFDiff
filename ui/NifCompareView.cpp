@@ -571,16 +571,76 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
 
     switch (event.keyCode)
     {
-    case 'F': // Reset View (same as the PANES button)
+    case 'F': // Reset View, every pane (same as the PANES button)
         for (auto& p : m_panes) p->Viewport().ResetCamera();
+        return true;
+
+    case 'R': // reset only the active pane's camera
+        if (NifComparePane* active = ActivePane())
+            active->Viewport().ResetCamera();
         return true;
 
     // Display toggles go through the control panel so the checkboxes stay
     // in sync (notify=true runs the same wired handlers a click would).
     case 'G': m_controls->ToggleShowGrid();   return true;
     case 'X': m_controls->ToggleShowAxes();   return true;
-    case 'W': m_controls->ToggleWireframe();  return true;
     case 'H': m_controls->ToggleShowHidden(); return true;
+
+    case 'W':
+        if (!ctrl)
+        {
+            m_controls->ToggleWireframe();
+            return true;
+        }
+        // Ctrl+W: close the active pane (same deferred path as the
+        // context menu item; a lone pane is never closed).
+        if (NifComparePane* active = ActivePane())
+            RequestClosePane(*active);
+        return true;
+
+    case 'E':
+        if (!ctrl)
+            return false;
+        // Ctrl+E: show the active pane's file in Explorer (same behavior
+        // as the context menu's "Open Containing Folder" - explorer's
+        // /select verb needs no COM apartment).
+        if (NifComparePane* active = ActivePane())
+        {
+            const NifDocument* doc = active->Document();
+            if (doc != nullptr && !doc->filePath().empty())
+            {
+                const std::wstring args = L"/select,\"" + doc->filePath() + L"\"";
+                ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+            }
+        }
+        return true;
+
+    case VK_DELETE: // clear the active pane's document, keep the pane
+        if (NifComparePane* active = ActivePane())
+            active->Clear();
+        return true;
+
+    case VK_TAB:
+    {
+        // Cycle the active pane (Shift+Tab goes backwards).
+        if (m_panes.empty())
+            return true;
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        std::size_t index = 0;
+        NifComparePane* active = ActivePane();
+        for (std::size_t i = 0; i < m_panes.size(); ++i)
+        {
+            if (m_panes[i].get() == active)
+            {
+                index = i;
+                break;
+            }
+        }
+        const std::size_t count = m_panes.size();
+        index = shift ? (index + count - 1) % count : (index + 1) % count;
+        SetActivePane(m_panes[index].get());
+        return true;
+    }
 
     case VK_PRIOR: m_controls->CycleOrientation(-1); return true; // PgUp
     case VK_NEXT:  m_controls->CycleOrientation(+1); return true; // PgDn

@@ -47,10 +47,12 @@ own copies.
 - **Active pane** (FICture2's focused-browser equivalent): any click in
   a pane makes it active, drawn with an accent border while several
   panes are open; pane-context shortcuts target it.
-- **Keyboard shortcuts**: `F` reset view, `G` grid, `X` axes,
-  `W` wireframe, `H` hidden, `1`-`8` select the active pane,
-  `PgUp`/`PgDn` cycle the camera preset, `Ctrl+O` open a file into the
-  active pane, `F12` save a screenshot of the active pane.
+- **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
+  `W` wireframe, `H` hidden, `PgUp`/`PgDn` cycle the camera preset;
+  pane-context keys acting on the active pane: `1`-`8` / `Tab` /
+  `Shift+Tab` select it, `R` resets its camera, `Ctrl+O` opens a file
+  into it, `Ctrl+W` closes it, `Del` clears its document, `Ctrl+E`
+  shows its file in Explorer, `F12` saves its screenshot.
 - **Per-pane context menu**: open/close the pane, open the containing
   folder in Explorer with the file selected, and save the pane's 3D
   render as a PNG (defaults next to the .nif, auto-numbered).
