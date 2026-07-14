@@ -362,6 +362,162 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
     return false;
 }
 
+namespace
+{
+    bool IsNifPath(const std::wstring& path)
+    {
+        std::wstring ext = std::filesystem::path(path).extension().wstring();
+        for (wchar_t& c : ext)
+            c = static_cast<wchar_t>(std::towlower(c));
+        return ext == L".nif";
+    }
+}
+
+NifComparePane* NifCompareView::PaneAt(const POINT& clientPt) const
+{
+    for (const auto& p : m_panes)
+    {
+        if (p && FD2D::Util::RectContainsPoint(p->LayoutRect(), clientPt))
+            return p.get();
+    }
+    return nullptr;
+}
+
+namespace
+{
+    // Relative X of the point inside the rect, 0..1.
+    float RelativeX(const D2D1_RECT_F& rc, const POINT& pt)
+    {
+        const float w = (std::max)(1.0f, rc.right - rc.left);
+        return (static_cast<float>(pt.x) - rc.left) / w;
+    }
+}
+
+bool NifCompareView::OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual)
+{
+    NifComparePane* pane = IsNifPath(path) ? PaneAt(clientPt) : nullptr;
+    if (pane == nullptr)
+    {
+        SetDragOverlay(nullptr, DragOverlayKind::None);
+        return false;
+    }
+
+    const bool insert = RelativeX(pane->LayoutRect(), clientPt) >= kInsertZoneRatio
+                        && m_panes.size() < kMaxPanes;
+    SetDragOverlay(pane, insert ? DragOverlayKind::Insert : DragOverlayKind::Replace);
+    outVisual = insert ? FD2D::FileDragVisual::Insert : FD2D::FileDragVisual::Replace;
+    return true;
+}
+
+void NifCompareView::OnFileDragLeave()
+{
+    FD2D::SplitPanel::OnFileDragLeave();
+    SetDragOverlay(nullptr, DragOverlayKind::None);
+}
+
+bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, const POINT& clientPt)
+{
+    SetDragOverlay(nullptr, DragOverlayKind::None);
+
+    std::vector<std::wstring> nifs;
+    for (const std::wstring& p : paths)
+    {
+        if (IsNifPath(p))
+            nifs.push_back(p);
+    }
+    if (nifs.empty())
+        return false;
+
+    NifComparePane* hit = PaneAt(clientPt);
+    if (hit == nullptr)
+        return false; // matches the drag-over decline: no target, no drop
+
+    // Same zone split the drag-over visual promised: right quarter inserts
+    // a NEW pane right after the hovered one, the rest replaces it.
+    NifComparePane* target = hit;
+    if (RelativeX(hit->LayoutRect(), clientPt) >= kInsertZoneRatio && m_panes.size() < kMaxPanes)
+    {
+        if (NifComparePane* inserted = InsertPaneAfter(hit))
+            target = inserted;
+    }
+
+    std::string error;
+    if (!target->Load(nifs.front(), &error))
+        NIFLOG_WARN("Drop: failed to load into the target pane ({}).", error);
+    for (std::size_t i = 1; i < nifs.size(); ++i)
+    {
+        if (!OpenIntoBestPane(nifs[i]))
+        {
+            NIFLOG_WARN("Drop: no pane left for {} more dropped file(s).", nifs.size() - i);
+            break;
+        }
+    }
+    Invalidate();
+    return true;
+}
+
+void NifCompareView::SetDragOverlay(NifComparePane* pane, DragOverlayKind kind)
+{
+    if (m_dragOverlayPane == pane && m_dragOverlayKind == kind)
+        return;
+    m_dragOverlayPane = pane;
+    m_dragOverlayKind = kind;
+    Invalidate();
+}
+
+NifComparePane* NifCompareView::InsertPaneAfter(NifComparePane* after)
+{
+    if (m_panes.size() >= kMaxPanes)
+        return nullptr;
+
+    std::shared_ptr<NifComparePane> pane = CreatePane();
+    auto insertAt = m_panes.end();
+    for (auto it = m_panes.begin(); it != m_panes.end(); ++it)
+    {
+        if (it->get() == after)
+        {
+            insertAt = it + 1;
+            break;
+        }
+    }
+    NifComparePane* raw = pane.get();
+    m_panes.insert(insertAt, std::move(pane));
+    RebuildHostTree();
+    return raw;
+}
+
+void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
+{
+    FD2D::SplitPanel::OnRenderOverlay(target);
+
+    if (target == nullptr || m_dragOverlayKind == DragOverlayKind::None || m_dragOverlayPane == nullptr)
+        return;
+    // A deferred close during the drag could have destroyed the pane;
+    // only draw over one that is still ours.
+    bool alive = false;
+    for (const auto& p : m_panes)
+        alive = alive || p.get() == m_dragOverlayPane;
+    if (!alive)
+        return;
+
+    // FICture2's drag-controller overlay: translucent red = the drop
+    // replaces this pane, translucent green over the insert zone (the
+    // right quarter) = the drop adds a new pane there.
+    D2D1_RECT_F rc = m_dragOverlayPane->LayoutRect();
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (m_dragOverlayKind == DragOverlayKind::Replace)
+    {
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 0.18f), &brush)))
+            target->FillRectangle(rc, brush.Get());
+    }
+    else
+    {
+        rc.left = rc.left + (rc.right - rc.left) * kInsertZoneRatio;
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 1.0f, 0.0f, 0.18f), &brush)))
+            target->FillRectangle(rc, brush.Get());
+    }
+}
+
 bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
 {
     // Backplate fills InputModifiers for mouse messages only; query the

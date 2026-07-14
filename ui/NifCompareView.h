@@ -99,6 +99,20 @@ public:
     //   F12            Save Pane Screenshot (first pane with a document)
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
+    // Explorer drag&drop (Backplate's OLE drop target, enabled by the app
+    // shell via EnsureDropTargetRegistered), FICture2's drag-controller
+    // semantics: hovering the left 75% of a pane REPLACES that pane's
+    // document (translucent red overlay over the whole pane), the right
+    // 25% INSERTS a new pane right after it (translucent green overlay
+    // over that strip; falls back to replace at kMaxPanes). A multi-file
+    // drop places the first file per the drop point and the rest into
+    // empty/new panes in order. Drags outside every pane are declined.
+    bool OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual) override;
+    bool OnFileDropPaths(const std::vector<std::wstring>& paths, const POINT& clientPt) override;
+    void OnFileDragLeave() override;
+    // Draws the drag overlay above the pane content (second D2D pass).
+    void OnRenderOverlay(ID2D1RenderTarget* target) override;
+
     // `clientPt` is in window client coordinates.
     void SetOnContextMenuRequested(std::function<void(POINT clientPt, NifComparePane* pane)> handler);
 
@@ -141,6 +155,15 @@ private:
     void RefreshExtendedMaterialControls();
     // Application-wide shortcuts - see OnInputEvent's comment for the map.
     bool HandleShortcutKey(const FD2D::InputEvent& event);
+    NifComparePane* PaneAt(const POINT& clientPt) const;
+
+    // Drag&drop internals (see the OnFileDrag comment above). The overlay
+    // pane pointer is validated against m_panes at draw time, so a pane
+    // removed mid-drag cannot dangle into OnRenderOverlay.
+    enum class DragOverlayKind { None, Replace, Insert };
+    static constexpr float kInsertZoneRatio = 0.75f; // FICture2's insert threshold
+    void SetDragOverlay(NifComparePane* pane, DragOverlayKind kind);
+    NifComparePane* InsertPaneAfter(NifComparePane* after); // nullptr at kMaxPanes
     // Publishes the loaded documents' file names/count into m_ipcQueue so
     // the IPC worker threads can gate incoming forwards without touching
     // the UI thread. Called wherever the document set changes.
@@ -164,6 +187,8 @@ private:
     static void CALLBACK TimerThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
 
     std::vector<std::shared_ptr<NifComparePane>> m_panes;
+    NifComparePane* m_dragOverlayPane = nullptr;
+    DragOverlayKind m_dragOverlayKind = DragOverlayKind::None;
     std::wstring m_hostName; // current first-child host tree, removed on rebuild (see RebuildHostTree)
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;

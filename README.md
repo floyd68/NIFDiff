@@ -50,6 +50,11 @@ own copies.
 - **Per-pane context menu**: open/close the pane, open the containing
   folder in Explorer with the file selected, and save the pane's 3D
   render as a PNG (defaults next to the .nif, auto-numbered).
+- **Drag & drop from Explorer** (FICture2's drag-controller semantics):
+  hovering the left 75% of a pane shows a red overlay and the drop
+  REPLACES that pane's document; the right 25% shows a green strip and
+  the drop INSERTS a new pane right after it. Multi-file drops place
+  the first file per the drop point and the rest into empty/new panes.
 
 ### Bethesda resource pipeline
 

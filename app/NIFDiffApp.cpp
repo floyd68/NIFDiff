@@ -678,6 +678,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             backplate->AddWnd(compareView);
         }
 
+        // Explorer drag&drop -> NifCompareView::OnFileDrag/OnFileDropPaths.
+        // Needs the HWND and OLE (initialized above), so this is the
+        // earliest safe point.
+        if (!backplate->EnsureDropTargetRegistered())
+            NIFLOG_ERROR("RegisterDragDrop failed - Explorer drag&drop disabled for this run.");
+
         backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow, ipcQueue](HWND hwnd)
         {
             // Stop routing IPC opens at a window that is about to die;
