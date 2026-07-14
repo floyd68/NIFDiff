@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace nsk
 {
@@ -68,6 +69,16 @@ public:
     // Computes both complex-material verdicts for the entry if not probed
     // yet (one DDS re-read, shared by the alpha and height questions).
     void EnsureCmProbe(Entry& entry);
+
+    // Parallel prefetch, called on the UI thread with every texture path a
+    // freshly built scene references: resolution stays on the calling
+    // thread (the archive readers are not established as thread-safe, and
+    // Find is ~0.3ms/path), then the unseen sources' file read + DDS parse
+    // + SRV creation - the actual cost, ~8ms each - fan out across worker
+    // threads (ID3D11Device resource creation is free-threaded). After
+    // this, the first frame's GetOrLoad calls are pool hits. Failures are
+    // left unpooled and take the normal lazy path.
+    void Prefetch(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory);
 
     void Clear() { m_bySource.clear(); }
 

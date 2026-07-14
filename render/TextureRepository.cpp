@@ -9,6 +9,10 @@
 
 #include <DirectXTex.h>
 
+#include <algorithm>
+#include <execution>
+#include <unordered_set>
+
 namespace nsk
 {
 namespace
@@ -120,6 +124,67 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
         entry.srv != nullptr, relativePath);
 
     return &m_bySource.emplace(found.sourceKey, std::move(entry)).first->second;
+}
+
+void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory)
+{
+    if (m_resolver == nullptr || m_device == nullptr || relativePaths.empty())
+        return;
+
+    struct PendingLoad
+    {
+        std::string sourceKey;
+        std::string relativePath;
+        ResourceBytes bytes;
+    };
+
+    // Phase 1 (calling thread): resolve + dedupe against the pool and
+    // within the request itself.
+    const auto t0 = StartupTrace::Clock::now();
+    std::vector<PendingLoad> pending;
+    std::unordered_set<std::string> seen;
+    for (const std::string& rel : relativePaths)
+    {
+        if (rel.empty())
+            continue;
+        ResourceBytes found = m_resolver->Find(rel, nifDirectory);
+        if (!found.ok())
+            continue;
+        if (m_bySource.find(found.sourceKey) != m_bySource.end() || !seen.insert(found.sourceKey).second)
+            continue;
+        std::string key = found.sourceKey;
+        pending.push_back(PendingLoad { std::move(key), rel, std::move(found) });
+    }
+    if (pending.empty())
+        return;
+
+    // Phase 2 (parallel): the per-texture cost - file read, DDS parse, SRV
+    // upload - is independent per source; Load* only touch DirectXTex and
+    // the free-threaded device.
+    std::vector<Entry> loaded(pending.size());
+    std::for_each(std::execution::par, pending.begin(), pending.end(),
+        [this, &pending, &loaded, &nifDirectory](PendingLoad& p)
+        {
+            const std::size_t i = static_cast<std::size_t>(&p - pending.data());
+            Entry& e = loaded[i];
+            e.relativePath = p.relativePath;
+            e.nifDirectory = nifDirectory;
+            if (!p.bytes.diskPath.empty())
+                e.srv = LoadFromDisk(p.bytes.diskPath, e.format);
+            else
+                e.srv = LoadFromMemory(p.bytes.data, e.format);
+        });
+
+    // Phase 3 (calling thread): publish into the pool.
+    std::size_t okCount = 0;
+    for (std::size_t i = 0; i < pending.size(); ++i)
+    {
+        okCount += loaded[i].srv != nullptr ? 1u : 0u;
+        m_bySource.emplace(std::move(pending[i].sourceKey), std::move(loaded[i]));
+    }
+    NIFLOG_INFO("[TEXLOAD] prefetch: {} path(s) -> {} new source(s), {} loaded ok, {:.1f}ms total",
+        relativePaths.size(), pending.size(), okCount,
+        std::chrono::duration<double, std::milli>(StartupTrace::Clock::now() - t0).count());
 }
 
 void TextureRepository::EnsureCmProbe(Entry& entry)

@@ -58,6 +58,15 @@ public:
         return e->cmAlpha;
     }
 
+    // Parallel-prefetch every path under this cache's resolution context
+    // (see TextureRepository::Prefetch); later GetOrLoad calls become pool
+    // hits. The per-path memo still forms lazily on first use.
+    void Prefetch(const std::vector<std::string>& relativePaths)
+    {
+        if (m_repository != nullptr)
+            m_repository->Prefetch(relativePaths, m_nifDirectory);
+    }
+
     bool HasComplexMaterialHeight(const std::string& relativePath)
     {
         TextureRepository::Entry* e = Lookup(relativePath);

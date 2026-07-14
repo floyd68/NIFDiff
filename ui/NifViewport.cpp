@@ -126,6 +126,29 @@ void NifViewport::RebuildScene()
         m_meshes = SceneBuilder::build(*m_doc);
     }
 
+    // Front-load every texture the scene references through the pool's
+    // parallel prefetch: the first frame's per-draw GetOrLoad calls then
+    // hit the pool instead of serially reading+uploading ~8ms per texture
+    // (measured 414ms -> parallel for a 26-shape PBR exterior).
+    if (m_textures)
+    {
+        StartupTrace::Phase p("    Texture prefetch (parallel)");
+        std::vector<std::string> paths;
+        paths.reserve(m_meshes.size() * 4);
+        for (const RenderMesh& mesh : m_meshes)
+        {
+            const NifMaterial& m = mesh.material;
+            for (const std::string* tex : { &m.diffuseTexture, &m.normalTexture, &m.glowTexture,
+                                            &m.heightTexture, &m.cubeTexture, &m.envMaskTexture,
+                                            &m.innerTexture, &m.backlightTexture, &m.greyscaleTexture })
+            {
+                if (!tex->empty())
+                    paths.push_back(*tex);
+            }
+        }
+        m_textures->Prefetch(paths);
+    }
+
     // Fit the camera to the combined bounding sphere of every mesh, mirroring
     // GLView's "center on load" behaviour (glview.cpp's Scene::updateSceneOptions
     // + centerOn() path prior to the first frame).
