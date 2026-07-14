@@ -39,7 +39,11 @@ own copies.
 - **Click-to-select**: a left click picks the sub-mesh under the cursor,
   overlays it in wireframe, and reports its shader classification; each
   pane also shows a shader-kind summary (e.g. `Default x8 · Parallax x3`)
-  and total triangle count in its status line.
+  and total triangle count in its status line. A double-click selects
+  AND frames the mesh under the cursor (empty space re-frames the whole
+  scene), and the mouse wheel zooms toward the cursor - together with
+  clip planes that adapt to the scene's size, this keeps tiny
+  silverware and huge exteriors equally navigable.
 - Orientation presets, Center/Reset view, wireframe/grid/axes toggles
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a
@@ -50,9 +54,10 @@ own copies.
 - **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
   `W` wireframe, `H` hidden, `PgUp`/`PgDn` cycle the camera preset;
   pane-context keys acting on the active pane: `1`-`8` / `Tab` /
-  `Shift+Tab` select it, `R` resets its camera, `Ctrl+O` opens a file
-  into it, `Ctrl+W` closes it, `Del` clears its document, `Ctrl+E`
-  shows its file in Explorer, `F12` saves its screenshot.
+  `Shift+Tab` select it, `R` resets its camera, `C` focuses its
+  selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+W` closes it,
+  `Del` clears its document, `Ctrl+E` shows its file in Explorer,
+  `F12` saves its screenshot.
 - **Per-pane context menu**: open/close the pane, open the containing
   folder in Explorer with the file selected, and save the pane's 3D
   render as a PNG (defaults next to the .nif, auto-numbered).

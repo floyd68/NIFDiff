@@ -172,9 +172,9 @@ void NifViewport::RebuildScene()
         // slightly-elevated orbit so a fresh load (or Center/Reset View)
         // always lands on the comfortable looking-down-at-the-model view
         // rather than whatever angles the camera was left at.
-        Vector3 center = (minB + maxB) * 0.5f;
-        float radius = (maxB - minB).length() * 0.5f;
-        m_camera.frame(center, (std::max)(radius, 1.0f));
+        m_sceneCenter = (minB + maxB) * 0.5f;
+        m_sceneRadius = (std::max)((maxB - minB).length() * 0.5f, 1.0f);
+        m_camera.frame(m_sceneCenter, m_sceneRadius);
         m_camera.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
     }
     else
@@ -182,6 +182,8 @@ void NifViewport::RebuildScene()
         // Empty pane: same elevated resting view aimed at the grid origin -
         // a level (or upward-looking) camera at ground height renders the
         // grid edge-on/from below, which reads as a broken viewport.
+        m_sceneCenter = Vector3();
+        m_sceneRadius = 50.0f;
         m_camera.frame(Vector3(), 50.0f);
         m_camera.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
     }
@@ -237,7 +239,19 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
 
     m_settings.view = m_camera.viewMatrix();
     float aspect = static_cast<float>(w) / static_cast<float>(h);
-    m_settings.proj = Camera::projectionMatrix(kFovY, aspect, 1.0f, 100000.0f);
+    // Adaptive clip planes (the old fixed 1..100000 pair clipped tiny
+    // models when leaning in and huge exteriors at their far side): the
+    // near plane pulls in as the eye approaches the scene sphere - down to
+    // a relative floor so silverware-sized meshes survive close
+    // inspection - and the far plane always covers the scene plus the
+    // fixed 200-unit grid.
+    const float sceneR = (std::max)(m_sceneRadius, 1.0f);
+    const float dist = m_camera.distance();
+    const float nearZ = std::clamp((dist - sceneR) * 0.2f,
+                                   (std::max)(sceneR, dist) * 1e-4f,
+                                   dist * 0.25f);
+    const float farZ = (std::max)(dist + (std::max)(sceneR * 4.0f, 600.0f), nearZ * 100.0f);
+    m_settings.proj = Camera::projectionMatrix(kFovY, aspect, nearZ, farZ);
     m_settings.eyePos = m_camera.eyePosition();
     m_settings.selectedMesh = m_selectedMesh;
 
@@ -390,10 +404,45 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
 
     case InputEventType::MouseWheel:
     {
-        float delta = static_cast<float>(event.wheelDelta) / 120.0f;
-        m_camera.dolly(-delta * m_camera.distance() * 0.1f);
+        // Zoom toward the cursor, not the orbit target: the world point
+        // under the cursor (at target depth) stays put while the distance
+        // scales, so content sitting off the bbox center can be zoomed at
+        // directly instead of sliding out of view. Exponential steps give
+        // the same per-notch feel as the old linear dolly at distance.
+        const float delta = static_cast<float>(event.wheelDelta) / 120.0f;
+        const float d = m_camera.distance();
+        const float dNew = (std::max)(d * std::pow(0.9f, delta), 0.01f);
+
+        Vector3 origin, dir;
+        if (event.hasPoint && RayThroughPoint(event.point, origin, dir))
+        {
+            Vector3 fwd = m_camera.forwardVector();
+            fwd.normalize();
+            const float denom = Vector3::dotproduct(dir, fwd);
+            if (denom > 1e-4f)
+            {
+                const Vector3 pivot = origin + dir * (d / denom);
+                const Vector3 t = m_camera.target();
+                m_camera.setTarget(pivot + (t - pivot) * (dNew / d));
+            }
+        }
+        m_camera.setDistance(dNew);
         if (m_onCameraChanged) m_onCameraChanged(m_camera);
         Invalidate();
+        return true;
+    }
+
+    case InputEventType::MouseDoubleClick:
+    {
+        if (event.button != MouseButton::Left || !event.hasPoint ||
+            !FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
+            break;
+        // Double-click focuses: on a mesh it selects + frames that mesh,
+        // on empty space it re-frames the whole scene (keeping the orbit).
+        const int hit = PickMeshAt(event.point);
+        if (hit >= 0)
+            SetSelectedMesh(hit);
+        FocusOnSelection();
         return true;
     }
 
@@ -559,6 +608,70 @@ const RenderMesh* NifViewport::SelectedMesh() const
     return &m_meshes[static_cast<std::size_t>(m_selectedMesh)];
 }
 
+bool NifViewport::RayThroughPoint(POINT pt, Vector3& outOrigin, Vector3& outDir) const
+{
+    const D2D1_RECT_F rect = LayoutRect();
+    const float w = rect.right - rect.left;
+    const float h = rect.bottom - rect.top;
+    if (w <= 0.0f || h <= 0.0f)
+        return false;
+
+    // Build the world-space ray through the pixel from the same camera
+    // basis + projection parameters OnRenderD3D renders with, so no matrix
+    // inversion is needed: in view space the pixel maps to direction
+    // (ndcX * tan(fov/2) * aspect, ndcY * tan(fov/2), 1).
+    const float ndcX = 2.0f * (static_cast<float>(pt.x) - rect.left) / w - 1.0f;
+    const float ndcY = 1.0f - 2.0f * (static_cast<float>(pt.y) - rect.top) / h;
+    const float tanHalf = std::tan(kFovY * 0.5f);
+    const float aspect = w / h;
+
+    Vector3 forward = m_camera.forwardVector();
+    forward.normalize();
+    Vector3 worldUp(0.0f, 1.0f, 0.0f);
+    Vector3 right = Vector3::crossproduct(worldUp, forward);
+    if (right.squaredLength() < 1e-8f)
+        right = Vector3(1.0f, 0.0f, 0.0f);
+    right.normalize();
+    Vector3 up = Vector3::crossproduct(forward, right);
+    up.normalize();
+
+    outOrigin = m_camera.eyePosition();
+    outDir = right * (ndcX * tanHalf * aspect) + up * (ndcY * tanHalf) + forward;
+    outDir.normalize();
+    return true;
+}
+
+void NifViewport::FocusOnSelection()
+{
+    Vector3 center = m_sceneCenter;
+    float radius = (std::max)(m_sceneRadius, 1.0f);
+
+    if (const RenderMesh* sel = SelectedMesh())
+    {
+        Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
+        bool any = false;
+        if (sel->geometry)
+        {
+            for (const Vector3& p : sel->geometry->positions)
+            {
+                Vector3 wp = sel->worldTransform * p;
+                minB.boundMin(wp);
+                maxB.boundMax(wp);
+                any = true;
+            }
+        }
+        if (any)
+        {
+            center = (minB + maxB) * 0.5f;
+            radius = (std::max)((maxB - minB).length() * 0.5f, 0.05f);
+        }
+    }
+
+    m_camera.frame(center, radius); // keeps the current yaw/pitch
+    if (m_onCameraChanged) m_onCameraChanged(m_camera);
+    Invalidate();
+}
+
 void NifViewport::SetShowHiddenNodes(bool show)
 {
     if (m_showHiddenNodes == show)
@@ -594,34 +707,9 @@ void NifViewport::SetSelectedMesh(int index)
 
 int NifViewport::PickMeshAt(POINT pt) const
 {
-    const D2D1_RECT_F rect = LayoutRect();
-    const float w = rect.right - rect.left;
-    const float h = rect.bottom - rect.top;
-    if (w <= 0.0f || h <= 0.0f || m_meshes.empty())
+    Vector3 origin, dir;
+    if (m_meshes.empty() || !RayThroughPoint(pt, origin, dir))
         return -1;
-
-    // Build the world-space ray through the clicked pixel from the same
-    // camera basis + projection parameters OnRenderD3D renders with, so no
-    // matrix inversion is needed: in view space the pixel maps to direction
-    // (ndcX * tan(fov/2) * aspect, ndcY * tan(fov/2), 1).
-    const float ndcX = 2.0f * (static_cast<float>(pt.x) - rect.left) / w - 1.0f;
-    const float ndcY = 1.0f - 2.0f * (static_cast<float>(pt.y) - rect.top) / h;
-    const float tanHalf = std::tan(kFovY * 0.5f);
-    const float aspect = w / h;
-
-    Vector3 forward = m_camera.forwardVector();
-    forward.normalize();
-    Vector3 worldUp(0.0f, 1.0f, 0.0f);
-    Vector3 right = Vector3::crossproduct(worldUp, forward);
-    if (right.squaredLength() < 1e-8f)
-        right = Vector3(1.0f, 0.0f, 0.0f);
-    right.normalize();
-    Vector3 up = Vector3::crossproduct(forward, right);
-    up.normalize();
-
-    const Vector3 origin = m_camera.eyePosition();
-    Vector3 dir = right * (ndcX * tanHalf * aspect) + up * (ndcY * tanHalf) + forward;
-    dir.normalize();
 
     // Nearest hit across every mesh's triangles, in world space (the CPU
     // triangle counts of NIF shapes are small enough that a brute-force

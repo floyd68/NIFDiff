@@ -580,6 +580,11 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
             active->Viewport().ResetCamera();
         return true;
 
+    case 'C': // focus the active pane's selected sub-mesh (whole scene when none)
+        if (NifComparePane* active = ActivePane())
+            active->Viewport().FocusOnSelection();
+        return true;
+
     // Display toggles go through the control panel so the checkboxes stay
     // in sync (notify=true runs the same wired handlers a click would).
     case 'G': m_controls->ToggleShowGrid();   return true;

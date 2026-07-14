@@ -92,6 +92,13 @@ public:
     void SetShowHiddenNodes(bool show);
     void ResetCamera();
 
+    // Frames the picked sub-mesh's world bounds (or the whole scene when
+    // nothing is selected), keeping the current orbit orientation - the
+    // remedy for scenes whose interesting meshes sit far off the overall
+    // bbox center. Double-clicking a mesh selects and focuses it in one
+    // go; double-clicking empty space re-frames the whole scene.
+    void FocusOnSelection();
+
     // Saves this viewport's last rendered 3D frame (the offscreen color
     // target - clean render, no path/stats chrome) as a PNG.
     bool SaveScreenshot(const std::wstring& path, std::string* error = nullptr)
@@ -126,10 +133,15 @@ private:
     void EnsureD2DTarget();
     void UpdateFrontalLight();
     int PickMeshAt(POINT pt) const; // -1 when no mesh under pt
+    // World-space ray through the given client pixel, from the same camera
+    // basis/fov the render uses. False when the viewport has no size.
+    bool RayThroughPoint(POINT pt, Vector3& outOrigin, Vector3& outDir) const;
     void SetSelectedMesh(int index);
 
     const NifDocument* m_doc = nullptr;
     std::vector<RenderMesh> m_meshes;
+    Vector3 m_sceneCenter;       // world bounds of the current mesh list,
+    float m_sceneRadius = 0.0f;  // for camera framing + adaptive clip planes
     Camera m_camera;
     RenderSettings m_settings;
     float m_lightDeclinationDeg = 45.0f;

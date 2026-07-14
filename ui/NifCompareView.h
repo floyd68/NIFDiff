@@ -109,6 +109,7 @@ public:
     //   1..8           select the active pane
     //   Tab / Shift+Tab  cycle the active pane
     //   R              reset this pane's camera
+    //   C              focus its selected sub-mesh (whole scene when none)
     //   Ctrl+O         open a file into this pane
     //   Ctrl+W         close this pane        Del  clear its document
     //   Ctrl+E         open its containing folder in Explorer
