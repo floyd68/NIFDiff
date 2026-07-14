@@ -50,8 +50,14 @@ namespace
     constexpr UINT kMenuIdAbout = 1;
     constexpr UINT kMenuIdFileAssociation = 2;
     constexpr UINT kMenuIdExit = 3;
+    constexpr UINT kMenuIdOpenPane = 4;
+    constexpr UINT kMenuIdClosePane = 5;
 
-    void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath)
+    // `pane` is the compare pane under the right-click (nullptr when the
+    // click landed outside every pane) - the Open/Close items that used to
+    // be a per-pane button row act on exactly that pane.
+    void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
+                            NifCompareView* view, NifComparePane* pane)
     {
         POINT screenPt = clientPt;
         ClientToScreen(hwnd, &screenPt);
@@ -63,6 +69,17 @@ namespace
         HMENU menu = CreatePopupMenu();
         if (menu == nullptr)
             return;
+        if (view != nullptr && pane != nullptr)
+        {
+            AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open .nif in This Pane...");
+            // Closing the last remaining pane is never allowed (see
+            // NifCompareView::QueueClosePane) - gray the item out instead of
+            // offering a click that silently does nothing.
+            const UINT closeFlags = MF_STRING |
+                (view->PaneCount() > NifCompareView::kMinPanes ? MF_ENABLED : MF_GRAYED);
+            AppendMenuW(menu, closeFlags, kMenuIdClosePane, L"&Close This Pane");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kMenuIdFileAssociation,
@@ -77,6 +94,16 @@ namespace
 
         switch (cmd)
         {
+        case kMenuIdOpenPane:
+            if (view != nullptr && pane != nullptr)
+                view->RequestOpenPane(*pane);
+            break;
+
+        case kMenuIdClosePane:
+            if (view != nullptr && pane != nullptr)
+                view->RequestClosePane(*pane);
+            break;
+
         case kMenuIdAbout:
             MessageBoxW(hwnd,
                 L"NIFDiff - NIF Model Compare\n"
@@ -478,12 +505,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
         std::weak_ptr<ResourceResolver> weakResolver = resolver;
 
-        compareView->SetOnContextMenuRequested([weakBackplate, iniPath](POINT clientPt)
+        compareView->SetOnContextMenuRequested([weakView, weakBackplate, iniPath](POINT clientPt, NifComparePane* pane)
         {
+            auto view = weakView.lock();
             auto bp = weakBackplate.lock();
-            if (!bp || bp->Window() == nullptr)
+            if (!view || !bp || bp->Window() == nullptr)
                 return;
-            ShowAppContextMenu(bp->Window(), clientPt, iniPath);
+            ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane);
+            bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
         compareView->SetOnPaneOpenRequested([weakBackplate](NifComparePane& pane)

@@ -1,10 +1,11 @@
-// NifComparePane.h - one compare slot in a dynamic 2-4 pane NifCompareView:
-// a NifViewport plus its own "Open ..."/"Close" button row docked directly
-// beneath it (so loading/closing a file is anchored right next to the view
-// it affects), generalizing the ad-hoc per-side leftDock/rightDock pattern
-// liteviewer's NifCompareView constructor used to hand-duplicate for exactly
-// two panes (see NIF_DIFF_VIEWER.md / README.md's FICture2-composition note)
-// into a reusable class that NifCompareView can instantiate 1-4 of.
+// NifComparePane.h - one compare slot in a dynamic 1-8 pane NifCompareView:
+// a NifViewport plus a top path strip, generalizing the ad-hoc per-side
+// leftDock/rightDock pattern liteviewer's NifCompareView constructor used to
+// hand-duplicate for exactly two panes (see NIF_DIFF_VIEWER.md / README.md's
+// FICture2-composition note) into a reusable class NifCompareView can
+// instantiate up to kMaxPanes of. Opening/closing a pane lives in the
+// right-click context menu (see NifCompareView::SetOnContextMenuRequested),
+// not in per-pane buttons.
 #pragma once
 
 #include "NifViewport.h"
@@ -12,7 +13,6 @@
 #include "../core/ResourceResolver.h"
 
 #include <DockPanel.h>
-#include <Button.h>
 #include <Text.h>
 #include <functional>
 #include <memory>
@@ -35,17 +35,12 @@ public:
     void SetResourceResolver(ResourceResolver* resolver);
     void InvalidateTextureCache();
 
-    void SetOnOpen(std::function<void()> handler);
-    void SetOnClose(std::function<void()> handler);
-
 private:
     void UpdatePathLabel();
 
     std::shared_ptr<NifViewport> m_viewport;
     std::shared_ptr<FD2D::Text> m_pathLabel; // top strip: full path of the loaded .nif + picked sub-mesh name
     std::wstring m_selectedName;             // name of the viewport's picked sub-mesh, empty when none
-    std::shared_ptr<FD2D::Button> m_openBtn;
-    std::shared_ptr<FD2D::Button> m_closeBtn;
     std::unique_ptr<NifDocument> m_doc;
 };
 

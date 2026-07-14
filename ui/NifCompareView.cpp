@@ -2,6 +2,7 @@
 #include "IpcOpenRequest.h"
 
 #include <Backplate.h>
+#include <Util.h>
 #include <algorithm>
 
 #ifndef NOMINMAX
@@ -119,17 +120,17 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
         m_applyingSync = false;
     });
 
-    pane->SetOnOpen([this, paneRaw]()
-    {
-        if (m_onPaneOpenRequested)
-            m_onPaneOpenRequested(*paneRaw);
-    });
+}
 
-    const std::wstring paneName = pane->Name();
-    pane->SetOnClose([this, paneName]()
-    {
-        QueueClosePane(paneName);
-    });
+void NifCompareView::RequestOpenPane(NifComparePane& pane)
+{
+    if (m_onPaneOpenRequested)
+        m_onPaneOpenRequested(pane);
+}
+
+void NifCompareView::RequestClosePane(NifComparePane& pane)
+{
+    QueueClosePane(pane.Name());
 }
 
 NifComparePane* NifCompareView::AddPane()
@@ -211,13 +212,23 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
         event.hasPoint &&
         m_onContextMenuRequested)
     {
-        m_onContextMenuRequested(event.point);
+        // Per-pane menu items act on the pane under the cursor.
+        NifComparePane* hitPane = nullptr;
+        for (auto& p : m_panes)
+        {
+            if (p && FD2D::Util::RectContainsPoint(p->LayoutRect(), event.point))
+            {
+                hitPane = p.get();
+                break;
+            }
+        }
+        m_onContextMenuRequested(event.point, hitPane);
         return true;
     }
     return false;
 }
 
-void NifCompareView::SetOnContextMenuRequested(std::function<void(POINT)> handler)
+void NifCompareView::SetOnContextMenuRequested(std::function<void(POINT, NifComparePane*)> handler)
 {
     m_onContextMenuRequested = std::move(handler);
 }
