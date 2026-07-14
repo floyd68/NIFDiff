@@ -37,7 +37,14 @@ public:
     // labels; the result is cached per path.
     bool HasComplexMaterialAlpha(const std::string& relativePath);
 
-    void Clear() { m_cache.clear(); m_cmCache.clear(); }
+    // Whether a complex material's alpha actually VARIES - i.e. carries a
+    // usable height field. Tools emit flat-alpha _m textures for sources
+    // with no height data; running POM over a constant height produces a
+    // uniform view-dependent offset (texture "swimming" with zero relief),
+    // so the renderer disables CM parallax for these. Cached per path.
+    bool HasComplexMaterialHeight(const std::string& relativePath);
+
+    void Clear() { m_cache.clear(); m_cmCache.clear(); m_cmHeightCache.clear(); }
 
 private:
     ID3D11ShaderResourceView* LoadFromDisk(const std::wstring& fullPath);
@@ -47,7 +54,8 @@ private:
     ResourceResolver* m_resolver = nullptr;
     std::wstring m_nifDirectory;
     std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> m_cache;
-    std::unordered_map<std::string, bool> m_cmCache; // complex-material probe results
+    std::unordered_map<std::string, bool> m_cmCache;       // complex-material probe results
+    std::unordered_map<std::string, bool> m_cmHeightCache; // CM height-variation probe results
 };
 
 } // namespace nsk

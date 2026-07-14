@@ -150,6 +150,82 @@ bool TextureCache::HasComplexMaterialAlpha(const std::string& relativePath)
     return result;
 }
 
+bool TextureCache::HasComplexMaterialHeight(const std::string& relativePath)
+{
+    if (relativePath.empty() || m_resolver == nullptr)
+        return false;
+    auto it = m_cmHeightCache.find(relativePath);
+    if (it != m_cmHeightCache.end())
+        return it->second;
+
+    bool result = false;
+    ResourceBytes found = m_resolver->Find(relativePath, m_nifDirectory);
+    DirectX::TexMetadata meta {};
+    DirectX::ScratchImage img;
+    HRESULT hr = E_FAIL;
+    if (!found.diskPath.empty())
+        hr = DirectX::LoadFromDDSFile(found.diskPath.c_str(), DirectX::DDS_FLAGS_NONE, &meta, img);
+    else if (!found.data.empty())
+        hr = DirectX::LoadFromDDSMemory(found.data.data(), found.data.size(), DirectX::DDS_FLAGS_NONE, &meta, img);
+
+    if (SUCCEEDED(hr) && meta.mipLevels > 0)
+    {
+        // A mid-resolution mip is plenty to judge variation and cheap to
+        // decode; index 2 (quarter res) when available.
+        const std::size_t mip = meta.mipLevels > 2 ? 2 : meta.mipLevels - 1;
+        const DirectX::Image* src = img.GetImage(mip, 0, 0);
+        DirectX::ScratchImage decoded;
+        const DirectX::Image* px = nullptr;
+        if (src != nullptr)
+        {
+            if (DirectX::IsCompressed(meta.format))
+            {
+                if (SUCCEEDED(DirectX::Decompress(*src, DXGI_FORMAT_R8G8B8A8_UNORM, decoded)))
+                    px = decoded.GetImage(0, 0, 0);
+            }
+            else if (meta.format == DXGI_FORMAT_R8G8B8A8_UNORM)
+            {
+                px = src;
+            }
+            else if (SUCCEEDED(DirectX::Convert(*src, DXGI_FORMAT_R8G8B8A8_UNORM,
+                         DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, decoded)))
+            {
+                px = decoded.GetImage(0, 0, 0);
+            }
+        }
+        if (px != nullptr && px->pixels != nullptr)
+        {
+            std::uint8_t lo = 255, hi = 0;
+            std::size_t midCount = 0;
+            for (std::size_t y = 0; y < px->height; ++y)
+            {
+                const std::uint8_t* row = px->pixels + y * px->rowPitch;
+                for (std::size_t x = 0; x < px->width; ++x)
+                {
+                    const std::uint8_t a = row[x * 4 + 3];
+                    lo = a < lo ? a : lo;
+                    hi = a > hi ? a : hi;
+                    midCount += (a > 8 && a < 247) ? 1 : 0;
+                }
+            }
+            // Two ways an _m alpha varies without being a height field:
+            // BC compression wobbles a flat channel by a few steps (require
+            // a real spread), and some materials store a binary 0/255 MASK
+            // in the alpha (guard-armor trims etc.) - the shader's
+            // per-pixel extremes guard skips POM there anyway, so also
+            // require a meaningful share of mid-range texels. Authored
+            // heights are continuous: sampled vanilla height fields measure
+            // ~100% mid-range vs <3% for masks, so the 10% line isn't
+            // delicate.
+            const std::size_t total = px->width * px->height;
+            result = (hi - lo) >= 16 && total > 0 && midCount * 10 >= total;
+        }
+    }
+
+    m_cmHeightCache.emplace(relativePath, result);
+    return result;
+}
+
 ID3D11ShaderResourceView* TextureCache::GetOrLoad(const std::string& relativePath)
 {
     auto it = m_cache.find(relativePath);

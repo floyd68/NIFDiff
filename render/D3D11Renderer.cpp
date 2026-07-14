@@ -74,6 +74,7 @@ namespace
     constexpr std::uint32_t kLitAlphaTest         = 4194304; // NiAlphaProperty alpha test -> clip()
     constexpr std::uint32_t kLitPBR               = 8388608; // Community Shaders True PBR path
     constexpr std::uint32_t kLitPBRSubsurface     = 16777216; // PBR: t7 = subsurface color map
+    constexpr std::uint32_t kLitCMParallax        = 33554432; // complex material's alpha carries a real height field
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
@@ -798,6 +799,17 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             {
                 flags |= kLitAlphaTest;
                 cbObj.alphaTest = mat.alphaTestThreshold;
+            }
+            // CM parallax runs only when the _m's alpha actually varies:
+            // tools emit flat-alpha complex materials for textures with no
+            // height source, and POM over a constant height is a uniform
+            // view-dependent shift - pure texture swimming (the shader still
+            // detects CM itself for the gloss/metal channels).
+            if (!mat.isPBR && mat.useEnvironmentMask && hasEnvMask && textures
+                && textures->HasComplexMaterialAlpha(mat.envMaskTexture)
+                && textures->HasComplexMaterialHeight(mat.envMaskTexture))
+            {
+                flags |= kLitCMParallax;
             }
             cbObj.flags = flags;
 
