@@ -90,6 +90,26 @@ NifCompareView::NifCompareView(const std::wstring& name)
         for (auto& p : m_panes)
             p->Viewport().SetParallaxHeightScale(v);
     });
+
+    // Extended-material toggles - display settings, applied to every pane.
+    m_controls->SetOnParallaxEnabledChanged([this](bool on)
+    {
+        m_enableParallax = on;
+        for (auto& p : m_panes)
+            p->Viewport().SetEnableParallax(on);
+    });
+    m_controls->SetOnComplexMaterialEnabledChanged([this](bool on)
+    {
+        m_enableComplexMaterial = on;
+        for (auto& p : m_panes)
+            p->Viewport().SetEnableComplexMaterial(on);
+    });
+    m_controls->SetOnPBREnabledChanged([this](bool on)
+    {
+        m_enablePBR = on;
+        for (auto& p : m_panes)
+            p->Viewport().SetEnablePBR(on);
+    });
 }
 
 void NifCompareView::CreateInitialPanes()
@@ -108,6 +128,9 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
         pane->SetResourceResolver(m_resolver);
     }
     pane->Viewport().SetParallaxHeightScale(m_parallaxHeightScale);
+    pane->Viewport().SetEnableParallax(m_enableParallax);
+    pane->Viewport().SetEnableComplexMaterial(m_enableComplexMaterial);
+    pane->Viewport().SetEnablePBR(m_enablePBR);
     WirePaneCallbacks(pane);
     return pane;
 }
@@ -133,22 +156,34 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
 
     pane->SetOnDocumentChanged([this]()
     {
-        RefreshParallaxSliderEnabled();
+        RefreshExtendedMaterialControls();
     });
 }
 
-void NifCompareView::RefreshParallaxSliderEnabled()
+void NifCompareView::RefreshExtendedMaterialControls()
 {
+    // The height slider follows slider-driven parallax only
+    // (HasActiveParallax); the three feature toggles follow their own
+    // per-feature presence tests, so e.g. loading a lone PBR NIF enables
+    // "True PBR" and "Parallax" (its _p displacement) but not "Complex Mat".
+    bool anySliderParallax = false;
     bool anyParallax = false;
+    bool anyComplexMaterial = false;
+    bool anyPBR = false;
     for (auto& p : m_panes)
     {
-        if (p && p->Viewport().HasActiveParallax())
-        {
-            anyParallax = true;
-            break;
-        }
+        if (!p)
+            continue;
+        NifViewport& vp = p->Viewport();
+        anySliderParallax = anySliderParallax || vp.HasActiveParallax();
+        anyParallax = anyParallax || vp.HasParallaxMaterials();
+        anyComplexMaterial = anyComplexMaterial || vp.HasComplexMaterials();
+        anyPBR = anyPBR || vp.HasPBRMaterials();
     }
-    m_controls->SetParallaxHeightEnabled(anyParallax);
+    m_controls->SetParallaxHeightEnabled(anySliderParallax);
+    m_controls->SetParallaxToggleEnabled(anyParallax);
+    m_controls->SetComplexMaterialToggleEnabled(anyComplexMaterial);
+    m_controls->SetPBRToggleEnabled(anyPBR);
 }
 
 void NifCompareView::RequestOpenPane(NifComparePane& pane)
@@ -328,8 +363,8 @@ void NifCompareView::RebuildHostTree()
     Invalidate();
 
     // The pane set changed: the removed/added panes may change whether any
-    // parallax-active document is still open.
-    RefreshParallaxSliderEnabled();
+    // extended-material document is still open.
+    RefreshExtendedMaterialControls();
 }
 
 void NifCompareView::RecalcControlStripExtent()

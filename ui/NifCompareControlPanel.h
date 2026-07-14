@@ -46,10 +46,22 @@ public:
 
     // POM height budget (vanilla/_m parallax HeightScale). The slider is
     // grayed out unless some loaded NIF actually runs height parallax -
-    // see NifCompareView::RefreshParallaxSliderEnabled.
+    // see NifCompareView::RefreshExtendedMaterialControls.
     void SetOnParallaxHeightChanged(std::function<void(float)> handler);
     void SetParallaxHeightEnabled(bool enabled);
     float ParallaxHeightValue() const;
+
+    // Extended-material feature toggles (Parallax / Complex Material /
+    // True PBR); off renders the closest legacy interpretation. Each
+    // checkbox is grayed out unless some loaded NIF carries material the
+    // toggle would affect - see NifCompareView's
+    // RefreshExtendedMaterialControls.
+    void SetOnParallaxEnabledChanged(std::function<void(bool)> handler);
+    void SetOnComplexMaterialEnabledChanged(std::function<void(bool)> handler);
+    void SetOnPBREnabledChanged(std::function<void(bool)> handler);
+    void SetParallaxToggleEnabled(bool enabled);
+    void SetComplexMaterialToggleEnabled(bool enabled);
+    void SetPBRToggleEnabled(bool enabled);
 
     // Resources (Game Data / Override folders).
     void SetOnBrowseGameData(std::function<void()> handler);
@@ -74,6 +86,9 @@ private:
     std::shared_ptr<FD2D::Slider> m_declinationSlider;
     std::shared_ptr<FD2D::Slider> m_planarAngleSlider;
     std::shared_ptr<FD2D::Slider> m_parallaxSlider;
+    std::shared_ptr<FD2D::CheckBox> m_parallaxChk;
+    std::shared_ptr<FD2D::CheckBox> m_complexMaterialChk;
+    std::shared_ptr<FD2D::CheckBox> m_pbrChk;
 
     std::shared_ptr<FD2D::Text> m_gameDataLabel;
     std::shared_ptr<FD2D::Text> m_overrideLabel;

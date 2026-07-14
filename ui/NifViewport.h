@@ -77,6 +77,9 @@ public:
     void SetShowAxes(bool show) { m_settings.showAxes = show; Invalidate(); }
     void SetWireframe(bool wire) { m_settings.wireframe = wire; Invalidate(); }
     void SetParallaxHeightScale(float v) { m_settings.parallaxHeightScale = v; Invalidate(); }
+    void SetEnableParallax(bool on) { m_settings.enableParallax = on; Invalidate(); }
+    void SetEnableComplexMaterial(bool on) { m_settings.enableComplexMaterial = on; Invalidate(); }
+    void SetEnablePBR(bool on) { m_settings.enablePBR = on; Invalidate(); }
     void ResetCamera();
 
     // Whether any loaded mesh actually runs the height-based parallax the
@@ -85,6 +88,15 @@ public:
     // env mask alpha. True PBR displacement is excluded - it follows the
     // authored displacement_scale, not the slider.
     bool HasActiveParallax();
+
+    // Per-feature presence tests for the bottom strip's extended-material
+    // toggles - each checkbox is only enabled while some loaded pane has
+    // material the toggle would actually change. HasParallaxMaterials is
+    // HasActiveParallax plus True PBR displacement (the Parallax toggle
+    // masks PBR's _p POM too, unlike the slider).
+    bool HasParallaxMaterials();
+    bool HasComplexMaterials();
+    bool HasPBRMaterials() const;
 
     void OnAttached(FD2D::Backplate& backplate) override;
     FD2D::Size Measure(FD2D::Size available) override;

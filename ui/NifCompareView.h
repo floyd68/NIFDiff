@@ -116,7 +116,9 @@ private:
     std::shared_ptr<NifComparePane> CreatePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
     void RebuildHostTree();
-    void RefreshParallaxSliderEnabled();
+    // Grays out the "Parallax Height" slider and the three extended-material
+    // toggles unless some loaded pane carries material each control affects.
+    void RefreshExtendedMaterialControls();
     void RecalcControlStripExtent();
     void ApplyOrientationPreset(int index);
 
@@ -148,6 +150,9 @@ private:
     bool m_syncLighting = true;
     bool m_applyingSync = false; // re-entrancy guard while mirroring camera changes
     float m_parallaxHeightScale = 2.0f; // current "Parallax Height" slider value, applied to new panes
+    bool m_enableParallax = true;        // extended-material toggles, mirrored onto new panes
+    bool m_enableComplexMaterial = true;
+    bool m_enablePBR = true;
 };
 
 } // namespace nsk

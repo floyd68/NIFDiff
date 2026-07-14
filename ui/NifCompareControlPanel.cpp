@@ -98,6 +98,29 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_parallaxSlider->SetEnabled(false);
     row2->AddChild(m_parallaxSlider);
 
+    // Extended-material toggles: off = the closest legacy interpretation
+    // (no POM, complex materials as plain env masks, PBR through the
+    // vanilla lit path) - handy for before/after comparisons. Each starts
+    // disabled like the parallax slider; NifCompareView enables one while
+    // some loaded NIF carries material that toggle would affect.
+    m_parallaxChk = std::make_shared<FD2D::CheckBox>(L"EnableParallax");
+    m_parallaxChk->SetLabel(L"Parallax");
+    m_parallaxChk->SetChecked(true);
+    m_parallaxChk->SetEnabled(false);
+    row2->AddChild(m_parallaxChk);
+
+    m_complexMaterialChk = std::make_shared<FD2D::CheckBox>(L"EnableComplexMaterial");
+    m_complexMaterialChk->SetLabel(L"Complex Mat");
+    m_complexMaterialChk->SetChecked(true);
+    m_complexMaterialChk->SetEnabled(false);
+    row2->AddChild(m_complexMaterialChk);
+
+    m_pbrChk = std::make_shared<FD2D::CheckBox>(L"EnablePBR");
+    m_pbrChk->SetLabel(L"True PBR");
+    m_pbrChk->SetChecked(true);
+    m_pbrChk->SetEnabled(false);
+    row2->AddChild(m_pbrChk);
+
     AddChild(row2);
 
     // Row 3: resources (Game Data / Overrides).
@@ -153,6 +176,12 @@ void NifCompareControlPanel::SetOnPlanarAngleChanged(std::function<void(float)> 
 void NifCompareControlPanel::SetOnParallaxHeightChanged(std::function<void(float)> handler) { m_parallaxSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetParallaxHeightEnabled(bool enabled) { m_parallaxSlider->SetEnabled(enabled); }
 float NifCompareControlPanel::ParallaxHeightValue() const { return m_parallaxSlider->Value(); }
+void NifCompareControlPanel::SetOnParallaxEnabledChanged(std::function<void(bool)> handler) { m_parallaxChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnComplexMaterialEnabledChanged(std::function<void(bool)> handler) { m_complexMaterialChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnPBREnabledChanged(std::function<void(bool)> handler) { m_pbrChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetParallaxToggleEnabled(bool enabled) { m_parallaxChk->SetEnabled(enabled); }
+void NifCompareControlPanel::SetComplexMaterialToggleEnabled(bool enabled) { m_complexMaterialChk->SetEnabled(enabled); }
+void NifCompareControlPanel::SetPBRToggleEnabled(bool enabled) { m_pbrChk->SetEnabled(enabled); }
 
 void NifCompareControlPanel::SetOnBrowseGameData(std::function<void()> handler) { m_browseGameDataBtn->OnClick(std::move(handler)); }
 void NifCompareControlPanel::SetOnDetectGameData(std::function<void()> handler) { m_detectGameDataBtn->OnClick(std::move(handler)); }

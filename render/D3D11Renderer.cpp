@@ -75,6 +75,7 @@ namespace
     constexpr std::uint32_t kLitPBR               = 8388608; // Community Shaders True PBR path
     constexpr std::uint32_t kLitPBRSubsurface     = 16777216; // PBR: t7 = subsurface color map
     constexpr std::uint32_t kLitCMParallax        = 33554432; // complex material's alpha carries a real height field
+    constexpr std::uint32_t kLitDisableCM         = 67108864; // UI toggle: treat complex materials as vanilla env masks
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
@@ -746,7 +747,10 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             // True PBR re-binds the repurposed slots directly (the vanilla
             // feature gates above never fire for a PBR material): t3 =
             // displacement, t5 = RMAOS, t2 = emissive, t7 = subsurface map.
-            if (mat.isPBR)
+            // With the UI's True PBR toggle off, the material stays on the
+            // legacy bindings/path - the closest vanilla interpretation.
+            const bool pbrActive = mat.isPBR && settings.enablePBR;
+            if (pbrActive)
             {
                 std::tie(heightSrv, hasHeight) = resolve(mat.heightTexture, m_blackTexSRV.Get());
                 std::tie(envMaskSrv, hasEnvMask) = resolve(mat.envMaskTexture, m_whiteTexSRV.Get());
@@ -780,7 +784,7 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                 if (mat.greyscaleAlpha && hasAux)     flags |= kLitEffectGreyscaleAlpha;
                 if (mat.hasWeaponBlood)               flags |= kLitEffectWeaponBlood;
             }
-            if (mat.isPBR)
+            if (pbrActive)
             {
                 // The PBR shader path reinterprets the per-slot bits (see
                 // Shaders.h's table): keep only the texture-presence facts
@@ -811,6 +815,20 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             {
                 flags |= kLitCMParallax;
             }
+            // Extended-material UI toggles: mask parallax/displacement out
+            // entirely, and force complex materials down the vanilla
+            // env-mask interpretation.
+            if (!settings.enableParallax)
+                flags &= ~(kLitHasHeightMap | kLitCMParallax);
+            if (!settings.enableComplexMaterial)
+                flags |= kLitDisableCM;
+            // PBR material on the legacy path (True PBR toggle off): its
+            // specular fields are repurposed PBR terms (Glossiness = spec
+            // level ~0.04, strength = roughness scale, color = subsurface
+            // tint), which Blinn-Phong reads as a white sheen over the whole
+            // surface. Drop specular so the base albedo/normal show through.
+            if (mat.isPBR && !pbrActive)
+                flags &= ~kLitHasSpecular;
             cbObj.flags = flags;
 
             ID3D11ShaderResourceView* srvs[9] = {

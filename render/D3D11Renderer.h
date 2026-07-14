@@ -37,6 +37,14 @@ struct RenderSettings
     float ambient = 0.35f;
     float brightness = 1.0f;
     float parallaxHeightScale = 2.0f; // vanilla/_m POM HeightScale (0.1*scale UV depth budget); PBR unaffected
+
+    // Extended-material feature toggles (bottom control strip). Off = the
+    // material renders through the closest legacy interpretation instead:
+    // no POM/displacement, complex materials as plain env-mapped surfaces,
+    // True PBR through the vanilla lit path.
+    bool enableParallax = true;
+    bool enableComplexMaterial = true;
+    bool enablePBR = true;
     Color4 clearColor { 0.09f, 0.09f, 0.10f, 1.0f };
     bool showGrid = true;
     bool showAxes = true;

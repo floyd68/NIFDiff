@@ -449,7 +449,42 @@ bool NifViewport::HasActiveParallax()
         if (m.hasHeightMap)
             return true;
         if (m.hasEnvironmentMap && !m.envMaskTexture.empty() && m_textures
+            && m_textures->HasComplexMaterialAlpha(m.envMaskTexture)
+            && m_textures->HasComplexMaterialHeight(m.envMaskTexture))
+            return true;
+    }
+    return false;
+}
+
+bool NifViewport::HasParallaxMaterials()
+{
+    if (HasActiveParallax())
+        return true;
+    for (const RenderMesh& mesh : m_meshes)
+    {
+        if (mesh.material.isPBR && !mesh.material.heightTexture.empty())
+            return true;
+    }
+    return false;
+}
+
+bool NifViewport::HasComplexMaterials()
+{
+    for (const RenderMesh& mesh : m_meshes)
+    {
+        const NifMaterial& m = mesh.material;
+        if (!m.isPBR && m.hasEnvironmentMap && !m.envMaskTexture.empty() && m_textures
             && m_textures->HasComplexMaterialAlpha(m.envMaskTexture))
+            return true;
+    }
+    return false;
+}
+
+bool NifViewport::HasPBRMaterials() const
+{
+    for (const RenderMesh& mesh : m_meshes)
+    {
+        if (mesh.material.isPBR)
             return true;
     }
     return false;
