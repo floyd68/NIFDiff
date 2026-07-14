@@ -41,6 +41,8 @@ public:
     void SetOnShowGridChanged(std::function<void(bool)> handler);
     void SetOnShowAxesChanged(std::function<void(bool)> handler);
     void SetOnWireframeChanged(std::function<void(bool)> handler);
+    // NifSkope's "Show Hidden": render NiAVObject-hidden subtrees too.
+    void SetOnShowHiddenChanged(std::function<void(bool)> handler);
 
     void SetOnBrightnessChanged(std::function<void(float)> handler);
     void SetOnAmbientChanged(std::function<void(float)> handler);
@@ -91,6 +93,7 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_showGridChk;
     std::shared_ptr<FD2D::CheckBox> m_showAxesChk;
     std::shared_ptr<FD2D::CheckBox> m_wireframeChk;
+    std::shared_ptr<FD2D::CheckBox> m_showHiddenChk;
     std::shared_ptr<FD2D::Slider> m_brightnessSlider;
     std::shared_ptr<FD2D::Slider> m_ambientSlider;
     std::shared_ptr<FD2D::Slider> m_declinationSlider;

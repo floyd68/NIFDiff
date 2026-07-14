@@ -168,6 +168,7 @@ private:
     bool m_enableParallax = true;        // extended-material toggles, mirrored onto new panes
     bool m_enableComplexMaterial = true;
     bool m_enablePBR = true;
+    bool m_showHiddenNodes = false;      // NifSkope "Show Hidden" equivalent, mirrored onto new panes
 };
 
 } // namespace nsk

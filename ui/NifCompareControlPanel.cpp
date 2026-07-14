@@ -93,6 +93,13 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_wireframeChk->SetLabel(L"Wireframe");
     display->AddChild(m_wireframeChk);
 
+    // NifSkope's "Show Hidden": NiAVObject-hidden subtrees (furniture
+    // marker rigs, editor markers) are culled by default; this opts them
+    // back in for inspection.
+    m_showHiddenChk = std::make_shared<FD2D::CheckBox>(L"ShowHidden");
+    m_showHiddenChk->SetLabel(L"Hidden");
+    display->AddChild(m_showHiddenChk);
+
     // --- LIGHTING: two slider columns + frontal-light mode --------------
     auto lighting = makeGroup(L"Lighting", L"LIGHTING");
     auto lightRow = makeRow(name + L"_LightRow", 14.0f);
@@ -239,6 +246,7 @@ void NifCompareControlPanel::SetOnFrontalLightChanged(std::function<void(bool)> 
 void NifCompareControlPanel::SetOnShowGridChanged(std::function<void(bool)> handler) { m_showGridChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnShowAxesChanged(std::function<void(bool)> handler) { m_showAxesChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnWireframeChanged(std::function<void(bool)> handler) { m_wireframeChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnShowHiddenChanged(std::function<void(bool)> handler) { m_showHiddenChk->OnCheckedChanged(std::move(handler)); }
 
 void NifCompareControlPanel::SetOnBrightnessChanged(std::function<void(float)> handler) { m_brightnessSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnAmbientChanged(std::function<void(float)> handler) { m_ambientSlider->OnValueChanged(std::move(handler)); }

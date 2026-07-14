@@ -54,6 +54,11 @@ NifCompareView::NifCompareView(const std::wstring& name)
     {
         for (auto& p : m_panes) p->Viewport().SetWireframe(on);
     });
+    m_controls->SetOnShowHiddenChanged([this](bool on)
+    {
+        m_showHiddenNodes = on;
+        for (auto& p : m_panes) p->Viewport().SetShowHiddenNodes(on);
+    });
 
     // Lighting sliders are shared UI (not per-pane manipulable like camera
     // drag), so "Sync Lighting" here means "apply to every pane" (on) vs.
@@ -136,6 +141,7 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetEnableParallax(m_enableParallax);
     pane->Viewport().SetEnableComplexMaterial(m_enableComplexMaterial);
     pane->Viewport().SetEnablePBR(m_enablePBR);
+    pane->Viewport().SetShowHiddenNodes(m_showHiddenNodes);
     WirePaneCallbacks(pane);
     return pane;
 }

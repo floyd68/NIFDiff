@@ -86,6 +86,10 @@ public:
     void SetEnableParallax(bool on) { m_settings.enableParallax = on; Invalidate(); }
     void SetEnableComplexMaterial(bool on) { m_settings.enableComplexMaterial = on; Invalidate(); }
     void SetEnablePBR(bool on) { m_settings.enablePBR = on; Invalidate(); }
+    // NifSkope's "Show Hidden": opt NiAVObject-hidden subtrees (furniture
+    // marker rigs, editor markers, bounds placeholders) back into the
+    // scene. Rebuilds the mesh list, so the current selection is cleared.
+    void SetShowHiddenNodes(bool show);
     void ResetCamera();
 
     // Whether any loaded mesh actually runs the height-based parallax the
@@ -124,6 +128,7 @@ private:
     float m_lightDeclinationDeg = 45.0f;
     float m_lightPlanarAngleDeg = 45.0f;
     bool m_frontalLight = false;
+    bool m_showHiddenNodes = false;
 
     D3D11Renderer m_renderer;
     std::unique_ptr<TextureCache> m_textures;

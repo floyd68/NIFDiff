@@ -59,8 +59,12 @@ class SceneBuilder
 {
 public:
     // doc must outlive the returned RenderMesh list (geometry pointers are
-    // borrowed references into doc's internal storage).
-    [[nodiscard]] static std::vector<RenderMesh> build(const NifDocument& doc);
+    // borrowed references into doc's internal storage). includeHidden keeps
+    // NiAVObject-hidden subtrees (furniture marker rigs, editor markers,
+    // bounds placeholders) in the scene - the engine never draws them, so
+    // they are culled by default; the UI's "Hidden" display toggle opts
+    // back in, NifSkope's Show Hidden equivalent.
+    [[nodiscard]] static std::vector<RenderMesh> build(const NifDocument& doc, bool includeHidden = false);
 };
 
 } // namespace nsk

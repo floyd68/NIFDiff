@@ -180,7 +180,7 @@ namespace
     }
 }
 
-std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc)
+std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool includeHidden)
 {
     std::vector<RenderMesh> out;
     const std::vector<NifSceneNode>& nodes = doc.nodes();
@@ -221,7 +221,7 @@ std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc)
         if (!node.isShape)
             continue;
         ++shapeNodeCount;
-        if (isHiddenInTree(static_cast<int>(i)))
+        if (!includeHidden && isHiddenInTree(static_cast<int>(i)))
         {
             ++hiddenShapeCount;
             NIFLOG_TRACE("SceneBuilder: shape '{}' (block {}) skipped - hidden (NiAVObject flag)",

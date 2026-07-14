@@ -123,7 +123,7 @@ void NifViewport::RebuildScene()
 
     {
         StartupTrace::Phase p("    SceneBuilder::build");
-        m_meshes = SceneBuilder::build(*m_doc);
+        m_meshes = SceneBuilder::build(*m_doc, m_showHiddenNodes);
     }
 
     // Front-load every texture the scene references through the pool's
@@ -557,6 +557,27 @@ const RenderMesh* NifViewport::SelectedMesh() const
     if (m_selectedMesh < 0 || static_cast<std::size_t>(m_selectedMesh) >= m_meshes.size())
         return nullptr;
     return &m_meshes[static_cast<std::size_t>(m_selectedMesh)];
+}
+
+void NifViewport::SetShowHiddenNodes(bool show)
+{
+    if (m_showHiddenNodes == show)
+        return;
+    m_showHiddenNodes = show;
+    m_selectedMesh = -1; // the mesh list is about to be rebuilt
+    // RebuildScene refits the camera to the (now different) scene bounds -
+    // right for a fresh load, jarring for a display toggle. Keep the view
+    // where the user left it; hidden markers usually sit inside the model's
+    // frame anyway (NifSkope's Show Hidden keeps the camera too).
+    const Camera keep = m_camera;
+    RebuildScene();
+    m_camera = keep;
+    // The mesh set changed (triangle counts, shader-kind summary), so the
+    // owner's labels must refresh even when there was no selection to clear
+    // - fire the selection handler unconditionally (it is idempotent).
+    if (m_onSelectionChanged)
+        m_onSelectionChanged(nullptr);
+    Invalidate();
 }
 
 void NifViewport::SetSelectedMesh(int index)
