@@ -58,6 +58,14 @@ public:
         return e->cmAlpha;
     }
 
+    // Pooled entry (metadata: format/dims/mips/sourceKey) for the texture
+    // inspector; loads the texture on first use like GetOrLoad. Null when
+    // the path does not resolve.
+    TextureRepository::Entry* EntryFor(const std::string& relativePath)
+    {
+        return Lookup(relativePath);
+    }
+
     // Parallel-prefetch every path under this cache's resolution context
     // (see TextureRepository::Prefetch); later GetOrLoad calls become pool
     // hits. The per-path memo still forms lazily on first use.

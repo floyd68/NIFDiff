@@ -57,7 +57,8 @@ own copies.
   `Shift+Tab` select it, `R` resets its camera, `C` focuses its
   selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+W` closes it,
   `Del` clears its document, `Ctrl+E` shows its file in Explorer,
-  `F12` saves its screenshot; `I` toggles the material diff panel.
+  `F12` saves its screenshot; `I` toggles the material diff panel and
+  `T` the texture inspector.
 - **Per-pane context menu**: open/close the pane, open the containing
   folder in Explorer with the file selected, and save the pane's 3D
   render as a PNG (defaults next to the .nif, auto-numbered).
@@ -124,9 +125,17 @@ own copies.
   makes two panes differ.
 - **Material diff panel** (`I` to toggle): while a sub-mesh is selected,
   an overlay table shows its BSLightingShaderProperty data - shader
-  type/flags, texture slots, specular/emissive/alpha/UV values, alpha
-  and depth state - side by side with the same-named mesh in every
-  other loaded pane, highlighting exactly which values differ.
+  type/flags, texture slots (with loose/bsa resolve markers, so two
+  panes resolving the same path to different sources light up),
+  specular/emissive/alpha/UV values, alpha and depth state - side by
+  side with the same-named mesh in every other loaded pane,
+  highlighting exactly which values differ.
+- **Texture inspector** (`T` to toggle): lists the selected sub-mesh's
+  bound texture slots with resolution, pixel format, mip count and the
+  resolved source (loose file path vs BSA archive - mod-conflict
+  diagnosis), and previews the clicked slot in 2D with R/G/B/A channel
+  isolation (click the preview to cycle) - reading `_rmaos`/`_m`
+  channel content without leaving the viewer.
 
 ## Origins
 

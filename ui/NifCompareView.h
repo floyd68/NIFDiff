@@ -117,7 +117,8 @@ public:
     //   Ctrl+W         close this pane        Del  clear its document
     //   Ctrl+E         open its containing folder in Explorer
     //   F12            save a screenshot of this pane
-    // (I toggles the material diff panel - see DrawMaterialDiffPanel.)
+    // (I toggles the material diff panel, T the texture inspector - see
+    // DrawMaterialDiffPanel / DrawTextureInspector.)
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
     // Explorer drag&drop (Backplate's OLE drop target, enabled by the app
@@ -188,6 +189,18 @@ private:
     // refresh plumbing is needed. Toggled with the I key.
     void DrawMaterialDiffPanel(ID2D1RenderTarget* target);
 
+    // Texture inspector (T key): for the active pane's selected sub-mesh,
+    // a left-side overlay lists every bound texture slot with its
+    // resolution, pixel format, mip count and resolved source (loose file
+    // vs BSA - the mod-conflict diagnosis view), plus a 2D preview of the
+    // clicked slot with R/G/B/A channel isolation (click the preview to
+    // cycle) for reading _rmaos/_m channel content in place. Clicks over
+    // the panel are consumed in OnInputEvent via the rects captured at
+    // draw time.
+    void DrawTextureInspector(ID2D1RenderTarget* target);
+    bool HandleTextureInspectorClick(const POINT& pt);
+    bool EnsureTexturePreview(ID2D1RenderTarget* target, NifComparePane& pane, const std::string& relPath);
+
     // Drag&drop internals (see the OnFileDrag comment above). The overlay
     // pane pointer is validated against m_panes at draw time, so a pane
     // removed mid-drag cannot dangle into OnRenderOverlay.
@@ -234,6 +247,20 @@ private:
 
     bool m_showMaterialPanel = true; // 'I' toggles; shown only while something is selected
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_matPanelText; // lazy, device-independent
+
+    // Texture inspector state (see DrawTextureInspector).
+    bool m_showTextureInspector = false; // 'T' toggles
+    int m_texInspectorRow = 0;           // which listed slot is previewed
+    int m_texChannelMode = 0;            // 0=RGBA 1=R 2=G 3=B 4=A
+    std::wstring m_texPreviewKey;        // nifDir|relPath|channel of the cached bitmap
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> m_texPreviewBitmap;
+    ID2D1RenderTarget* m_texPreviewOwner = nullptr; // bitmap is target-bound
+    float m_texPreviewAspect = 1.0f;
+    // Hit rects captured during the last draw (client coords).
+    bool m_texPanelLive = false;
+    D2D1_RECT_F m_texPanelRect {};
+    D2D1_RECT_F m_texPreviewHitRect {};
+    std::vector<D2D1_RECT_F> m_texRowRects;
 
     bool m_syncViews = true;
     bool m_syncLighting = true;

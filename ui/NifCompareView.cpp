@@ -4,6 +4,7 @@
 #include <Backplate.h>
 #include <Core.h>
 #include <Util.h>
+#include <DirectXTex.h>
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
@@ -386,6 +387,13 @@ void NifCompareView::SetActivePane(NifComparePane* pane)
 
 bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
 {
+    // Clicks over the texture inspector overlay belong to IT, not to the
+    // viewport underneath (row select / channel cycle / plain swallow).
+    if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint &&
+        event.button == FD2D::MouseButton::Left &&
+        HandleTextureInspectorClick(event.point))
+        return true;
+
     // Any click inside a pane makes it the active one (FICture2's focused
     // browser), BEFORE the children consume the event - a viewport orbit
     // drag or a path-label click both count as "working in this pane".
@@ -665,7 +673,23 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
             r.differs = r.differs || v != r.vals.front();
         rows.push_back(std::move(r));
     };
-    const auto tex = [](const std::string& path) { return PathTail(path); };
+    // Texture cells carry a resolve-source marker so two panes whose SAME
+    // relative path lands on different sources (override vs vanilla, loose
+    // vs archive) light up as a diff - the mod-conflict signal.
+    const auto tex = [](const std::string& path, NifComparePane& pane) -> std::wstring
+    {
+        if (path.empty())
+            return std::wstring();
+        std::wstring v = PathTail(path, 26);
+        if (TextureRepository::Entry* e = pane.Viewport().TextureEntry(path))
+        {
+            if (e->sourceKey.rfind("bsa:", 0) == 0)
+                v += L"  (bsa)";
+            else if (!e->sourceKey.empty())
+                v += L"  (loose)";
+        }
+        return v;
+    };
 
     addRow(L"Mesh",        [](const RenderMesh& m, NifComparePane&) { return Utf8ToWideStr(m.nodeName); });
     addRow(L"Triangles",   [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.geometry ? m.geometry->triangles.size() : 0); });
@@ -673,14 +697,14 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     addRow(L"Shader Type", [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.material.shaderType); });
     addRow(L"SLSF1",       [](const RenderMesh& m, NifComparePane&) { return Hex32(m.material.shaderFlags1); });
     addRow(L"SLSF2",       [](const RenderMesh& m, NifComparePane&) { return Hex32(m.material.shaderFlags2); });
-    addRow(L"Diffuse",     [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.diffuseTexture); }, true);
-    addRow(L"Normal",      [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.normalTexture); }, true);
-    addRow(L"Glow/Mask",   [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.glowTexture); }, true);
-    addRow(L"Height",      [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.heightTexture); }, true);
-    addRow(L"Cube Map",    [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.cubeTexture); }, true);
-    addRow(L"Env Mask",    [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.envMaskTexture); }, true);
-    addRow(L"Inner/Tint",  [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.innerTexture); }, true);
-    addRow(L"Backlight",   [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.backlightTexture); }, true);
+    addRow(L"Diffuse",     [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.diffuseTexture, p); }, true);
+    addRow(L"Normal",      [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.normalTexture, p); }, true);
+    addRow(L"Glow/Mask",   [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.glowTexture, p); }, true);
+    addRow(L"Height",      [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.heightTexture, p); }, true);
+    addRow(L"Cube Map",    [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.cubeTexture, p); }, true);
+    addRow(L"Env Mask",    [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.envMaskTexture, p); }, true);
+    addRow(L"Inner/Tint",  [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.innerTexture, p); }, true);
+    addRow(L"Backlight",   [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.backlightTexture, p); }, true);
     addRow(L"Spec Color",  [](const RenderMesh& m, NifComparePane&) { return Col3Str(m.material.specularColor); });
     addRow(L"Spec Strength", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.specularStrength); });
     addRow(L"Glossiness",  [](const RenderMesh& m, NifComparePane&) { return F2(m.material.glossiness); });
@@ -773,6 +797,318 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     }
 }
 
+namespace
+{
+    const wchar_t* FormatName(DXGI_FORMAT f)
+    {
+        switch (f)
+        {
+        case DXGI_FORMAT_BC1_UNORM: case DXGI_FORMAT_BC1_UNORM_SRGB: return L"BC1";
+        case DXGI_FORMAT_BC2_UNORM: case DXGI_FORMAT_BC2_UNORM_SRGB: return L"BC2";
+        case DXGI_FORMAT_BC3_UNORM: case DXGI_FORMAT_BC3_UNORM_SRGB: return L"BC3";
+        case DXGI_FORMAT_BC4_UNORM: case DXGI_FORMAT_BC4_SNORM:      return L"BC4";
+        case DXGI_FORMAT_BC5_UNORM: case DXGI_FORMAT_BC5_SNORM:      return L"BC5";
+        case DXGI_FORMAT_BC6H_UF16: case DXGI_FORMAT_BC6H_SF16:      return L"BC6H";
+        case DXGI_FORMAT_BC7_UNORM: case DXGI_FORMAT_BC7_UNORM_SRGB: return L"BC7";
+        case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return L"RGBA8";
+        case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return L"BGRA8";
+        case DXGI_FORMAT_B8G8R8X8_UNORM: return L"BGRX8";
+        case DXGI_FORMAT_R16G16B16A16_FLOAT: return L"RGBA16F";
+        case DXGI_FORMAT_R8_UNORM: return L"R8";
+        case DXGI_FORMAT_UNKNOWN: return L"?";
+        default: return L"other";
+        }
+    }
+
+    // Human-readable resolved source: "loose …tail" / "bsa Archive.bsa".
+    std::wstring SourceLabel(const std::string& sourceKey)
+    {
+        if (sourceKey.rfind("file:", 0) == 0)
+            return L"loose " + PathTail(sourceKey.substr(5), 30);
+        if (sourceKey.rfind("bsa:", 0) == 0)
+        {
+            const std::size_t bar = sourceKey.find('|');
+            const std::string archive = sourceKey.substr(4, bar == std::string::npos ? std::string::npos : bar - 4);
+            return L"bsa " + Utf8ToWideStr(std::filesystem::path(archive).filename().string());
+        }
+        return sourceKey.empty() ? L"(not loaded)" : Utf8ToWideStr(sourceKey);
+    }
+
+    struct TexSlotRef { const wchar_t* name; const std::string* path; };
+    std::vector<TexSlotRef> GatherTexSlots(const NifMaterial& m)
+    {
+        const TexSlotRef all[] = {
+            { L"Diffuse",   &m.diffuseTexture },
+            { L"Normal",    &m.normalTexture },
+            { L"Glow/Mask", &m.glowTexture },
+            { L"Height",    &m.heightTexture },
+            { L"Cube",      &m.cubeTexture },
+            { L"Env Mask",  &m.envMaskTexture },
+            { L"Inner",     &m.innerTexture },
+            { L"Backlight", &m.backlightTexture },
+            { L"Greyscale", &m.greyscaleTexture },
+        };
+        std::vector<TexSlotRef> out;
+        for (const TexSlotRef& s : all)
+        {
+            if (!s.path->empty())
+                out.push_back(s);
+        }
+        return out;
+    }
+
+    const wchar_t* kChannelNames[] = { L"RGB", L"R", L"G", L"B", L"A" };
+}
+
+bool NifCompareView::EnsureTexturePreview(ID2D1RenderTarget* target, NifComparePane& pane, const std::string& relPath)
+{
+    const std::wstring key = pane.Viewport().NifDirectory() + L"|" + Utf8ToWideStr(relPath)
+                           + L"|" + std::to_wstring(m_texChannelMode);
+    if (m_texPreviewBitmap && m_texPreviewOwner == target && m_texPreviewKey == key)
+        return true;
+    m_texPreviewBitmap.Reset();
+    m_texPreviewOwner = nullptr;
+    m_texPreviewKey.clear();
+
+    if (m_resolver == nullptr)
+        return false;
+    ResourceBytes found = m_resolver->Find(relPath, pane.Viewport().NifDirectory());
+    if (!found.ok())
+        return false;
+
+    DirectX::TexMetadata meta {};
+    DirectX::ScratchImage img;
+    HRESULT hr = !found.diskPath.empty()
+        ? DirectX::LoadFromDDSFile(found.diskPath.c_str(), DirectX::DDS_FLAGS_NONE, &meta, img)
+        : DirectX::LoadFromDDSMemory(found.data.data(), found.data.size(), DirectX::DDS_FLAGS_NONE, &meta, img);
+    if (FAILED(hr) || meta.mipLevels == 0)
+        return false;
+
+    // Pick the smallest mip that still fills the preview box, keeping the
+    // CPU decode cheap for 4K sources.
+    std::size_t mip = 0;
+    while (mip + 1 < meta.mipLevels &&
+           (std::max)(meta.width >> (mip + 1), meta.height >> (mip + 1)) >= 256)
+        ++mip;
+
+    const DirectX::Image* src = img.GetImage(mip, 0, 0);
+    if (src == nullptr)
+        return false;
+    DirectX::ScratchImage decoded;
+    const DirectX::Image* px = nullptr;
+    if (DirectX::IsCompressed(meta.format))
+    {
+        if (FAILED(DirectX::Decompress(*src, DXGI_FORMAT_R8G8B8A8_UNORM, decoded)))
+            return false;
+        px = decoded.GetImage(0, 0, 0);
+    }
+    else if (meta.format != DXGI_FORMAT_R8G8B8A8_UNORM)
+    {
+        if (FAILED(DirectX::Convert(*src, DXGI_FORMAT_R8G8B8A8_UNORM,
+                       DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, decoded)))
+            return false;
+        px = decoded.GetImage(0, 0, 0);
+    }
+    else
+    {
+        px = src;
+    }
+    if (px == nullptr || px->pixels == nullptr)
+        return false;
+
+    // RGBA8 -> BGRA8 with the channel transform baked in.
+    std::vector<std::uint8_t> bgra(px->width * px->height * 4);
+    for (std::size_t y = 0; y < px->height; ++y)
+    {
+        const std::uint8_t* srow = px->pixels + y * px->rowPitch;
+        std::uint8_t* drow = bgra.data() + y * px->width * 4;
+        for (std::size_t x = 0; x < px->width; ++x)
+        {
+            const std::uint8_t r = srow[x * 4 + 0], g = srow[x * 4 + 1];
+            const std::uint8_t b = srow[x * 4 + 2], a = srow[x * 4 + 3];
+            std::uint8_t db = b, dg = g, dr = r;
+            switch (m_texChannelMode)
+            {
+            case 1: db = dg = dr = r; break;
+            case 2: db = dg = dr = g; break;
+            case 3: db = dg = dr = b; break;
+            case 4: db = dg = dr = a; break;
+            default: break;
+            }
+            drow[x * 4 + 0] = db;
+            drow[x * 4 + 1] = dg;
+            drow[x * 4 + 2] = dr;
+            drow[x * 4 + 3] = 0xFF;
+        }
+    }
+
+    const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+    if (FAILED(target->CreateBitmap(
+            D2D1::SizeU(static_cast<UINT32>(px->width), static_cast<UINT32>(px->height)),
+            bgra.data(), static_cast<UINT32>(px->width * 4), props, &m_texPreviewBitmap)))
+        return false;
+
+    m_texPreviewOwner = target;
+    m_texPreviewKey = key;
+    m_texPreviewAspect = px->height > 0
+        ? static_cast<float>(px->width) / static_cast<float>(px->height) : 1.0f;
+    return true;
+}
+
+void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
+{
+    m_texPanelLive = false;
+    m_texRowRects.clear();
+
+    if (!m_showTextureInspector)
+        return;
+    NifComparePane* active = ActivePane();
+    if (active == nullptr)
+        return;
+    const RenderMesh* sel = active->Viewport().SelectedMesh();
+    if (sel == nullptr)
+        return;
+    const std::vector<TexSlotRef> slots = GatherTexSlots(sel->material);
+    if (slots.empty())
+        return;
+    if (m_texInspectorRow >= static_cast<int>(slots.size()))
+        m_texInspectorRow = 0;
+
+    if (!m_matPanelText) // shared 12px format with the material panel
+    {
+        FD2D::Core::DWriteFactory()->CreateTextFormat(L"Segoe UI", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+            12.0f, L"", &m_matPanelText);
+        if (m_matPanelText)
+            m_matPanelText->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+    if (!m_matPanelText)
+        return;
+
+    constexpr float kRowH = 17.0f;
+    constexpr float kNameW = 72.0f;
+    constexpr float kMetaW = 128.0f;
+    constexpr float kSourceW = 240.0f;
+    constexpr float kPad = 8.0f;
+    constexpr float kPreview = 256.0f;
+
+    const float panelW = kNameW + kMetaW + kSourceW + kPad * 2.0f;
+    const float panelH = kRowH * (slots.size() + 2) + kPreview + kPad * 3.0f;
+    const D2D1_RECT_F view = LayoutRect();
+    const D2D1_RECT_F panel { view.left + 12.0f, view.top + 34.0f,
+                              view.left + 12.0f + panelW, view.top + 34.0f + panelH };
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0.05f, 0.05f, 0.06f, 0.90f), &brush)))
+        return;
+    target->FillRectangle(panel, brush.Get());
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f));
+    target->DrawRectangle(panel, brush.Get(), 1.0f);
+
+    const auto drawCell = [&](const std::wstring& text, float x, float y, float w, const D2D1_COLOR_F& color)
+    {
+        brush->SetColor(color);
+        const D2D1_RECT_F rc { x, y, x + w - 6.0f, y + kRowH };
+        target->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), m_matPanelText.Get(), rc, brush.Get(),
+                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    };
+
+    const D2D1_COLOR_F kLabelCol  = D2D1::ColorF(0.60f, 0.63f, 0.67f);
+    const D2D1_COLOR_F kValueCol  = D2D1::ColorF(0.88f, 0.88f, 0.90f);
+    const D2D1_COLOR_F kAccent    = D2D1::ColorF(0.45f, 0.70f, 1.00f);
+    const D2D1_COLOR_F kHeaderCol = D2D1::ColorF(0.52f, 0.56f, 0.61f);
+
+    float y = panel.top + kPad;
+    drawCell(L"TEXTURES (T)  ·  click a row, click the preview to cycle " +
+             std::wstring(kChannelNames[m_texChannelMode]),
+             panel.left + kPad, y, panelW - kPad * 2.0f, kHeaderCol);
+    y += kRowH;
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f));
+    target->DrawLine({ panel.left + kPad, y }, { panel.right - kPad, y }, brush.Get(), 1.0f);
+
+    for (std::size_t i = 0; i < slots.size(); ++i)
+    {
+        const D2D1_RECT_F rowRect { panel.left + 2.0f, y, panel.right - 2.0f, y + kRowH };
+        m_texRowRects.push_back(rowRect);
+        const bool selRow = static_cast<int>(i) == m_texInspectorRow;
+        if (selRow)
+        {
+            brush->SetColor(D2D1::ColorF(0.30f, 0.58f, 0.95f, 0.18f));
+            target->FillRectangle(rowRect, brush.Get());
+        }
+
+        TextureRepository::Entry* e = active->Viewport().TextureEntry(*slots[i].path);
+        std::wstring meta = e != nullptr && e->width > 0
+            ? std::format(L"{}x{} {} {}m", e->width, e->height, FormatName(e->format), e->mipLevels)
+            : std::wstring(L"(unresolved)");
+        std::wstring source = e != nullptr ? SourceLabel(e->sourceKey) : std::wstring(L"-");
+
+        drawCell(slots[i].name, panel.left + kPad, y, kNameW, selRow ? kAccent : kLabelCol);
+        drawCell(meta, panel.left + kPad + kNameW, y, kMetaW, selRow ? kAccent : kValueCol);
+        drawCell(source, panel.left + kPad + kNameW + kMetaW, y, kSourceW, selRow ? kAccent : kValueCol);
+        y += kRowH;
+    }
+
+    // Preview of the selected slot.
+    y += kPad * 0.5f;
+    const std::string& previewPath = *slots[static_cast<std::size_t>(m_texInspectorRow)].path;
+    drawCell(PathTail(previewPath, 52), panel.left + kPad, y, panelW - kPad * 2.0f, kLabelCol);
+    y += kRowH;
+
+    D2D1_RECT_F box { panel.left + kPad, y, panel.left + kPad + kPreview, y + kPreview };
+    m_texPreviewHitRect = box;
+    brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f));
+    target->FillRectangle(box, brush.Get());
+    if (EnsureTexturePreview(target, *active, previewPath) && m_texPreviewBitmap)
+    {
+        // Fit the bitmap into the box, preserving aspect.
+        D2D1_RECT_F dst = box;
+        if (m_texPreviewAspect >= 1.0f)
+        {
+            const float h = kPreview / m_texPreviewAspect;
+            dst.top = box.top + (kPreview - h) * 0.5f;
+            dst.bottom = dst.top + h;
+        }
+        else
+        {
+            const float w = kPreview * m_texPreviewAspect;
+            dst.left = box.left + (kPreview - w) * 0.5f;
+            dst.right = dst.left + w;
+        }
+        target->DrawBitmap(m_texPreviewBitmap.Get(), dst, 1.0f,
+                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f));
+    target->DrawRectangle(box, brush.Get(), 1.0f);
+
+    m_texPanelRect = panel;
+    m_texPanelLive = true;
+}
+
+bool NifCompareView::HandleTextureInspectorClick(const POINT& pt)
+{
+    if (!m_texPanelLive || !FD2D::Util::RectContainsPoint(m_texPanelRect, pt))
+        return false;
+
+    if (FD2D::Util::RectContainsPoint(m_texPreviewHitRect, pt))
+    {
+        m_texChannelMode = (m_texChannelMode + 1) % 5; // RGB -> R -> G -> B -> A
+        Invalidate();
+        return true;
+    }
+    for (std::size_t i = 0; i < m_texRowRects.size(); ++i)
+    {
+        if (FD2D::Util::RectContainsPoint(m_texRowRects[i], pt))
+        {
+            m_texInspectorRow = static_cast<int>(i);
+            Invalidate();
+            return true;
+        }
+    }
+    return true; // swallow clicks anywhere else on the panel
+}
+
 void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
 {
     FD2D::SplitPanel::OnRenderOverlay(target);
@@ -780,6 +1116,7 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
         return;
 
     DrawMaterialDiffPanel(target);
+    DrawTextureInspector(target);
 
     // Active-pane accent border (FICture2's focused-browser highlight).
     // Only meaningful while several panes compete for the pane-context
@@ -848,6 +1185,11 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
 
     case 'I': // material diff panel (shows while a sub-mesh is selected)
         m_showMaterialPanel = !m_showMaterialPanel;
+        Invalidate();
+        return true;
+
+    case 'T': // texture inspector (shows while a sub-mesh is selected)
+        m_showTextureInspector = !m_showTextureInspector;
         Invalidate();
         return true;
 

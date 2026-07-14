@@ -65,6 +65,15 @@ public:
     // the material diff panel to match the selected mesh across panes.
     const std::vector<RenderMesh>& Meshes() const { return m_meshes; }
 
+    // Pooled texture entry (format/dims/mips/resolved source) for the
+    // texture inspector; null when unresolvable or no cache yet.
+    TextureRepository::Entry* TextureEntry(const std::string& relativePath)
+    {
+        return m_textures ? m_textures->EntryFor(relativePath) : nullptr;
+    }
+    // This viewport's texture resolution context (the loaded NIF's folder).
+    const std::wstring& NifDirectory() const { return m_nifDirectory; }
+
     // Human-readable shader classification for the UI labels, covering the
     // extended-material conventions on top of the vanilla shader types:
     // "True PBR" (PBRNifPatcher flag), "Complex Material" (env mask with

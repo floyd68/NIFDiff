@@ -28,6 +28,7 @@ namespace nsk
 {
 
 class ResourceResolver;
+struct ResourceBytes;
 
 class TextureRepository
 {
@@ -40,7 +41,16 @@ public:
     struct Entry
     {
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv; // null when decode failed
-        DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; // source DDS format, recorded at load
+        // Source DDS identity, recorded at load for the texture inspector:
+        // pixel format, top-mip dimensions, mip count, and the resolved
+        // source ("file:<abs>" / "bsa:<archive>|<entry>" - see
+        // ResourceBytes::sourceKey) so mod-conflict resolution differences
+        // are visible per pane.
+        DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::uint32_t mipLevels = 0;
+        std::string sourceKey;
 
         // Lazy combined complex-material probe (see EnsureCmProbe): both
         // verdicts come from one re-read of the source, at most once per
@@ -83,8 +93,9 @@ public:
     void Clear() { m_bySource.clear(); }
 
 private:
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadFromDisk(const std::wstring& fullPath, DXGI_FORMAT& outFormat);
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadFromMemory(std::span<const std::uint8_t> data, DXGI_FORMAT& outFormat);
+    // Fills srv/format/width/height/mipLevels of `entry` from the resolved
+    // bytes (loose file or archive memory).
+    void LoadEntry(Entry& entry, const ResourceBytes& found);
 
     ID3D11Device* m_device = nullptr;
     ResourceResolver* m_resolver = nullptr;

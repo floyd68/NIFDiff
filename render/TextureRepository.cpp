@@ -42,39 +42,28 @@ namespace
     }
 }
 
-Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromDisk(const std::wstring& fullPath, DXGI_FORMAT& outFormat)
+void TextureRepository::LoadEntry(Entry& entry, const ResourceBytes& found)
 {
     DirectX::TexMetadata metadata {};
     DirectX::ScratchImage scratch;
-    if (FAILED(DirectX::LoadFromDDSFile(fullPath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, scratch)))
-        return nullptr;
-    outFormat = metadata.format;
+    HRESULT hr = E_FAIL;
+    if (!found.diskPath.empty())
+        hr = DirectX::LoadFromDDSFile(found.diskPath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, scratch);
+    else if (!found.data.empty())
+        hr = DirectX::LoadFromDDSMemory(found.data.data(), found.data.size(), DirectX::DDS_FLAGS_NONE, &metadata, scratch);
+    if (FAILED(hr))
+        return;
+
+    entry.format = metadata.format;
+    entry.width = static_cast<std::uint32_t>(metadata.width);
+    entry.height = static_cast<std::uint32_t>(metadata.height);
+    entry.mipLevels = static_cast<std::uint32_t>(metadata.mipLevels);
 
     // Handles 2D/mip-chain/cube-map/array layouts from the DDS metadata
     // (a cube map DDS yields a TEXTURECUBE-dimension SRV, which the lit
     // shader's TextureCube at t4 requires).
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-    if (FAILED(DirectX::CreateShaderResourceView(
-            m_device, scratch.GetImages(), scratch.GetImageCount(), metadata, &srv)))
-        return nullptr;
-    return srv;
-}
-
-Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromMemory(std::span<const std::uint8_t> data, DXGI_FORMAT& outFormat)
-{
-    if (data.empty())
-        return nullptr;
-    DirectX::TexMetadata metadata {};
-    DirectX::ScratchImage scratch;
-    if (FAILED(DirectX::LoadFromDDSMemory(data.data(), data.size(), DirectX::DDS_FLAGS_NONE, &metadata, scratch)))
-        return nullptr;
-    outFormat = metadata.format;
-
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-    if (FAILED(DirectX::CreateShaderResourceView(
-            m_device, scratch.GetImages(), scratch.GetImageCount(), metadata, &srv)))
-        return nullptr;
-    return srv;
+    (void)DirectX::CreateShaderResourceView(
+        m_device, scratch.GetImages(), scratch.GetImageCount(), metadata, &entry.srv);
 }
 
 TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relativePath,
@@ -105,16 +94,9 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
     Entry entry;
     entry.relativePath = relativePath;
     entry.nifDirectory = nifDirectory;
-    const char* source = "loose";
-    if (!found.diskPath.empty())
-    {
-        entry.srv = LoadFromDisk(found.diskPath, entry.format);
-    }
-    else
-    {
-        entry.srv = LoadFromMemory(found.data, entry.format);
-        source = "archive";
-    }
+    entry.sourceKey = found.sourceKey;
+    const char* source = found.diskPath.empty() ? "archive" : "loose";
+    LoadEntry(entry, found);
     const auto t2 = TraceClock::now();
 
     NIFLOG_TRACE("[TEXLOAD] {} resolve={:.2f}ms decode+upload={:.2f}ms ok={} {}",
@@ -169,10 +151,8 @@ void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, 
             Entry& e = loaded[i];
             e.relativePath = p.relativePath;
             e.nifDirectory = nifDirectory;
-            if (!p.bytes.diskPath.empty())
-                e.srv = LoadFromDisk(p.bytes.diskPath, e.format);
-            else
-                e.srv = LoadFromMemory(p.bytes.data, e.format);
+            e.sourceKey = p.sourceKey;
+            LoadEntry(e, p.bytes);
         });
 
     // Phase 3 (calling thread): publish into the pool.
