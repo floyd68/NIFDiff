@@ -4,6 +4,8 @@
 #include <Backplate.h>
 #include <Util.h>
 #include <algorithm>
+#include <cwctype>
+#include <filesystem>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -213,6 +215,38 @@ bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
     return true;
 }
 
+namespace
+{
+    std::wstring FileNameLower(const std::wstring& path)
+    {
+        std::wstring name = std::filesystem::path(path).filename().wstring();
+        for (wchar_t& c : name)
+            c = static_cast<wchar_t>(std::towlower(c));
+        return name;
+    }
+}
+
+bool NifCompareView::AcceptsIpcOpen(const std::wstring& path) const
+{
+    const std::wstring incoming = FileNameLower(path);
+    if (incoming.empty())
+        return false;
+
+    bool anyLoaded = false;
+    for (const auto& pane : m_panes)
+    {
+        const NifDocument* doc = pane ? pane->Document() : nullptr;
+        if (doc == nullptr)
+            continue;
+        anyLoaded = true;
+        if (FileNameLower(doc->filePath()) == incoming)
+            return true;
+    }
+    // Nothing loaded yet: an empty viewer window is a fine home for any
+    // file; once something IS loaded, only same-named files may join.
+    return !anyLoaded;
+}
+
 bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
 {
     if (event.id == CMD_NIFDIFF_IPC_OPEN)
@@ -220,7 +254,7 @@ bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
         auto* req = reinterpret_cast<IpcOpenRequest*>(event.lParam);
         if (req != nullptr)
         {
-            req->opened = OpenIntoBestPane(req->path);
+            req->opened = AcceptsIpcOpen(req->path) && OpenIntoBestPane(req->path);
             if (req->doneEvent != nullptr)
                 SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
         }

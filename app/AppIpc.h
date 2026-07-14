@@ -1,8 +1,10 @@
 // AppIpc.h - single-instance IPC, ported from FICture2's AppIpc (named-pipe
 // server + client). A second NIFDiff instance launched with a .nif path
 // (e.g. from an Explorer file association) forwards that path to the running
-// instance, which loads it into a compare pane instead of opening another
-// window - the natural behavior for a compare tool.
+// instance, which loads it into a compare pane WHEN the file name matches a
+// document already open there (comparing two mods' versions of the same
+// mesh - see NifCompareView::AcceptsIpcOpen); otherwise the running instance
+// answers Ignore and the new process opens its own window.
 //
 // Protocol v2 (FICture2's v1 plus a Waiting ack, distinct pipe name):
 //   client -> server : u32 protocol version, u32 payload byte count,

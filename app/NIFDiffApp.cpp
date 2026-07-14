@@ -347,8 +347,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             CloseHandle(instanceMutex);
             return 0;
         }
-        // Server unavailable, or all 4 panes occupied (Ignore): continue as
-        // a new instance.
+        // Ignore covers: server unavailable, every pane occupied, or the
+        // file name matching nothing already open (the compare-forwarding
+        // only exists for same-named files from different folders - see
+        // NifCompareView::AcceptsIpcOpen). Continue as a new instance.
     }
 
     // ---------------------------------------------------------------------

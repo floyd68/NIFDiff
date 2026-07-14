@@ -63,6 +63,16 @@ public:
     // caller on the UI thread too.
     bool OpenIntoBestPane(const std::wstring& path);
 
+    // Single-instance IPC gate: the forward-into-a-pane behavior exists for
+    // one workflow - comparing the SAME file name from different folders
+    // side by side (e.g. two mods' versions of door.nif). An incoming path
+    // is accepted only when its file name matches a document already open in
+    // some pane (case-insensitive); anything else is unrelated work and
+    // belongs in its own window, so the request is declined and the sending
+    // process proceeds as a new instance. An instance with nothing loaded
+    // yet accepts any file.
+    bool AcceptsIpcOpen(const std::wstring& path) const;
+
     // Handles CMD_NIFDIFF_IPC_OPEN broadcast from the IPC server thread
     // (see app/IpcOpenRequest.h), mirroring FICture2's
     // ImageBrowser::HandleIpcCompareMessage: load via OpenIntoBestPane,
