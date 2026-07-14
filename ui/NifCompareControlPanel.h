@@ -3,20 +3,23 @@
 // FICture2-style placement: a compact horizontal strip docked at the bottom
 // of the window (see ImageBrowser.cpp's rootSplit pattern - a ~0.85-ratio
 // vertical SplitPanel with the second pane's extent clamped to its content),
-// not liteviewer's original wide vertical sidebar on the right. The control
-// API below is unchanged from liteviewer's version (every callback already
-// applies to "all panes", never hardcoded to a Left/Right pair), only the
-// internal layout (StackPanel(Vertical) of StackPanel(Horizontal) rows
-// instead of one tall StackPanel(Vertical)) and the new SetOnAddPane hook
-// (the "+ Add Pane" control lives here since it is a whole-view action,
-// unlike each pane's own per-pane Open/Close buttons - see NifComparePane.h)
-// are new.
+// not liteviewer's original wide vertical sidebar on the right.
+//
+// Layout: a ribbon of six labeled GROUPS side by side (PANES / VIEW /
+// DISPLAY / LIGHTING / MATERIALS / RESOURCES), each a vertical stack under
+// a dim uppercase header, separated by hairlines drawn in OnRender. This
+// replaced the original three ad-hoc mixed rows: grouping by function is
+// what makes ~20 controls scannable, and the headers carry the context so
+// the individual labels can stay short ("Grid", not "Show Grid"). The
+// control API below is unchanged from liteviewer's version (every callback
+// already applies to "all panes", never hardcoded to a Left/Right pair).
 #pragma once
 
 #include <StackPanel.h>
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace FD2D { class Button; class Slider; class CheckBox; class ComboBox; class Text; }
 
@@ -71,7 +74,14 @@ public:
     void SetGameDataLabel(const std::wstring& text);
     void SetOverrideCountLabel(std::size_t count);
 
+    // Draws the group separator hairlines + the strip's top border, then
+    // renders the children as usual.
+    void OnRender(ID2D1RenderTarget* target) override;
+
 private:
+    static constexpr float kGroupGap = 14.0f;
+
+    std::vector<std::shared_ptr<FD2D::StackPanel>> m_groups; // for separator placement
     std::shared_ptr<FD2D::Button> m_addPaneBtn;
     std::shared_ptr<FD2D::Button> m_resetBtn;
     std::shared_ptr<FD2D::CheckBox> m_syncViewsChk;
