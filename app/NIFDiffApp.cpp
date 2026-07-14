@@ -54,6 +54,18 @@ namespace
     constexpr UINT kMenuIdExit = 3;
     constexpr UINT kMenuIdOpenPane = 4;
     constexpr UINT kMenuIdClosePane = 5;
+    constexpr UINT kMenuIdOpenFolder = 6;
+
+    // Opens Explorer with the pane's loaded .nif pre-selected. explorer's
+    // /select verb needs no COM apartment (unlike SHOpenFolderAndSelectItems),
+    // which this UI thread never initializes.
+    void OpenContainingFolder(const std::wstring& filePath)
+    {
+        if (filePath.empty())
+            return;
+        const std::wstring args = L"/select,\"" + filePath + L"\"";
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+    }
 
     // `pane` is the compare pane under the right-click (nullptr when the
     // click landed outside every pane) - the Open/Close items that used to
@@ -80,6 +92,11 @@ namespace
             const UINT closeFlags = MF_STRING |
                 (view->PaneCount() > NifCompareView::kMinPanes ? MF_ENABLED : MF_GRAYED);
             AppendMenuW(menu, closeFlags, kMenuIdClosePane, L"&Close This Pane");
+            // Only meaningful once a file is loaded in this pane.
+            const NifDocument* doc = pane->Document();
+            const UINT folderFlags = MF_STRING |
+                (doc != nullptr && !doc->filePath().empty() ? MF_ENABLED : MF_GRAYED);
+            AppendMenuW(menu, folderFlags, kMenuIdOpenFolder, L"Open Containing &Folder");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
@@ -104,6 +121,11 @@ namespace
         case kMenuIdClosePane:
             if (view != nullptr && pane != nullptr)
                 view->RequestClosePane(*pane);
+            break;
+
+        case kMenuIdOpenFolder:
+            if (pane != nullptr && pane->Document() != nullptr)
+                OpenContainingFolder(pane->Document()->filePath());
             break;
 
         case kMenuIdAbout:
