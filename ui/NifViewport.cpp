@@ -360,6 +360,17 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
     return FD2D::Wnd::OnInputEvent(event);
 }
 
+std::size_t NifViewport::TotalTriangleCount() const
+{
+    std::size_t total = 0;
+    for (const RenderMesh& mesh : m_meshes)
+    {
+        if (mesh.geometry)
+            total += mesh.geometry->triangles.size();
+    }
+    return total;
+}
+
 const RenderMesh* NifViewport::SelectedMesh() const
 {
     if (m_selectedMesh < 0 || static_cast<std::size_t>(m_selectedMesh) >= m_meshes.size())

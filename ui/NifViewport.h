@@ -54,6 +54,7 @@ public:
     // reloading the document) clears the selection.
     int SelectedMeshIndex() const { return m_selectedMesh; }
     const RenderMesh* SelectedMesh() const;
+    std::size_t TotalTriangleCount() const; // across every mesh of the loaded scene
     using SelectionChangedHandler = std::function<void(const RenderMesh* /*null when cleared*/)>;
     void SetOnSelectionChanged(SelectionChangedHandler handler) { m_onSelectionChanged = std::move(handler); }
 

@@ -37,10 +37,12 @@ public:
 
 private:
     void UpdatePathLabel();
+    void UpdateStatsLabel();
 
     std::shared_ptr<NifViewport> m_viewport;
-    std::shared_ptr<FD2D::Text> m_pathLabel; // top strip: full path of the loaded .nif + picked sub-mesh name
-    std::wstring m_selectedName;             // name of the viewport's picked sub-mesh, empty when none
+    std::shared_ptr<FD2D::Text> m_pathLabel;  // top strip: full path of the loaded .nif + picked sub-mesh name
+    std::shared_ptr<FD2D::Text> m_statsLabel; // bottom strip, right-aligned: total (and selected sub-mesh) triangle counts
+    std::wstring m_selectedName;              // name of the viewport's picked sub-mesh, empty when none
     std::unique_ptr<NifDocument> m_doc;
 };
 
