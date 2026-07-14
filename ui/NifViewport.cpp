@@ -360,6 +360,101 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
     return FD2D::Wnd::OnInputEvent(event);
 }
 
+std::wstring NifViewport::ShaderKindFor(const RenderMesh& mesh) const
+{
+    const NifMaterial& m = mesh.material;
+
+    std::wstring kind;
+    if (m.isPBR)
+    {
+        kind = m.pbrSubsurface ? L"True PBR (SSS)" : L"True PBR";
+    }
+    else if (m.isEffectShader)
+    {
+        kind = L"Effect";
+    }
+    else if (m.hasEnvironmentMap && !m.envMaskTexture.empty() && m_textures
+             && m_textures->HasComplexMaterialAlpha(m.envMaskTexture))
+    {
+        kind = L"Complex Material";
+    }
+    else
+    {
+        switch (m.shaderType)
+        {
+        case 0:  kind = L"Default"; break;
+        case 1:  kind = L"EnvMap"; break;
+        case 2:  kind = L"Glow"; break;
+        case 3:  kind = L"Parallax"; break;
+        case 4:  kind = L"Face Tint"; break;
+        case 5:  kind = L"Skin Tint"; break;
+        case 6:  kind = L"Hair Tint"; break;
+        case 11: kind = L"MultiLayer"; break;
+        case 14: kind = L"Sparkle"; break;
+        case 16: kind = L"Eye EnvMap"; break;
+        default: kind = L"Type " + std::to_wstring(m.shaderType); break;
+        }
+    }
+
+    if (m.hasModelSpaceNormals)
+        kind += L" · MSN";
+    if (m.isDecal)
+        kind += L" · Decal";
+    if (m.hasRefraction)
+        kind += L" · Refraction";
+    return kind;
+}
+
+std::wstring NifViewport::SelectedMeshShaderKind() const
+{
+    const RenderMesh* sel = SelectedMesh();
+    return sel ? ShaderKindFor(*sel) : std::wstring();
+}
+
+std::wstring NifViewport::ShaderKindSummary() const
+{
+    // Aggregate by label, keeping first-appearance order so the summary
+    // reads in scene order.
+    std::vector<std::pair<std::wstring, int>> counts;
+    for (const RenderMesh& mesh : m_meshes)
+    {
+        const std::wstring kind = ShaderKindFor(mesh);
+        auto it = std::find_if(counts.begin(), counts.end(),
+            [&](const auto& p) { return p.first == kind; });
+        if (it != counts.end())
+            ++it->second;
+        else
+            counts.emplace_back(kind, 1);
+    }
+
+    std::wstring out;
+    for (const auto& [kind, n] : counts)
+    {
+        if (!out.empty())
+            out += L"  ·  ";
+        out += kind;
+        if (n > 1)
+            out += L" ×" + std::to_wstring(n);
+    }
+    return out;
+}
+
+bool NifViewport::HasActiveParallax()
+{
+    for (const RenderMesh& mesh : m_meshes)
+    {
+        const NifMaterial& m = mesh.material;
+        if (m.isPBR)
+            continue; // authored displacement_scale, not slider-driven
+        if (m.hasHeightMap)
+            return true;
+        if (m.hasEnvironmentMap && !m.envMaskTexture.empty() && m_textures
+            && m_textures->HasComplexMaterialAlpha(m.envMaskTexture))
+            return true;
+    }
+    return false;
+}
+
 std::size_t NifViewport::TotalTriangleCount() const
 {
     std::size_t total = 0;

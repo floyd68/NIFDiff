@@ -36,6 +36,7 @@ struct RenderSettings
     Vector3 eyePos;
     float ambient = 0.35f;
     float brightness = 1.0f;
+    float parallaxHeightScale = 2.0f; // vanilla/_m POM HeightScale (0.1*scale UV depth budget); PBR unaffected
     Color4 clearColor { 0.09f, 0.09f, 0.10f, 1.0f };
     bool showGrid = true;
     bool showAxes = true;
@@ -106,11 +107,15 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_cbPerObjectUnlit;
 
     // State object cache (Phase 3's "Blend/DepthStencil/Rasterizer 상태
-    // 객체 캐시"): a handful of fixed variants is enough since materials in
-    // this parser's scope only distinguish opaque vs alpha-blended.
+    // 객체 캐시"). Blended materials carry their NiAlphaProperty src/dst
+    // functions (additive fire glows etc.), so blend states beyond the two
+    // fixed ones are created on demand and cached by (src,dst) pair.
+    ID3D11BlendState* GetBlendState(std::uint8_t srcBlend, std::uint8_t dstBlend);
     Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendOpaque;
-    Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendAlpha;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendAlpha; // standard SRC_ALPHA/INV_SRC_ALPHA
+    std::unordered_map<std::uint16_t, Microsoft::WRL::ComPtr<ID3D11BlendState>> m_blendCache;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthDefault;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthNoWrite; // SLSF2_ZBuffer_Write cleared (test only)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterSolid;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterSolidNoCull; // SLSF2_Double_Sided materials
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterDecal;       // SLSF1_(Dynamic_)Decal: negative depth bias (glPolygonOffset(-1,-1) equivalent)

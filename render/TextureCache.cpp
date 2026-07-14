@@ -86,6 +86,70 @@ ID3D11ShaderResourceView* TextureCache::LoadFromMemory(std::span<const std::uint
     return UploadScratch(m_device, scratch, metadata, m_cache, cacheKey);
 }
 
+bool TextureCache::HasComplexMaterialAlpha(const std::string& relativePath)
+{
+    if (relativePath.empty() || m_resolver == nullptr)
+        return false;
+    auto it = m_cmCache.find(relativePath);
+    if (it != m_cmCache.end())
+        return it->second;
+
+    bool result = false;
+    ResourceBytes found = m_resolver->Find(relativePath, m_nifDirectory);
+    DirectX::TexMetadata meta {};
+    DirectX::ScratchImage img;
+    HRESULT hr = E_FAIL;
+    if (!found.diskPath.empty())
+        hr = DirectX::LoadFromDDSFile(found.diskPath.c_str(), DirectX::DDS_FLAGS_NONE, &meta, img);
+    else if (!found.data.empty())
+        hr = DirectX::LoadFromDDSMemory(found.data.data(), found.data.size(), DirectX::DDS_FLAGS_NONE, &meta, img);
+
+    if (SUCCEEDED(hr) && meta.mipLevels > 0)
+    {
+        // Examine the coarsest mip - the same one the shader's
+        // SampleLevel(15) detection lands on - decoded to RGBA8.
+        const DirectX::Image* last = img.GetImage(meta.mipLevels - 1, 0, 0);
+        DirectX::ScratchImage decoded;
+        const DirectX::Image* px = nullptr;
+        if (last != nullptr)
+        {
+            if (DirectX::IsCompressed(meta.format))
+            {
+                if (SUCCEEDED(DirectX::Decompress(*last, DXGI_FORMAT_R8G8B8A8_UNORM, decoded)))
+                    px = decoded.GetImage(0, 0, 0);
+            }
+            else if (meta.format == DXGI_FORMAT_R8G8B8A8_UNORM)
+            {
+                px = last;
+            }
+            else if (SUCCEEDED(DirectX::Convert(*last, DXGI_FORMAT_R8G8B8A8_UNORM,
+                         DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, decoded)))
+            {
+                px = decoded.GetImage(0, 0, 0);
+            }
+        }
+        if (px != nullptr && px->pixels != nullptr)
+        {
+            double sum = 0.0;
+            std::size_t count = 0;
+            for (std::size_t y = 0; y < px->height; ++y)
+            {
+                const std::uint8_t* row = px->pixels + y * px->rowPitch;
+                for (std::size_t x = 0; x < px->width; ++x)
+                {
+                    sum += row[x * 4 + 3];
+                    ++count;
+                }
+            }
+            if (count > 0)
+                result = (sum / static_cast<double>(count)) / 255.0 < 1.0 - 4.0 / 255.0;
+        }
+    }
+
+    m_cmCache.emplace(relativePath, result);
+    return result;
+}
+
 ID3D11ShaderResourceView* TextureCache::GetOrLoad(const std::string& relativePath)
 {
     auto it = m_cache.find(relativePath);

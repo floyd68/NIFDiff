@@ -1178,6 +1178,7 @@ void NifDocument::parseBSEffectShaderProperty(NifIStream& in, int blockIndex)
     mat.greyscaleAlpha = sf1(5) != 0;                              // SLSF1_Greyscale_To_PaletteAlpha
     mat.isDoubleSided = sf2(4) != 0;                                // SLSF2_Double_Sided
     mat.isDecal = sf1(26) || sf1(27);                                // SLSF1_Decal / SLSF1_Dynamic_Decal (same bits in FO4's word)
+    mat.depthWrite = sf2(0) != 0;                                    // SLSF2_ZBuffer_Write (fire glows etc. clear it)
     if (m_bsVersion < kBsVerFO4)
         mat.hasWeaponBlood = sf2(17) != 0;                          // SLSF2_Weapon_Blood
     mat.hasSpecular = false;                                       // effect shader is unlit - no specular term
@@ -1300,6 +1301,8 @@ void NifDocument::buildHierarchyAndRoots()
         mat.hasGlowMap    = st == 2 && sf2(6) && !mat.glowTexture.empty();   // ST_GlowShader + SLSF2_Glow_Map
         mat.isDoubleSided = sf2(4) != 0;                        // SLSF2_Double_Sided
         mat.isDecal = sf1(26) || sf1(27);                       // SLSF1_Decal / SLSF1_Dynamic_Decal (same bits in FO4's word)
+        mat.depthWrite = sf2(0) != 0;                            // SLSF2_ZBuffer_Write
+        mat.hasRefraction = sf1(15) != 0;                        // SLSF1_Refraction (heat-haze planes etc.)
         mat.hasModelSpaceNormals = sf1(12) != 0;                 // SLSF1_Model_Space_Normals (sk_msn path)
 
         if (skyrimStream)
@@ -1313,6 +1316,22 @@ void NifDocument::buildHierarchyAndRoots()
             mat.hasTintMask   = st == 4;                             // ST_FaceTint (updateParams line 1214)
             mat.hasDetailMask = mat.hasTintMask;
             mat.hasMultiLayerParallax = sf2(24) != 0;                 // SLSF2_Multi_Layer_Parallax
+
+            // Community Shaders True PBR (PBRNifPatcher's NifPatcher2.cpp:
+            // shaderFlags2 |= SLSF2_UNUSED01 // "PBR FLAG"). The soft/rim
+            // lighting bits are repurposed as the foliage/subsurface shader
+            // switches, so the vanilla features they'd otherwise fake are
+            // cleared - the renderer takes the PBR path instead.
+            mat.isPBR = sf2(23) != 0;                                 // SLSF2_Unused01
+            if (mat.isPBR)
+            {
+                mat.pbrSubsurface = sf2(26) != 0;                     // repurposed SLSF2_Rim_Lighting
+                mat.hasRimlight = false;
+                mat.hasSoftlight = false;
+                mat.hasBacklight = false;
+                mat.hasMultiLayerParallax = false;
+                mat.hasHeightMap = false; // slot 3 is PBR displacement, bound by the renderer's PBR path
+            }
         }
         else
         {
@@ -1347,6 +1366,8 @@ void NifDocument::buildHierarchyAndRoots()
         {
             const auto [alphaFlags, threshold] = flagIt->second;
             matIt->second.hasAlphaBlend = (alphaFlags & 0x1) != 0;
+            matIt->second.alphaSrcBlend = static_cast<std::uint8_t>((alphaFlags >> 1) & 0xF);
+            matIt->second.alphaDstBlend = static_cast<std::uint8_t>((alphaFlags >> 5) & 0xF);
             matIt->second.hasAlphaTest = (alphaFlags & 0x200) != 0;
             matIt->second.alphaTestThreshold = static_cast<float>(threshold) / 255.0f;
         }

@@ -3,6 +3,8 @@
 #include "TextureCache.h"
 
 #include <d3dcompiler.h>
+#include <d3d11sdklayers.h>
+#include <tuple>
 #include <vector>
 #include <cstring>
 
@@ -18,7 +20,13 @@ namespace
     struct Vertex { float pos[3]; float normal[3]; float uv[2]; float color[4]; float tangent[3]; };
     struct LineVertex { float pos[3]; float color[4]; };
 
-    struct CBPerFrameLit { float viewProj[16]; float lightDir[3]; float ambient; float eyePos[3]; float brightness; };
+    struct CBPerFrameLit
+    {
+        float viewProj[16];
+        float lightDir[3]; float ambient;
+        float eyePos[3]; float brightness;
+        float parallaxScale; float padFrame[3];
+    };
     struct CBPerObjectLit
     {
         float world[16];
@@ -37,7 +45,7 @@ namespace
     struct CBPerFrameUnlit { float viewProj[16]; };
     struct CBPerObjectUnlit { float world[16]; };
 
-    static_assert(sizeof(CBPerFrameLit) == 96, "CBPerFrameLit must match Shaders.h PerFrame layout");
+    static_assert(sizeof(CBPerFrameLit) == 112, "CBPerFrameLit must match Shaders.h PerFrame layout");
     static_assert(sizeof(CBPerObjectLit) == 192, "CBPerObjectLit must match Shaders.h PerObject layout");
 
     // gFlags bits - keep in sync with Shaders.h's kLitShaderHLSL table.
@@ -64,11 +72,16 @@ namespace
     constexpr std::uint32_t kLitEffectGreyscaleAlpha = 1048576;
     constexpr std::uint32_t kLitEffectWeaponBlood = 2097152;
     constexpr std::uint32_t kLitAlphaTest         = 4194304; // NiAlphaProperty alpha test -> clip()
+    constexpr std::uint32_t kLitPBR               = 8388608; // Community Shaders True PBR path
+    constexpr std::uint32_t kLitPBRSubsurface     = 16777216; // PBR: t7 = subsurface color map
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
-        D3D11_MAPPED_SUBRESOURCE mapped;
-        if (SUCCEEDED(ctx->Map(buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        if (!ctx || !buf || !data)
+            return;
+        D3D11_MAPPED_SUBRESOURCE mapped {};
+        const HRESULT hr = ctx->Map(buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (SUCCEEDED(hr) && mapped.pData)
         {
             std::memcpy(mapped.pData, data, size);
             ctx->Unmap(buf, 0);
@@ -138,6 +151,21 @@ bool D3D11Renderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* contex
     }
 
     BuildGridAndAxesGeometry();
+
+#if defined(_DEBUG)
+    // After a GPU hang the debug layer RaiseException(0x87D) on the next
+    // API call - usually UploadDynamicCB. Don't break the process; the
+    // RenderScene device-removed guard below skips further draws.
+    {
+        Microsoft::WRL::ComPtr<ID3D11InfoQueue> iq;
+        if (SUCCEEDED(m_device.As(&iq)) && iq)
+        {
+            iq->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_CORRUPTION, FALSE);
+            iq->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_ERROR, FALSE);
+        }
+    }
+#endif
+
     return true;
 }
 
@@ -146,10 +174,12 @@ bool D3D11Renderer::CreateShaders(std::string* error)
     auto compile = [&](const char* src, const char* entry, const char* target, ComPtr<ID3DBlob>& outBlob) -> bool
     {
         ComPtr<ID3DBlob> errBlob;
+        // Never SKIP_OPTIMIZATION: POM SampleLevel loops TDR the GPU when
+        // left unoptimized. Also skip D3DCOMPILE_DEBUG on the pixel shader
+        // path - debug instrumentation multiplies per-texel cost enough to
+        // hang a fullscreen parallax mesh and take the shared D2D device
+        // (whole UI) down with it.
         UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if defined(_DEBUG)
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
         HRESULT hr = D3DCompile(src, std::strlen(src), nullptr, nullptr, nullptr, entry, target, flags, 0, &outBlob, &errBlob);
         if (FAILED(hr))
         {
@@ -233,6 +263,13 @@ bool D3D11Renderer::CreateStateObjects()
     };
     m_device->CreateDepthStencilState(&depthDesc, &m_depthDefault);
 
+    // SLSF2_ZBuffer_Write cleared (fire glows and similar effect overlays):
+    // still depth-TESTED against the opaque scene, but leaves no footprint
+    // that would cut out geometry drawn after it.
+    D3D11_DEPTH_STENCIL_DESC depthNoWriteDesc = depthDesc;
+    depthNoWriteDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    m_device->CreateDepthStencilState(&depthNoWriteDesc, &m_depthNoWrite);
+
     const D3D11_RASTERIZER_DESC rasterSolid {
         .FillMode = D3D11_FILL_SOLID,
         .CullMode = D3D11_CULL_BACK,
@@ -289,8 +326,58 @@ bool D3D11Renderer::CreateStateObjects()
     };
     m_device->CreateSamplerState(&sampDesc, &m_sampler);
 
-    return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterSolidNoCull
+    return m_blendOpaque && m_blendAlpha && m_depthDefault && m_depthNoWrite && m_rasterSolid && m_rasterSolidNoCull
         && m_rasterDecal && m_rasterDecalNoCull && m_rasterWireframe && m_rasterHighlight && m_sampler;
+}
+
+ID3D11BlendState* D3D11Renderer::GetBlendState(std::uint8_t srcBlend, std::uint8_t dstBlend)
+{
+    // The common case stays on the prebuilt standard-alpha state.
+    if (srcBlend == 6 && dstBlend == 7)
+        return m_blendAlpha.Get();
+
+    const std::uint16_t key = static_cast<std::uint16_t>(srcBlend) << 8 | dstBlend;
+    auto it = m_blendCache.find(key);
+    if (it != m_blendCache.end())
+        return it->second.Get();
+
+    // nif.xml AlphaFunction enum -> D3D11_BLEND.
+    auto toD3D = [](std::uint8_t f) -> D3D11_BLEND
+    {
+        switch (f)
+        {
+        case 0:  return D3D11_BLEND_ONE;
+        case 1:  return D3D11_BLEND_ZERO;
+        case 2:  return D3D11_BLEND_SRC_COLOR;
+        case 3:  return D3D11_BLEND_INV_SRC_COLOR;
+        case 4:  return D3D11_BLEND_DEST_COLOR;
+        case 5:  return D3D11_BLEND_INV_DEST_COLOR;
+        case 6:  return D3D11_BLEND_SRC_ALPHA;
+        case 7:  return D3D11_BLEND_INV_SRC_ALPHA;
+        case 8:  return D3D11_BLEND_DEST_ALPHA;
+        case 9:  return D3D11_BLEND_INV_DEST_ALPHA;
+        case 10: return D3D11_BLEND_SRC_ALPHA_SAT;
+        default: return D3D11_BLEND_ONE;
+        }
+    };
+
+    const D3D11_BLEND_DESC desc {
+        .RenderTarget = { {
+            .BlendEnable = TRUE,
+            .SrcBlend = toD3D(srcBlend),
+            .DestBlend = toD3D(dstBlend),
+            .BlendOp = D3D11_BLEND_OP_ADD,
+            .SrcBlendAlpha = D3D11_BLEND_ONE,
+            .DestBlendAlpha = D3D11_BLEND_ZERO,
+            .BlendOpAlpha = D3D11_BLEND_OP_ADD,
+            .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
+        } },
+    };
+    Microsoft::WRL::ComPtr<ID3D11BlendState> state;
+    m_device->CreateBlendState(&desc, &state);
+    ID3D11BlendState* raw = state.Get();
+    m_blendCache.emplace(key, std::move(state));
+    return raw ? raw : m_blendAlpha.Get();
 }
 
 bool D3D11Renderer::Resize(UINT width, UINT height)
@@ -462,7 +549,9 @@ void D3D11Renderer::BuildGridAndAxesGeometry()
 
 void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const RenderSettings& settings, TextureCache* textures)
 {
-    if (!m_colorRTV || !m_depthDSV)
+    if (!m_colorRTV || !m_depthDSV || !m_device || !m_context)
+        return;
+    if (m_device->GetDeviceRemovedReason() != S_OK)
         return;
 
     ID3D11RenderTargetView* rtvs[] = { m_colorRTV.Get() };
@@ -531,20 +620,28 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
         cbFrame.ambient = settings.ambient;
         cbFrame.eyePos[0] = settings.eyePos[0]; cbFrame.eyePos[1] = settings.eyePos[1]; cbFrame.eyePos[2] = settings.eyePos[2];
         cbFrame.brightness = settings.brightness;
+        cbFrame.parallaxScale = settings.parallaxHeightScale;
         UploadDynamicCB(m_context.Get(), m_cbPerFrame.Get(), &cbFrame, sizeof(cbFrame));
         ID3D11Buffer* frameCb = m_cbPerFrame.Get();
         m_context->VSSetConstantBuffers(0, 1, &frameCb);
         m_context->PSSetConstantBuffers(0, 1, &frameCb);
 
-        for (const RenderMesh& mesh : meshes)
+        auto drawMesh = [&](const RenderMesh& mesh)
         {
             if (!mesh.geometry)
-                continue;
+                return;
             const GpuMesh* gpu = GetOrCreateGpuMesh(mesh.geometry);
             if (!gpu || !gpu->vertexBuffer || gpu->indexCount == 0)
-                continue;
+                return;
 
             const NifMaterial& mat = mesh.material;
+
+            // Refraction materials (fire heat-haze planes and the like) are
+            // backbuffer-distortion effects in-engine; drawing their source
+            // textures as flat geometry (NifSkope paints them black) only
+            // obscures the model, so a preview simply omits them.
+            if (mat.hasRefraction)
+                return;
 
             CBPerObjectLit cbObj {};
             std::memcpy(cbObj.world, mesh.worldTransform.data(), sizeof(cbObj.world));
@@ -645,6 +742,17 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                 : kNone;
             auto [auxSrv, hasAux] = resolve(auxPath, m_whiteTexSRV.Get());
 
+            // True PBR re-binds the repurposed slots directly (the vanilla
+            // feature gates above never fire for a PBR material): t3 =
+            // displacement, t5 = RMAOS, t2 = emissive, t7 = subsurface map.
+            if (mat.isPBR)
+            {
+                std::tie(heightSrv, hasHeight) = resolve(mat.heightTexture, m_blackTexSRV.Get());
+                std::tie(envMaskSrv, hasEnvMask) = resolve(mat.envMaskTexture, m_whiteTexSRV.Get());
+                std::tie(glowSrv, hasGlowTex) = resolve(mat.glowTexture, m_blackTexSRV.Get());
+                std::tie(backlightSrv, hasBacklightTex) = resolve(mat.backlightTexture, m_blackTexSRV.Get());
+            }
+
             std::uint32_t flags = 0;
             if (hasDiffuse)                           flags |= kLitHasDiffuse;
             if (hasNormal)                            flags |= kLitHasNormalMap;
@@ -671,6 +779,21 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                 if (mat.greyscaleAlpha && hasAux)     flags |= kLitEffectGreyscaleAlpha;
                 if (mat.hasWeaponBlood)               flags |= kLitEffectWeaponBlood;
             }
+            if (mat.isPBR)
+            {
+                // The PBR shader path reinterprets the per-slot bits (see
+                // Shaders.h's table): keep only the texture-presence facts
+                // it reads and drop any legacy feature bits the repurposed
+                // flags may have set.
+                flags &= ~(kLitHasGlowMap | kLitHasHeightMap | kLitHasCubeMap | kLitHasEnvMask
+                    | kLitHasSoftlight | kLitHasRimlight | kLitHasBacklight | kLitHasSpecularMap
+                    | kLitHasDetailMask | kLitHasTintMask | kLitMultiLayer);
+                flags |= kLitPBR;
+                if (hasHeight)                              flags |= kLitHasHeightMap; // displacement bound
+                if (hasEnvMask)                             flags |= kLitHasEnvMask;   // RMAOS bound
+                if (hasGlowTex)                             flags |= kLitHasGlowMap;   // emissive map bound
+                if (mat.pbrSubsurface && hasBacklightTex)   flags |= kLitPBRSubsurface;
+            }
             if (mat.hasAlphaTest)
             {
                 flags |= kLitAlphaTest;
@@ -693,7 +816,13 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             m_context->VSSetConstantBuffers(1, 1, &objCb);
             m_context->PSSetConstantBuffers(1, 1, &objCb);
 
-            m_context->OMSetBlendState(mat.hasAlphaBlend ? m_blendAlpha.Get() : m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
+            // NiAlphaProperty's real blend functions (fire glows are
+            // SRC_ALPHA/ONE additive - the standard alpha equation would
+            // turn them into occluders) and SLSF2_ZBuffer_Write.
+            m_context->OMSetBlendState(
+                mat.hasAlphaBlend ? GetBlendState(mat.alphaSrcBlend, mat.alphaDstBlend) : m_blendOpaque.Get(),
+                nullptr, 0xFFFFFFFF);
+            m_context->OMSetDepthStencilState(mat.depthWrite ? m_depthDefault.Get() : m_depthNoWrite.Get(), 0);
             if (!settings.wireframe)
             {
                 if (mat.isDecal)
@@ -707,6 +836,24 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             m_context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
             m_context->IASetIndexBuffer(gpu->indexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0);
             m_context->DrawIndexed(gpu->indexCount, 0, 0);
+        };
+
+        // Two passes: opaque (and alpha-TESTED) geometry first with depth
+        // writes, then the alpha-BLENDED shapes in file order - otherwise a
+        // no-depth-write additive glow drawn early (file order puts effect
+        // shapes anywhere) is simply overwritten by opaque geometry drawn
+        // after it. File order within the blended pass mirrors how the
+        // engine's BSOrderedNode content is authored; a full back-to-front
+        // sort is not attempted.
+        for (const RenderMesh& mesh : meshes)
+        {
+            if (!mesh.material.hasAlphaBlend)
+                drawMesh(mesh);
+        }
+        for (const RenderMesh& mesh : meshes)
+        {
+            if (mesh.material.hasAlphaBlend)
+                drawMesh(mesh);
         }
 
         // --- Selection wireframe overlay ---
@@ -736,6 +883,7 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                 m_context->VSSetConstantBuffers(0, 1, &frameCb2);
                 m_context->VSSetConstantBuffers(1, 1, &objCb2);
                 m_context->OMSetBlendState(m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
+                m_context->OMSetDepthStencilState(m_depthDefault.Get(), 0); // meshes may have left the no-write state bound
                 m_context->RSSetState(m_rasterHighlight.Get());
 
                 UINT stride = sizeof(Vertex), offset = 0;
@@ -746,6 +894,13 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             }
         }
     }
+
+    // Leave the shared FD2D device context clean: our offscreen color RT
+    // must not stay bound when Backplate hands the context to D2D.
+    ID3D11RenderTargetView* nullRTV[] = { nullptr };
+    m_context->OMSetRenderTargets(1, nullRTV, nullptr);
+    ID3D11ShaderResourceView* nullSRVs[9] = {};
+    m_context->PSSetShaderResources(0, 9, nullSRVs);
 }
 
 } // namespace nsk

@@ -135,6 +135,9 @@ struct NifMaterial
     bool useEnvironmentMask = false;// hasEnvironmentMap + slot 5 non-empty (else normal map alpha masks)
     bool hasTintColor = false;      // shader type 5 (skin) or 6 (hair)
     bool isDoubleSided = false;     // SLSF2_Double_Sided (bit 4)
+    bool hasRefraction = false;     // SLSF1_Refraction (bit 15): a backbuffer-distortion effect
+                                    // (heat haze etc.) with no direct color contribution - the
+                                    // renderer skips these instead of drawing their textures flat
     bool isDecal = false;           // SLSF1_Decal (bit 26) or SLSF1_Dynamic_Decal (bit 27); same bit
                                     // positions in the Skyrim and FO4 SF1 words. The renderer draws
                                     // these with a depth bias (NifSkope: glPolygonOffset(-1,-1)) so
@@ -142,6 +145,22 @@ struct NifMaterial
     bool hasAlphaBlend = false;     // from the shape's NiAlphaProperty (not this block)
     bool hasAlphaTest = false;      // NiAlphaProperty alpha-test enable (AlphaFlags bit 9)
     float alphaTestThreshold = 0.0f; // NiAlphaProperty Threshold / 255, for the shader's clip()
+    // NiAlphaProperty blend functions (nif.xml AlphaFunction enum: 0=ONE,
+    // 1=ZERO, 2=SRC_COLOR, ..., 6=SRC_ALPHA, 7=INV_SRC_ALPHA, ...). Fire
+    // glows etc. use SRC_ALPHA/ONE (additive) - rendering those with the
+    // standard alpha equation turns a light contribution into an occluder.
+    std::uint8_t alphaSrcBlend = 6; // default SRC_ALPHA
+    std::uint8_t alphaDstBlend = 7; // default INV_SRC_ALPHA
+    bool depthWrite = true;         // SLSF2_ZBuffer_Write (bit 0); glow planes clear it
+
+    // Community Shaders "True PBR" (PBRNifPatcher marking, Skyrim/SE only):
+    // SLSF2_Unused01 flags the material as PBR; the fields/slots then mean
+    // Glossiness = specular level, Specular Strength = roughness scale,
+    // Lighting Effect 1 = subsurface opacity, Lighting Effect 2 =
+    // displacement scale, slot 3 = displacement, slot 5 = RMAOS
+    // (roughness/metal/AO/spec), slot 7 = subsurface color map.
+    bool isPBR = false;                 // SLSF2_Unused01 (bit 23)
+    bool pbrSubsurface = false;         // SLSF2_Rim_Lighting repurposed as the subsurface switch
 
     bool hasModelSpaceNormals = false;  // SLSF1_Model_Space_Normals (bit 12) - sk_msn.frag path
     bool hasSpecularMap = false;        // SLSF1_Specular + slot 7 non-empty (MSN external spec mask)

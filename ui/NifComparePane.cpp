@@ -65,6 +65,7 @@ NifComparePane::NifComparePane(const std::wstring& name)
     m_viewport->SetOnSelectionChanged([this](const RenderMesh* sel)
     {
         m_selectedName = sel ? Utf8ToWide(sel->nodeName) : std::wstring();
+        m_selectedKind = sel ? m_viewport->ShaderKindFor(*sel) : std::wstring();
         UpdatePathLabel();
         UpdateStatsLabel();
     });
@@ -77,7 +78,11 @@ void NifComparePane::UpdatePathLabel()
 {
     std::wstring text = m_doc ? m_doc->filePath() : L"(no file)";
     if (!m_selectedName.empty())
+    {
         text += L"    ▸ " + m_selectedName;
+        if (!m_selectedKind.empty())
+            text += L"  [" + m_selectedKind + L"]";
+    }
     m_pathLabel->SetText(text);
     m_pathLabel->Invalidate();
 }
@@ -87,8 +92,13 @@ void NifComparePane::UpdateStatsLabel()
     std::wstring text;
     if (m_doc)
     {
+        // File-wide shader kinds (see NifViewport::ShaderKindSummary), then
+        // the selection/total triangle counts.
+        const std::wstring shaders = m_viewport->ShaderKindSummary();
+        if (!shaders.empty())
+            text = L"Shaders: " + shaders + L"    |    ";
         if (const RenderMesh* sel = m_viewport->SelectedMesh(); sel && sel->geometry)
-            text = L"Sel: " + FormatCount(sel->geometry->triangles.size()) + L"  |  ";
+            text += L"Sel: " + FormatCount(sel->geometry->triangles.size()) + L"  |  ";
         // Trailing NBSPs keep the right-aligned text off the pane edge (Text
         // ignores Wnd margins, and plain trailing spaces collapse in DWrite's
         // trailing alignment).
@@ -107,6 +117,8 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     m_viewport->SetDocument(m_doc.get());
     UpdatePathLabel();
     UpdateStatsLabel();
+    if (m_onDocumentChanged)
+        m_onDocumentChanged();
     return true;
 }
 
@@ -116,6 +128,8 @@ void NifComparePane::Clear()
     m_viewport->SetDocument(nullptr);
     UpdatePathLabel();
     UpdateStatsLabel();
+    if (m_onDocumentChanged)
+        m_onDocumentChanged();
 }
 
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)

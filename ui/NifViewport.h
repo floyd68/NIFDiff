@@ -55,6 +55,15 @@ public:
     int SelectedMeshIndex() const { return m_selectedMesh; }
     const RenderMesh* SelectedMesh() const;
     std::size_t TotalTriangleCount() const; // across every mesh of the loaded scene
+
+    // Human-readable shader classification for the UI labels, covering the
+    // extended-material conventions on top of the vanilla shader types:
+    // "True PBR" (PBRNifPatcher flag), "Complex Material" (env mask with
+    // height in alpha, probed like the shader does), "Parallax", "EnvMap",
+    // "Glow", ..., plus "MSN"/"Decal"/"Refraction" suffixes.
+    std::wstring ShaderKindFor(const RenderMesh& mesh) const;
+    std::wstring SelectedMeshShaderKind() const; // empty when nothing is selected
+    std::wstring ShaderKindSummary() const;      // e.g. "Default x8 · Parallax x3", empty when no meshes
     using SelectionChangedHandler = std::function<void(const RenderMesh* /*null when cleared*/)>;
     void SetOnSelectionChanged(SelectionChangedHandler handler) { m_onSelectionChanged = std::move(handler); }
 
@@ -67,7 +76,15 @@ public:
     void SetShowGrid(bool show) { m_settings.showGrid = show; Invalidate(); }
     void SetShowAxes(bool show) { m_settings.showAxes = show; Invalidate(); }
     void SetWireframe(bool wire) { m_settings.wireframe = wire; Invalidate(); }
+    void SetParallaxHeightScale(float v) { m_settings.parallaxHeightScale = v; Invalidate(); }
     void ResetCamera();
+
+    // Whether any loaded mesh actually runs the height-based parallax the
+    // "Parallax Height" slider controls: a vanilla parallax material
+    // (ST_Heightmap + _p.dds) or a complex material carrying height in its
+    // env mask alpha. True PBR displacement is excluded - it follows the
+    // authored displacement_scale, not the slider.
+    bool HasActiveParallax();
 
     void OnAttached(FD2D::Backplate& backplate) override;
     FD2D::Size Measure(FD2D::Size available) override;

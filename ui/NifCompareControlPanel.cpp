@@ -88,6 +88,16 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_planarAngleSlider->SetValue(45.0f);
     row2->AddChild(m_planarAngleSlider);
 
+    // POM height budget: HeightScale in CS terms (0.1*scale UV depth).
+    // Starts disabled - NifCompareView enables it when a loaded NIF has
+    // parallax-active materials.
+    m_parallaxSlider = std::make_shared<FD2D::Slider>(L"ParallaxHeight");
+    m_parallaxSlider->SetLabel(L"Parallax Height");
+    m_parallaxSlider->SetRange(0.0f, 5.0f);
+    m_parallaxSlider->SetValue(2.0f);
+    m_parallaxSlider->SetEnabled(false);
+    row2->AddChild(m_parallaxSlider);
+
     AddChild(row2);
 
     // Row 3: resources (Game Data / Overrides).
@@ -140,6 +150,9 @@ void NifCompareControlPanel::SetOnBrightnessChanged(std::function<void(float)> h
 void NifCompareControlPanel::SetOnAmbientChanged(std::function<void(float)> handler) { m_ambientSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnDeclinationChanged(std::function<void(float)> handler) { m_declinationSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnPlanarAngleChanged(std::function<void(float)> handler) { m_planarAngleSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnParallaxHeightChanged(std::function<void(float)> handler) { m_parallaxSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetParallaxHeightEnabled(bool enabled) { m_parallaxSlider->SetEnabled(enabled); }
+float NifCompareControlPanel::ParallaxHeightValue() const { return m_parallaxSlider->Value(); }
 
 void NifCompareControlPanel::SetOnBrowseGameData(std::function<void()> handler) { m_browseGameDataBtn->OnClick(std::move(handler)); }
 void NifCompareControlPanel::SetOnDetectGameData(std::function<void()> handler) { m_detectGameDataBtn->OnClick(std::move(handler)); }

@@ -80,6 +80,14 @@ NifCompareView::NifCompareView(const std::wstring& name)
         if (m_syncLighting) { for (auto& p : m_panes) p->Viewport().SetLightPlanarAngleDegrees(v); }
         else { m_panes.front()->Viewport().SetLightPlanarAngleDegrees(v); }
     });
+
+    // Display setting rather than a light: always applies to every pane.
+    m_controls->SetOnParallaxHeightChanged([this](float v)
+    {
+        m_parallaxHeightScale = v;
+        for (auto& p : m_panes)
+            p->Viewport().SetParallaxHeightScale(v);
+    });
 }
 
 void NifCompareView::CreateInitialPanes()
@@ -97,6 +105,7 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     {
         pane->SetResourceResolver(m_resolver);
     }
+    pane->Viewport().SetParallaxHeightScale(m_parallaxHeightScale);
     WirePaneCallbacks(pane);
     return pane;
 }
@@ -120,6 +129,24 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
         m_applyingSync = false;
     });
 
+    pane->SetOnDocumentChanged([this]()
+    {
+        RefreshParallaxSliderEnabled();
+    });
+}
+
+void NifCompareView::RefreshParallaxSliderEnabled()
+{
+    bool anyParallax = false;
+    for (auto& p : m_panes)
+    {
+        if (p && p->Viewport().HasActiveParallax())
+        {
+            anyParallax = true;
+            break;
+        }
+    }
+    m_controls->SetParallaxHeightEnabled(anyParallax);
 }
 
 void NifCompareView::RequestOpenPane(NifComparePane& pane)
@@ -265,6 +292,10 @@ void NifCompareView::RebuildHostTree()
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
+
+    // The pane set changed: the removed/added panes may change whether any
+    // parallax-active document is still open.
+    RefreshParallaxSliderEnabled();
 }
 
 void NifCompareView::RecalcControlStripExtent()

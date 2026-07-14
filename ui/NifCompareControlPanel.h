@@ -44,6 +44,13 @@ public:
     void SetOnDeclinationChanged(std::function<void(float)> handler);
     void SetOnPlanarAngleChanged(std::function<void(float)> handler);
 
+    // POM height budget (vanilla/_m parallax HeightScale). The slider is
+    // grayed out unless some loaded NIF actually runs height parallax -
+    // see NifCompareView::RefreshParallaxSliderEnabled.
+    void SetOnParallaxHeightChanged(std::function<void(float)> handler);
+    void SetParallaxHeightEnabled(bool enabled);
+    float ParallaxHeightValue() const;
+
     // Resources (Game Data / Override folders).
     void SetOnBrowseGameData(std::function<void()> handler);
     void SetOnDetectGameData(std::function<void()> handler);
@@ -66,6 +73,7 @@ private:
     std::shared_ptr<FD2D::Slider> m_ambientSlider;
     std::shared_ptr<FD2D::Slider> m_declinationSlider;
     std::shared_ptr<FD2D::Slider> m_planarAngleSlider;
+    std::shared_ptr<FD2D::Slider> m_parallaxSlider;
 
     std::shared_ptr<FD2D::Text> m_gameDataLabel;
     std::shared_ptr<FD2D::Text> m_overrideLabel;

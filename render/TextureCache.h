@@ -31,7 +31,13 @@ public:
     // chain every frame.
     ID3D11ShaderResourceView* GetOrLoad(const std::string& relativePath);
 
-    void Clear() { m_cache.clear(); }
+    // CPU-side ENB/CS "complex material" probe, mirroring the shader's
+    // detection rule (coarsest mip's average alpha meaningfully below 1 -
+    // vanilla env masks decode fully opaque). Used for the shader-kind
+    // labels; the result is cached per path.
+    bool HasComplexMaterialAlpha(const std::string& relativePath);
+
+    void Clear() { m_cache.clear(); m_cmCache.clear(); }
 
 private:
     ID3D11ShaderResourceView* LoadFromDisk(const std::wstring& fullPath);
@@ -41,6 +47,7 @@ private:
     ResourceResolver* m_resolver = nullptr;
     std::wstring m_nifDirectory;
     std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> m_cache;
+    std::unordered_map<std::string, bool> m_cmCache; // complex-material probe results
 };
 
 } // namespace nsk

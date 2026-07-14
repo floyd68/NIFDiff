@@ -106,6 +106,7 @@ private:
     std::shared_ptr<NifComparePane> CreatePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
     void RebuildHostTree();
+    void RefreshParallaxSliderEnabled();
     void RecalcControlStripExtent();
     void ApplyOrientationPreset(int index);
 
@@ -136,6 +137,7 @@ private:
     bool m_syncViews = true;
     bool m_syncLighting = true;
     bool m_applyingSync = false; // re-entrancy guard while mirroring camera changes
+    float m_parallaxHeightScale = 2.0f; // current "Parallax Height" slider value, applied to new panes
 };
 
 } // namespace nsk
