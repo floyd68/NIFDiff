@@ -38,12 +38,13 @@ namespace
     }
 }
 
-Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromDisk(const std::wstring& fullPath)
+Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromDisk(const std::wstring& fullPath, DXGI_FORMAT& outFormat)
 {
     DirectX::TexMetadata metadata {};
     DirectX::ScratchImage scratch;
     if (FAILED(DirectX::LoadFromDDSFile(fullPath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, scratch)))
         return nullptr;
+    outFormat = metadata.format;
 
     // Handles 2D/mip-chain/cube-map/array layouts from the DDS metadata
     // (a cube map DDS yields a TEXTURECUBE-dimension SRV, which the lit
@@ -55,7 +56,7 @@ Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromDisk
     return srv;
 }
 
-Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromMemory(std::span<const std::uint8_t> data)
+Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromMemory(std::span<const std::uint8_t> data, DXGI_FORMAT& outFormat)
 {
     if (data.empty())
         return nullptr;
@@ -63,6 +64,7 @@ Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> TextureRepository::LoadFromMemo
     DirectX::ScratchImage scratch;
     if (FAILED(DirectX::LoadFromDDSMemory(data.data(), data.size(), DirectX::DDS_FLAGS_NONE, &metadata, scratch)))
         return nullptr;
+    outFormat = metadata.format;
 
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
     if (FAILED(DirectX::CreateShaderResourceView(
@@ -102,11 +104,11 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
     const char* source = "loose";
     if (!found.diskPath.empty())
     {
-        entry.srv = LoadFromDisk(found.diskPath);
+        entry.srv = LoadFromDisk(found.diskPath, entry.format);
     }
     else
     {
-        entry.srv = LoadFromMemory(found.data);
+        entry.srv = LoadFromMemory(found.data, entry.format);
         source = "archive";
     }
     const auto t2 = TraceClock::now();
@@ -128,6 +130,19 @@ void TextureRepository::EnsureCmProbe(Entry& entry)
 
     if (m_resolver == nullptr)
         return;
+
+    // BC1 pre-filter: 1-bit alpha can never carry the complex-material
+    // gloss/height gradient (the ecosystem's _m convention needs a full
+    // alpha channel; CM tools emit BC3/BC7). Vanilla env masks are commonly
+    // BC1, so this skips the whole re-read + decode on the most frequent
+    // "not a complex material" answer.
+    if (entry.format == DXGI_FORMAT_BC1_TYPELESS
+        || entry.format == DXGI_FORMAT_BC1_UNORM
+        || entry.format == DXGI_FORMAT_BC1_UNORM_SRGB)
+    {
+        NIFLOG_TRACE("[TEXLOAD] CM probe skipped (BC1) {}", entry.relativePath);
+        return;
+    }
 
     const auto tCm0 = StartupTrace::Clock::now();
     ResourceBytes found = m_resolver->Find(entry.relativePath, entry.nifDirectory);

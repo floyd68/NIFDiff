@@ -39,6 +39,7 @@ public:
     struct Entry
     {
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv; // null when decode failed
+        DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; // source DDS format, recorded at load
 
         // Lazy combined complex-material probe (see EnsureCmProbe): both
         // verdicts come from one re-read of the source, at most once per
@@ -71,8 +72,8 @@ public:
     void Clear() { m_bySource.clear(); }
 
 private:
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadFromDisk(const std::wstring& fullPath);
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadFromMemory(std::span<const std::uint8_t> data);
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadFromDisk(const std::wstring& fullPath, DXGI_FORMAT& outFormat);
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadFromMemory(std::span<const std::uint8_t> data, DXGI_FORMAT& outFormat);
 
     ID3D11Device* m_device = nullptr;
     ResourceResolver* m_resolver = nullptr;
