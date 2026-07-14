@@ -9,6 +9,45 @@
 namespace nsk
 {
 
+namespace
+{
+    // Vertical field of view of the perspective projection - shared between
+    // the render pass (OnRenderD3D's projectionMatrix call) and the pick
+    // ray construction (PickMeshAt), which must agree exactly for the ray
+    // to pass through the clicked pixel.
+    constexpr float kFovY = 0.9f;
+
+    // Moller-Trumbore, both-sided (picking ignores backface culling, like
+    // NifSkope's selection). Returns the ray parameter in outT on hit.
+    bool RayIntersectsTriangle(
+        const Vector3& origin, const Vector3& dir,
+        const Vector3& v0, const Vector3& v1, const Vector3& v2,
+        float& outT)
+    {
+        constexpr float kEps = 1e-7f;
+        const Vector3 e1 = v1 - v0;
+        const Vector3 e2 = v2 - v0;
+        const Vector3 p = Vector3::crossproduct(dir, e2);
+        const float det = Vector3::dotproduct(e1, p);
+        if (std::abs(det) < kEps)
+            return false; // parallel to the triangle plane
+        const float invDet = 1.0f / det;
+        const Vector3 s = origin - v0;
+        const float u = Vector3::dotproduct(s, p) * invDet;
+        if (u < 0.0f || u > 1.0f)
+            return false;
+        const Vector3 q = Vector3::crossproduct(s, e1);
+        const float v = Vector3::dotproduct(dir, q) * invDet;
+        if (v < 0.0f || u + v > 1.0f)
+            return false;
+        const float t = Vector3::dotproduct(e2, q) * invDet;
+        if (t <= 0.0f)
+            return false;
+        outT = t;
+        return true;
+    }
+}
+
 NifViewport::NifViewport(const std::wstring& name)
     : FD2D::Wnd(name)
 {
@@ -56,6 +95,7 @@ FD2D::Size NifViewport::Measure(FD2D::Size available)
 
 void NifViewport::SetDocument(const NifDocument* doc)
 {
+    SetSelectedMesh(-1); // a new (or cleared) document invalidates any picked mesh
     m_doc = doc;
     if (doc && !doc->filePath().empty())
     {
@@ -165,8 +205,9 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
 
     m_settings.view = m_camera.viewMatrix();
     float aspect = static_cast<float>(w) / static_cast<float>(h);
-    m_settings.proj = Camera::projectionMatrix(0.9f, aspect, 1.0f, 100000.0f);
+    m_settings.proj = Camera::projectionMatrix(kFovY, aspect, 1.0f, 100000.0f);
     m_settings.eyePos = m_camera.eyePosition();
+    m_settings.selectedMesh = m_selectedMesh;
 
     m_renderer.RenderScene(m_meshes, m_settings, m_textures.get());
 }
@@ -232,7 +273,7 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // clicks that actually landed on a Splitter's drag handle.
         if (!event.hasPoint || !FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
             break;
-        if (event.button == MouseButton::Left) { m_dragging = true; m_lastMousePt = event.point; RequestFocus(); return true; }
+        if (event.button == MouseButton::Left) { m_dragging = true; m_dragMoved = false; m_dragDownPt = event.point; m_lastMousePt = event.point; RequestFocus(); return true; }
         if (event.button == MouseButton::Middle || event.button == MouseButton::Right) { m_panning = true; m_panMoved = false; m_panDownPt = event.point; m_lastMousePt = event.point; RequestFocus(); return true; }
         break;
 
@@ -240,7 +281,16 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // Only claim the event if this viewport was actually the one tracking
         // the drag/pan; otherwise fall through so it doesn't swallow mouse-up
         // events that belong to some other control (e.g. releasing a Splitter drag).
-        if (event.button == MouseButton::Left && m_dragging) { m_dragging = false; return true; }
+        if (event.button == MouseButton::Left && m_dragging)
+        {
+            m_dragging = false;
+            // A left click that never crossed the drag-jitter threshold is a
+            // pick, not an orbit: select the sub-mesh under the cursor (or
+            // clear the selection when the click lands on empty space).
+            if (!m_dragMoved && event.hasPoint)
+                SetSelectedMesh(PickMeshAt(event.point));
+            return true;
+        }
         if ((event.button == MouseButton::Middle || event.button == MouseButton::Right) && m_panning)
         {
             m_panning = false;
@@ -260,10 +310,21 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         float dy = static_cast<float>(event.point.y - m_lastMousePt.y);
         if (m_dragging)
         {
-            m_camera.orbit(dx * 0.01f, dy * 0.01f);
+            // Same click-jitter threshold as panning: the orbit only starts
+            // once the pointer really moves, so a slightly shaky click still
+            // counts as a pick on MouseUp instead of a micro-rotation.
+            if (!m_dragMoved &&
+                (std::abs(event.point.x - m_dragDownPt.x) > 3 || std::abs(event.point.y - m_dragDownPt.y) > 3))
+            {
+                m_dragMoved = true;
+            }
+            if (m_dragMoved)
+            {
+                m_camera.orbit(dx * 0.01f, dy * 0.01f);
+                if (m_onCameraChanged) m_onCameraChanged(m_camera);
+                Invalidate();
+            }
             m_lastMousePt = event.point;
-            if (m_onCameraChanged) m_onCameraChanged(m_camera);
-            Invalidate();
             return true;
         }
         if (m_panning)
@@ -297,6 +358,85 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
     }
 
     return FD2D::Wnd::OnInputEvent(event);
+}
+
+const RenderMesh* NifViewport::SelectedMesh() const
+{
+    if (m_selectedMesh < 0 || static_cast<std::size_t>(m_selectedMesh) >= m_meshes.size())
+        return nullptr;
+    return &m_meshes[static_cast<std::size_t>(m_selectedMesh)];
+}
+
+void NifViewport::SetSelectedMesh(int index)
+{
+    if (index < 0 || static_cast<std::size_t>(index) >= m_meshes.size())
+        index = -1;
+    if (index == m_selectedMesh)
+        return;
+    m_selectedMesh = index;
+    if (m_onSelectionChanged)
+        m_onSelectionChanged(SelectedMesh());
+    Invalidate();
+}
+
+int NifViewport::PickMeshAt(POINT pt) const
+{
+    const D2D1_RECT_F rect = LayoutRect();
+    const float w = rect.right - rect.left;
+    const float h = rect.bottom - rect.top;
+    if (w <= 0.0f || h <= 0.0f || m_meshes.empty())
+        return -1;
+
+    // Build the world-space ray through the clicked pixel from the same
+    // camera basis + projection parameters OnRenderD3D renders with, so no
+    // matrix inversion is needed: in view space the pixel maps to direction
+    // (ndcX * tan(fov/2) * aspect, ndcY * tan(fov/2), 1).
+    const float ndcX = 2.0f * (static_cast<float>(pt.x) - rect.left) / w - 1.0f;
+    const float ndcY = 1.0f - 2.0f * (static_cast<float>(pt.y) - rect.top) / h;
+    const float tanHalf = std::tan(kFovY * 0.5f);
+    const float aspect = w / h;
+
+    Vector3 forward = m_camera.forwardVector();
+    forward.normalize();
+    Vector3 worldUp(0.0f, 1.0f, 0.0f);
+    Vector3 right = Vector3::crossproduct(worldUp, forward);
+    if (right.squaredLength() < 1e-8f)
+        right = Vector3(1.0f, 0.0f, 0.0f);
+    right.normalize();
+    Vector3 up = Vector3::crossproduct(forward, right);
+    up.normalize();
+
+    const Vector3 origin = m_camera.eyePosition();
+    Vector3 dir = right * (ndcX * tanHalf * aspect) + up * (ndcY * tanHalf) + forward;
+    dir.normalize();
+
+    // Nearest hit across every mesh's triangles, in world space (the CPU
+    // triangle counts of NIF shapes are small enough that a brute-force
+    // test per click is instantaneous).
+    int best = -1;
+    float bestT = 1e30f;
+    for (std::size_t i = 0; i < m_meshes.size(); ++i)
+    {
+        const RenderMesh& mesh = m_meshes[i];
+        if (!mesh.geometry)
+            continue;
+        const std::vector<Vector3>& pos = mesh.geometry->positions;
+        for (const Triangle& tri : mesh.geometry->triangles)
+        {
+            if (tri[0] >= pos.size() || tri[1] >= pos.size() || tri[2] >= pos.size())
+                continue;
+            const Vector3 v0 = mesh.worldTransform * pos[tri[0]];
+            const Vector3 v1 = mesh.worldTransform * pos[tri[1]];
+            const Vector3 v2 = mesh.worldTransform * pos[tri[2]];
+            float t = 0.0f;
+            if (RayIntersectsTriangle(origin, dir, v0, v1, v2, t) && t < bestT)
+            {
+                bestT = t;
+                best = static_cast<int>(i);
+            }
+        }
+    }
+    return best;
 }
 
 } // namespace nsk

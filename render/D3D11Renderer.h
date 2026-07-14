@@ -40,6 +40,7 @@ struct RenderSettings
     bool showGrid = true;
     bool showAxes = true;
     bool wireframe = false;
+    int selectedMesh = -1; // index into RenderScene's meshes; drawn again as a wireframe overlay when valid
 };
 
 class D3D11Renderer
@@ -95,6 +96,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_unlitVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_unlitPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_unlitLayout;
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> m_highlightVS;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> m_highlightPS;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> m_highlightLayout;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_cbPerFrame;
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_cbPerObject;
@@ -112,6 +116,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterDecal;       // SLSF1_(Dynamic_)Decal: negative depth bias (glPolygonOffset(-1,-1) equivalent)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterDecalNoCull;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterWireframe;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterHighlight;  // wireframe + negative depth bias: selection overlay sits on its own surface
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_sampler;
 
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_whiteTexSRV;     // 1x1 white fallback (diffuse / env-mask)

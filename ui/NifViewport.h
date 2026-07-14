@@ -48,6 +48,15 @@ public:
     using CameraChangedHandler = std::function<void(const Camera&)>;
     void SetOnCameraChanged(CameraChangedHandler handler) { m_onCameraChanged = std::move(handler); }
 
+    // Click-to-select (NifSkope-style): a left click that never turned into
+    // an orbit drag ray-picks the nearest sub-mesh under the cursor, which
+    // is then re-drawn with a wireframe overlay. Clicking empty space (or
+    // reloading the document) clears the selection.
+    int SelectedMeshIndex() const { return m_selectedMesh; }
+    const RenderMesh* SelectedMesh() const;
+    using SelectionChangedHandler = std::function<void(const RenderMesh* /*null when cleared*/)>;
+    void SetOnSelectionChanged(SelectionChangedHandler handler) { m_onSelectionChanged = std::move(handler); }
+
     // Lighting/display settings, driven by NifCompareControlPanel.
     void SetAmbient(float v) { m_settings.ambient = v; Invalidate(); }
     void SetBrightness(float v) { m_settings.brightness = v; Invalidate(); }
@@ -69,6 +78,8 @@ private:
     void RebuildScene();
     void EnsureD2DTarget();
     void UpdateFrontalLight();
+    int PickMeshAt(POINT pt) const; // -1 when no mesh under pt
+    void SetSelectedMesh(int index);
 
     const NifDocument* m_doc = nullptr;
     std::vector<RenderMesh> m_meshes;
@@ -88,12 +99,17 @@ private:
     UINT m_d2dBitmapHeight = 0;
 
     bool m_dragging = false;
+    bool m_dragMoved = false; // left drag actually orbited (a still click picks a mesh instead)
     bool m_panning = false;
     bool m_panMoved = false; // pan actually moved (right-click without movement bubbles up for the app context menu)
+    POINT m_dragDownPt {};
     POINT m_panDownPt {};
     POINT m_lastMousePt {};
 
+    int m_selectedMesh = -1; // index into m_meshes, -1 = none
+
     CameraChangedHandler m_onCameraChanged {};
+    SelectionChangedHandler m_onSelectionChanged {};
 };
 
 } // namespace nsk

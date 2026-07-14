@@ -164,16 +164,20 @@ bool D3D11Renderer::CreateShaders(std::string* error)
         return true;
     };
 
-    ComPtr<ID3DBlob> litVsBlob, litPsBlob, unlitVsBlob, unlitPsBlob;
+    ComPtr<ID3DBlob> litVsBlob, litPsBlob, unlitVsBlob, unlitPsBlob, hlVsBlob, hlPsBlob;
     if (!compile(kLitShaderHLSL, "VSMain", "vs_5_0", litVsBlob)) return false;
     if (!compile(kLitShaderHLSL, "PSMain", "ps_5_0", litPsBlob)) return false;
     if (!compile(kUnlitShaderHLSL, "VSMain", "vs_5_0", unlitVsBlob)) return false;
     if (!compile(kUnlitShaderHLSL, "PSMain", "ps_5_0", unlitPsBlob)) return false;
+    if (!compile(kHighlightShaderHLSL, "VSMain", "vs_5_0", hlVsBlob)) return false;
+    if (!compile(kHighlightShaderHLSL, "PSMain", "ps_5_0", hlPsBlob)) return false;
 
     m_device->CreateVertexShader(litVsBlob->GetBufferPointer(), litVsBlob->GetBufferSize(), nullptr, &m_litVS);
     m_device->CreatePixelShader(litPsBlob->GetBufferPointer(), litPsBlob->GetBufferSize(), nullptr, &m_litPS);
     m_device->CreateVertexShader(unlitVsBlob->GetBufferPointer(), unlitVsBlob->GetBufferSize(), nullptr, &m_unlitVS);
     m_device->CreatePixelShader(unlitPsBlob->GetBufferPointer(), unlitPsBlob->GetBufferSize(), nullptr, &m_unlitPS);
+    m_device->CreateVertexShader(hlVsBlob->GetBufferPointer(), hlVsBlob->GetBufferSize(), nullptr, &m_highlightVS);
+    m_device->CreatePixelShader(hlPsBlob->GetBufferPointer(), hlPsBlob->GetBufferSize(), nullptr, &m_highlightPS);
 
     D3D11_INPUT_ELEMENT_DESC litLayoutDesc[] =
     {
@@ -184,6 +188,9 @@ bool D3D11Renderer::CreateShaders(std::string* error)
         { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, tangent), D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
     m_device->CreateInputLayout(litLayoutDesc, 5, litVsBlob->GetBufferPointer(), litVsBlob->GetBufferSize(), &m_litLayout);
+    // The highlight VS consumes the same vertex layout (it only reads
+    // POSITION, but the layout must be validated against its own signature).
+    m_device->CreateInputLayout(litLayoutDesc, 5, hlVsBlob->GetBufferPointer(), hlVsBlob->GetBufferSize(), &m_highlightLayout);
 
     D3D11_INPUT_ELEMENT_DESC unlitLayoutDesc[] =
     {
@@ -263,6 +270,15 @@ bool D3D11Renderer::CreateStateObjects()
     rasterWire.CullMode = D3D11_CULL_NONE;
     m_device->CreateRasterizerState(&rasterWire, &m_rasterWireframe);
 
+    // Selection overlay: wireframe pulled slightly toward the camera so the
+    // lines win the depth test against the very surface they lie on (same
+    // bias reasoning as rasterDecal above), while still being occluded by
+    // OTHER geometry in front of the selected shape.
+    D3D11_RASTERIZER_DESC rasterHighlight = rasterWire;
+    rasterHighlight.DepthBias = -16;
+    rasterHighlight.SlopeScaledDepthBias = -1.0f;
+    m_device->CreateRasterizerState(&rasterHighlight, &m_rasterHighlight);
+
     const D3D11_SAMPLER_DESC sampDesc {
         .Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
         .AddressU = D3D11_TEXTURE_ADDRESS_WRAP,
@@ -274,7 +290,7 @@ bool D3D11Renderer::CreateStateObjects()
     m_device->CreateSamplerState(&sampDesc, &m_sampler);
 
     return m_blendOpaque && m_blendAlpha && m_depthDefault && m_rasterSolid && m_rasterSolidNoCull
-        && m_rasterDecal && m_rasterDecalNoCull && m_rasterWireframe && m_sampler;
+        && m_rasterDecal && m_rasterDecalNoCull && m_rasterWireframe && m_rasterHighlight && m_sampler;
 }
 
 bool D3D11Renderer::Resize(UINT width, UINT height)
@@ -691,6 +707,43 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
             m_context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
             m_context->IASetIndexBuffer(gpu->indexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0);
             m_context->DrawIndexed(gpu->indexCount, 0, 0);
+        }
+
+        // --- Selection wireframe overlay ---
+        // Re-draws the picked mesh's triangles as constant-color wireframe
+        // over the shaded pass (NifSkope's click-to-select highlight). Depth
+        // testing stays on - with m_rasterHighlight's negative bias the lines
+        // win against their own surface but geometry in front of the selected
+        // shape still occludes them.
+        if (settings.selectedMesh >= 0 && static_cast<std::size_t>(settings.selectedMesh) < meshes.size())
+        {
+            const RenderMesh& sel = meshes[static_cast<std::size_t>(settings.selectedMesh)];
+            const GpuMesh* gpu = sel.geometry ? GetOrCreateGpuMesh(sel.geometry) : nullptr;
+            if (gpu && gpu->vertexBuffer && gpu->indexCount > 0)
+            {
+                CBPerFrameUnlit cbFrame;
+                std::memcpy(cbFrame.viewProj, viewProj.data(), sizeof(cbFrame.viewProj));
+                UploadDynamicCB(m_context.Get(), m_cbPerFrameUnlit.Get(), &cbFrame, sizeof(cbFrame));
+                CBPerObjectUnlit cbObj;
+                std::memcpy(cbObj.world, sel.worldTransform.data(), sizeof(cbObj.world));
+                UploadDynamicCB(m_context.Get(), m_cbPerObjectUnlit.Get(), &cbObj, sizeof(cbObj));
+
+                ID3D11Buffer* frameCb2 = m_cbPerFrameUnlit.Get();
+                ID3D11Buffer* objCb2 = m_cbPerObjectUnlit.Get();
+                m_context->IASetInputLayout(m_highlightLayout.Get());
+                m_context->VSSetShader(m_highlightVS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_highlightPS.Get(), nullptr, 0);
+                m_context->VSSetConstantBuffers(0, 1, &frameCb2);
+                m_context->VSSetConstantBuffers(1, 1, &objCb2);
+                m_context->OMSetBlendState(m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
+                m_context->RSSetState(m_rasterHighlight.Get());
+
+                UINT stride = sizeof(Vertex), offset = 0;
+                ID3D11Buffer* vb = gpu->vertexBuffer.Get();
+                m_context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+                m_context->IASetIndexBuffer(gpu->indexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0);
+                m_context->DrawIndexed(gpu->indexCount, 0, 0);
+            }
         }
     }
 }
