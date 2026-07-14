@@ -1,4 +1,5 @@
 #include "NifViewport.h"
+#include "../core/StartupTrace.h"
 #include <Backplate.h>
 #include <Util.h>
 #include <cmath>
@@ -63,10 +64,12 @@ void NifViewport::OnAttached(FD2D::Backplate& backplate)
     ID3D11DeviceContext* context = backplate.D3DContext();
     if (device && context)
     {
+        StartupTrace::Phase p("  Viewport renderer init (shaders)");
         std::string err;
-        if (m_renderer.Initialize(device, context, &err))
+        if (m_renderer.Initialize(device, context, &err) && m_textureRepository != nullptr)
         {
-            m_textures = std::make_unique<TextureCache>(device, m_resolver);
+            m_textureRepository->SetDevice(device);
+            m_textures = std::make_unique<TextureCache>(m_textureRepository);
             if (!m_nifDirectory.empty())
                 m_textures->SetNifDirectory(m_nifDirectory);
         }
@@ -76,8 +79,11 @@ void NifViewport::OnAttached(FD2D::Backplate& backplate)
 void NifViewport::SetResourceResolver(ResourceResolver* resolver)
 {
     m_resolver = resolver;
-    if (m_textures)
-        m_textures->SetResolver(resolver);
+}
+
+void NifViewport::SetTextureRepository(TextureRepository* repository)
+{
+    m_textureRepository = repository;
 }
 
 void NifViewport::InvalidateTextureCache()
@@ -115,7 +121,10 @@ void NifViewport::RebuildScene()
     if (!m_doc || !m_doc->isValid())
         return;
 
-    m_meshes = SceneBuilder::build(*m_doc);
+    {
+        StartupTrace::Phase p("    SceneBuilder::build");
+        m_meshes = SceneBuilder::build(*m_doc);
+    }
 
     // Fit the camera to the combined bounding sphere of every mesh, mirroring
     // GLView's "center on load" behaviour (glview.cpp's Scene::updateSceneOptions
@@ -209,7 +218,19 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
     m_settings.eyePos = m_camera.eyePosition();
     m_settings.selectedMesh = m_selectedMesh;
 
-    m_renderer.RenderScene(m_meshes, m_settings, m_textures.get());
+    // One-shot: the very first 3D scene render in the process is where the
+    // lazy texture loads land, so it is a startup phase in its own right.
+    static bool s_firstSceneRendered = false;
+    if (!s_firstSceneRendered && !m_meshes.empty())
+    {
+        s_firstSceneRendered = true;
+        StartupTrace::Phase p("First 3D frame (incl. texture loads)");
+        m_renderer.RenderScene(m_meshes, m_settings, m_textures.get());
+    }
+    else
+    {
+        m_renderer.RenderScene(m_meshes, m_settings, m_textures.get());
+    }
 }
 
 void NifViewport::EnsureD2DTarget()

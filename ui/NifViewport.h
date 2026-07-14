@@ -40,6 +40,12 @@ public:
 
     // Shared Game Data / override / BSA resolver. Must outlive this viewport.
     void SetResourceResolver(ResourceResolver* resolver);
+
+    // Shared cross-pane texture pool (owns the SRVs; this viewport's
+    // TextureCache is only a resolution memo on top). Must outlive this
+    // viewport and be set before it is attached to a backplate.
+    void SetTextureRepository(TextureRepository* repository);
+
     void InvalidateTextureCache();
 
     Camera& GetCamera() { return m_camera; }
@@ -122,6 +128,7 @@ private:
     D3D11Renderer m_renderer;
     std::unique_ptr<TextureCache> m_textures;
     ResourceResolver* m_resolver = nullptr;
+    TextureRepository* m_textureRepository = nullptr;
     std::wstring m_nifDirectory;
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> m_d2dBitmap;

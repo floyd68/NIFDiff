@@ -8,6 +8,8 @@
 #include "../ui/NifCompareView.h"
 #include "../core/NifLog.h"
 #include "../core/ResourceResolver.h"
+#include "../core/StartupTrace.h"
+#include "../render/TextureRepository.h"
 
 #include <Application.h>
 #include <Backplate.h>
@@ -321,7 +323,13 @@ namespace
 
 int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 {
-    const std::vector<std::wstring> cmdFiles = GetInitialFilesFromCommandLine();
+    StartupTrace::Mark("RunNIFDiffApp enter");
+
+    std::vector<std::wstring> cmdFiles;
+    {
+        StartupTrace::Phase p("Parse command line");
+        cmdFiles = GetInitialFilesFromCommandLine();
+    }
 
     // Single-instance detection (named mutex), same shape as FICture2's:
     // when another instance is already running and this launch carries
@@ -335,6 +343,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 
     if (hadExistingInstance && cmdFiles.size() == 1)
     {
+        StartupTrace::Phase p("IPC client forward attempt");
         // Let the (background) running instance take foreground when it
         // accepts the file - this fresh process currently holds that right.
         AllowSetForegroundWindow(ASFW_ANY);
@@ -371,6 +380,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     auto ipcUiWindow = std::make_shared<std::atomic<HWND>>(nullptr);
     if (!hadExistingInstance)
     {
+        StartupTrace::Phase p("IPC server start");
         AppIpc::StartServer([ipcUiWindow](const std::wstring& path) -> AppIpc::Decision
         {
             const ULONGLONG deadline = GetTickCount64() + kIpcResponseBudgetMs;
@@ -444,29 +454,54 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         });
     }
 
-    const bool oleOwned = SUCCEEDED(OleInitialize(nullptr));
+    bool oleOwned = false;
+    {
+        StartupTrace::Phase p("OleInitialize");
+        oleOwned = SUCCEEDED(OleInitialize(nullptr));
+    }
 
     auto& app = FD2D::Application::Instance();
 
-    FD2D::InitContext initContext {};
-    initContext.instance = hInstance;
-    if (FAILED(app.Initialize(initContext)))
     {
-        if (instanceMutex) CloseHandle(instanceMutex);
-        if (oleOwned) OleUninitialize();
-        return -1;
+        StartupTrace::Phase p("FD2D Application::Initialize");
+        FD2D::InitContext initContext {};
+        initContext.instance = hInstance;
+        if (FAILED(app.Initialize(initContext)))
+        {
+            if (instanceMutex) CloseHandle(instanceMutex);
+            if (oleOwned) OleUninitialize();
+            return -1;
+        }
     }
 
     const std::wstring iniPath = GetIniFilePath();
 
     // First-run: offer to register the per-user .nif association (asked
-    // once, recorded in the INI - see AppSetup.h).
-    AppSetup::RunFirstRunAssociationPromptIfNeeded(iniPath);
+    // once, recorded in the INI - see AppSetup.h). May block on the user,
+    // so it gets its own phase to keep that wait attributable.
+    {
+        StartupTrace::Phase p("First-run association prompt");
+        AppSetup::RunFirstRunAssociationPromptIfNeeded(iniPath);
+    }
 
-    const AppSettings settings = AppSettings::Load(iniPath);
+    AppSettings settings;
+    {
+        StartupTrace::Phase p("AppSettings::Load (INI)");
+        settings = AppSettings::Load(iniPath);
+    }
 
     auto resolver = std::make_shared<ResourceResolver>();
-    ConfigureResolverFromSettings(*resolver, settings);
+    {
+        // The BSA/BA2 scan this kicks off runs on a background thread and
+        // overlaps window/D3D init; see ResourceResolver::ReloadArchives.
+        StartupTrace::Phase p("Configure resolver (launch archive scan)");
+        ConfigureResolverFromSettings(*resolver, settings);
+    }
+
+    // Cross-pane texture pool. Declared after `resolver` (whose raw pointer
+    // it holds) and before the backplate scope, so it outlives the view and
+    // viewports that keep pointers into it.
+    auto textureRepository = std::make_shared<TextureRepository>(resolver.get());
 
     RECT savedRect {};
     int savedShowCmd = SW_SHOWNORMAL;
@@ -491,7 +526,11 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 
     int result = -1;
     {
-        auto backplate = app.CreateWindowedBackplate(L"main", opts);
+        std::shared_ptr<FD2D::Backplate> backplate;
+        {
+            StartupTrace::Phase p("CreateWindowedBackplate (window+D3D)");
+            backplate = app.CreateWindowedBackplate(L"main", opts);
+        }
         if (!backplate)
         {
             app.Shutdown();
@@ -499,8 +538,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             return -1;
         }
 
-        auto compareView = std::make_shared<NifCompareView>(L"CompareView");
+        std::shared_ptr<NifCompareView> compareView;
+        {
+            StartupTrace::Phase p("NifCompareView construct");
+            compareView = std::make_shared<NifCompareView>(L"CompareView");
+        }
         compareView->SetResourceResolver(resolver.get());
+        compareView->SetTextureRepository(textureRepository.get());
         ApplyResourcesToUi(*compareView, *resolver);
 
         std::weak_ptr<NifCompareView> weakView = compareView;
@@ -604,7 +648,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             bp->Render();
         });
 
-        backplate->AddWnd(compareView);
+        {
+            StartupTrace::Phase p("Backplate AddWnd (view attach)");
+            backplate->AddWnd(compareView);
+        }
 
         backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow](HWND hwnd)
         {
@@ -622,13 +669,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             SaveWindowPlacement(iniPath, hwnd);
         });
 
-        if (!cmdFiles.empty())
         {
-            LoadFilesIntoPanes(*compareView, cmdFiles);
-        }
-        else
-        {
-            LoadAndOpenInitialSession(*compareView, settings);
+            StartupTrace::Phase p("Initial NIF load (panes)");
+            if (!cmdFiles.empty())
+                LoadFilesIntoPanes(*compareView, cmdFiles);
+            else
+                LoadAndOpenInitialSession(*compareView, settings);
         }
 
         // UI is fully wired (view attached, initial files loaded) - publish
@@ -637,8 +683,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         ipcUiWindow->store(backplate->Window());
 
         const int effectiveShowCmd = hasSavedPlacement ? savedShowCmd : nCmdShow;
-        backplate->Show(effectiveShowCmd);
+        {
+            StartupTrace::Phase p("Backplate Show");
+            backplate->Show(effectiveShowCmd);
+        }
 
+        StartupTrace::Mark("Entering message loop");
         result = app.RunMessageLoop();
     }
 

@@ -6,7 +6,9 @@ file holds the spot.
 To implement here:
 - `D3D11Renderer.h/.cpp` - the actual D3D11 draw path for a `SceneBuilder`
   render list.
-- `Shaders.h` - inline HLSL source (compiled at runtime via d3dcompiler).
+- `shaders/*.hlsl` - HLSL source, precompiled at build time by fxc into
+  bytecode headers (see the top-level CMakeLists.txt "Shader precompilation"
+  section; formerly inline strings in a `Shaders.h`, compiled at runtime).
 - `TextureCache.h/.cpp` - decodes DDS (via `lib/gli`, not yet vendored here)
   and other formats via ImageCore/DirectXTex, keyed by resolved
   `ResourceBytes`.

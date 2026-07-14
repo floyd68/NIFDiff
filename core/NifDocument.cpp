@@ -1137,7 +1137,7 @@ void NifDocument::parseBSLightingShaderProperty(NifIStream& in, int blockIndex)
 // --- BSEffectShaderProperty ---------------------------------------------------
 // Additive/translucent effect materials (glows, beams, soul gem swirls...) -
 // nif.xml lines 6651-6691, rendered by the sk_effectshader.frag port (see
-// Shaders.h). Unlike BSLightingShaderProperty there is no BSShaderTextureSet
+// render/shaders/Lit.hlsl). Unlike BSLightingShaderProperty there is no BSShaderTextureSet
 // ref: the two textures are inline SizedStrings, so everything (including
 // derived flags) resolves right here - no buildHierarchyAndRoots() pass
 // needed. Field mapping follows NifSkope's

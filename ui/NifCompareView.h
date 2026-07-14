@@ -100,6 +100,11 @@ public:
     void RequestClosePane(NifComparePane& pane);
 
     void SetResourceResolver(ResourceResolver* resolver);
+
+    // Shared cross-pane texture pool; also cleared by InvalidateTextureCaches.
+    // Must outlive this view.
+    void SetTextureRepository(TextureRepository* repository);
+
     void InvalidateTextureCaches();
 
     // Resources panel callbacks (Game Data / overrides), forwarded to the
@@ -142,6 +147,7 @@ private:
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
     ResourceResolver* m_resolver = nullptr;
+    TextureRepository* m_textureRepository = nullptr;
 
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
     std::function<void(POINT, NifComparePane*)> m_onContextMenuRequested;

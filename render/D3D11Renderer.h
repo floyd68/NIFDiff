@@ -12,7 +12,7 @@
 // Also folds in Phase 3's gltools.cpp port (grid/axes immediate-mode draws,
 // tracked as phase3_tools) as DrawGrid/DrawAxes, since both the lit mesh
 // path and the unlit tools path share the same device/context/state-object
-// plumbing - see Shaders.h for why one unlit shader covers gltools' whole
+// plumbing - see shaders/Unlit.hlsl for why one unlit shader covers gltools' whole
 // immediate-mode drawing surface.
 #pragma once
 

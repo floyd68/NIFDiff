@@ -81,9 +81,63 @@ add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/FD2D" "${CMAKE_BINARY_DIR}/_deps/F
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/Floar" "${CMAKE_BINARY_DIR}/_deps/Floar")
 
 # ---------------------------------------------------------------------------
+# Shader precompilation: render/shaders/*.hlsl -> bytecode headers via fxc.
+# D3D11Renderer.cpp embeds the generated g_* arrays directly, so startup pays
+# no D3DCompile cost (~260ms for the six entry points, measured via
+# core/StartupTrace.h) and the exe keeps zero runtime shader-file
+# dependencies. /Ges mirrors the D3DCOMPILE_ENABLE_STRICTNESS flag the old
+# runtime D3DCompile path used; optimization stays at fxc's default (POM
+# SampleLevel loops TDR the GPU when left unoptimized - see the comment
+# that used to live in D3D11Renderer::CreateShaders).
+# ---------------------------------------------------------------------------
+find_program(NIFDIFF_FXC_TOOL FXC.EXE
+    HINTS "C:/Program Files (x86)/Windows Kits/10/bin/${CMAKE_SYSTEM_VERSION}/x64"
+          "C:/Program Files (x86)/Windows Kits/10/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64")
+if(NOT NIFDIFF_FXC_TOOL)
+    message(FATAL_ERROR "NIFDiff: fxc.exe not found (install a Windows 10/11 SDK).")
+endif()
+message(STATUS "NIFDiff: compiling shaders with ${NIFDIFF_FXC_TOOL}")
+
+set(NIFDIFF_SHADER_OUT_DIR "${CMAKE_BINARY_DIR}/generated/shaders")
+file(MAKE_DIRECTORY "${NIFDIFF_SHADER_OUT_DIR}")
+
+set(NIFDIFF_COMPILED_SHADER_HEADERS "")
+function(nifdiff_compile_shader hlsl entry profile varname header)
+    set(src "${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/${hlsl}")
+    set(out "${NIFDIFF_SHADER_OUT_DIR}/${header}")
+    add_custom_command(
+        OUTPUT "${out}"
+        DEPENDS "${src}"
+        COMMAND "${NIFDIFF_FXC_TOOL}" /nologo /T ${profile} /E ${entry} /Ges
+                /Fh "${out}" /Vn ${varname} "${src}"
+        COMMENT "fxc ${hlsl} ${entry} (${profile}) -> ${header}"
+        VERBATIM)
+    list(APPEND NIFDIFF_COMPILED_SHADER_HEADERS "${out}")
+    set(NIFDIFF_COMPILED_SHADER_HEADERS "${NIFDIFF_COMPILED_SHADER_HEADERS}" PARENT_SCOPE)
+endfunction()
+
+nifdiff_compile_shader(Lit.hlsl       VSMain vs_5_0 g_LitVS       LitVS.h)
+nifdiff_compile_shader(Lit.hlsl       PSMain ps_5_0 g_LitPS       LitPS.h)
+nifdiff_compile_shader(Unlit.hlsl     VSMain vs_5_0 g_UnlitVS     UnlitVS.h)
+nifdiff_compile_shader(Unlit.hlsl     PSMain ps_5_0 g_UnlitPS     UnlitPS.h)
+nifdiff_compile_shader(Highlight.hlsl VSMain vs_5_0 g_HighlightVS HighlightVS.h)
+nifdiff_compile_shader(Highlight.hlsl PSMain ps_5_0 g_HighlightPS HighlightPS.h)
+
+# Keep the .hlsl sources visible in the IDE without Visual Studio's built-in
+# FXC step double-compiling them (the custom commands above own that).
+set(NIFDIFF_SHADER_SOURCES
+    render/shaders/Lit.hlsl
+    render/shaders/Unlit.hlsl
+    render/shaders/Highlight.hlsl
+)
+set_source_files_properties(${NIFDIFF_SHADER_SOURCES} PROPERTIES VS_TOOL_OVERRIDE "None")
+
+# ---------------------------------------------------------------------------
 # NIFDiff executable
 # ---------------------------------------------------------------------------
 add_executable(NIFDiff WIN32
+    ${NIFDIFF_SHADER_SOURCES}
+    ${NIFDIFF_COMPILED_SHADER_HEADERS}
     app/AppIpc.h
     app/AppIpc.cpp
     app/AppSettings.h
@@ -103,14 +157,15 @@ add_executable(NIFDiff WIN32
     core/SceneBuilder.h
     core/SceneBuilder.cpp
     core/NifLog.h
+    core/StartupTrace.h
     core/Camera.h
     core/ResourceResolver.h
     core/ResourceResolver.cpp
-    render/Shaders.h
     render/D3D11Renderer.h
     render/D3D11Renderer.cpp
     render/TextureCache.h
-    render/TextureCache.cpp
+    render/TextureRepository.h
+    render/TextureRepository.cpp
     ui/IpcOpenRequest.h
     ui/NifViewport.h
     ui/NifViewport.cpp
@@ -133,6 +188,8 @@ target_include_directories(NIFDiff PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/render
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
+    # fxc-generated shader bytecode headers (see "Shader precompilation").
+    ${NIFDIFF_SHADER_OUT_DIR}
     # core/NifLog.h logs via spdlog directly (header-only; see its own
     # comment for why this isn't routed through third_party/AppLog.h).
     ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
@@ -159,7 +216,6 @@ target_link_libraries(NIFDiff PRIVATE
     dwrite
     d3d11
     dxgi
-    d3dcompiler
     advapi32
 )
 
@@ -206,6 +262,8 @@ add_executable(ResourceResolveTest
 )
 target_include_directories(ResourceResolveTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
+    # ResourceResolver.cpp now logs its archive-scan timings via core/NifLog.h
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
 )
 target_link_libraries(ResourceResolveTest PRIVATE Floar advapi32)
 target_compile_definitions(ResourceResolveTest PRIVATE NOMINMAX)

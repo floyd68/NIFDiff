@@ -1,61 +1,92 @@
-// TextureCache.h - D3D11 upload half of NifSkope's TexCache.
-// Path resolution (Game Data / overrides / BSA) lives in ResourceResolver;
-// this class only decodes DDS (via DirectXTex) and creates SRVs.
+// TextureCache.h - per-viewport memo in front of the shared
+// TextureRepository. Resolution depends on the viewport's NIF directory
+// (search order: overrides -> nif dir -> game data -> archives), so each
+// viewport memoizes relative path -> pooled Entry for ITS resolution
+// context; the heavy work (file/archive read, DDS decode, SRV upload,
+// complex-material probes) lives in the repository, done once per unique
+// resolved source across all panes.
 #pragma once
 
-#include <d3d11_1.h>
-#include <wrl/client.h>
-#include <cstdint>
-#include <span>
+#include "TextureRepository.h"
+
 #include <string>
 #include <unordered_map>
 
 namespace nsk
 {
 
-class ResourceResolver;
-
 class TextureCache
 {
 public:
-    TextureCache(ID3D11Device* device, ResourceResolver* resolver);
+    explicit TextureCache(TextureRepository* repository)
+        : m_repository(repository)
+    {
+    }
 
-    void SetResolver(ResourceResolver* resolver) { m_resolver = resolver; }
-    void SetNifDirectory(std::wstring nifDir) { m_nifDirectory = std::move(nifDir); }
+    // Changing the NIF directory changes what relative paths resolve to, so
+    // the memo is dropped (the repository keeps the loaded textures - a
+    // re-resolve that lands on the same source is a pool hit).
+    void SetNifDirectory(std::wstring nifDir)
+    {
+        if (nifDir == m_nifDirectory)
+            return;
+        m_nifDirectory = std::move(nifDir);
+        m_memo.clear();
+    }
 
     // relativePath uses forward slashes (see NifDocument::normalizeSlashes).
-    // Returns a cached or freshly loaded SRV, or nullptr when the path does
+    // Returns a pooled or freshly loaded SRV, or nullptr when the path does
     // not resolve / fails to decode - the renderer decides how to present a
     // missing texture per slot (D3D11Renderer's resolve lambda). Failures
-    // are cached too, so an unresolvable path doesn't re-run the resolver
+    // are memoized too, so an unresolvable path doesn't re-run the resolver
     // chain every frame.
-    ID3D11ShaderResourceView* GetOrLoad(const std::string& relativePath);
+    ID3D11ShaderResourceView* GetOrLoad(const std::string& relativePath)
+    {
+        TextureRepository::Entry* e = Lookup(relativePath);
+        return e != nullptr ? e->srv.Get() : nullptr;
+    }
 
-    // CPU-side ENB/CS "complex material" probe, mirroring the shader's
-    // detection rule (coarsest mip's average alpha meaningfully below 1 -
-    // vanilla env masks decode fully opaque). Used for the shader-kind
-    // labels; the result is cached per path.
-    bool HasComplexMaterialAlpha(const std::string& relativePath);
+    // CPU-side ENB/CS "complex material" probes (see TextureRepository::
+    // EnsureCmProbe for the detection rules). Both verdicts come from one
+    // probe, computed at most once per unique texture process-wide.
+    bool HasComplexMaterialAlpha(const std::string& relativePath)
+    {
+        TextureRepository::Entry* e = Lookup(relativePath);
+        if (e == nullptr)
+            return false;
+        m_repository->EnsureCmProbe(*e);
+        return e->cmAlpha;
+    }
 
-    // Whether a complex material's alpha actually VARIES - i.e. carries a
-    // usable height field. Tools emit flat-alpha _m textures for sources
-    // with no height data; running POM over a constant height produces a
-    // uniform view-dependent offset (texture "swimming" with zero relief),
-    // so the renderer disables CM parallax for these. Cached per path.
-    bool HasComplexMaterialHeight(const std::string& relativePath);
+    bool HasComplexMaterialHeight(const std::string& relativePath)
+    {
+        TextureRepository::Entry* e = Lookup(relativePath);
+        if (e == nullptr)
+            return false;
+        m_repository->EnsureCmProbe(*e);
+        return e->cmHeight;
+    }
 
-    void Clear() { m_cache.clear(); m_cmCache.clear(); m_cmHeightCache.clear(); }
+    void Clear() { m_memo.clear(); }
 
 private:
-    ID3D11ShaderResourceView* LoadFromDisk(const std::wstring& fullPath);
-    ID3D11ShaderResourceView* LoadFromMemory(std::span<const std::uint8_t> data, const std::string& cacheKey);
+    TextureRepository::Entry* Lookup(const std::string& relativePath)
+    {
+        if (relativePath.empty() || m_repository == nullptr)
+            return nullptr;
+        auto it = m_memo.find(relativePath);
+        if (it != m_memo.end())
+            return it->second; // may be nullptr: memoized "does not resolve"
+        TextureRepository::Entry* e = m_repository->GetOrLoad(relativePath, m_nifDirectory);
+        m_memo.emplace(relativePath, e);
+        return e;
+    }
 
-    ID3D11Device* m_device = nullptr;
-    ResourceResolver* m_resolver = nullptr;
+    TextureRepository* m_repository = nullptr;
     std::wstring m_nifDirectory;
-    std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> m_cache;
-    std::unordered_map<std::string, bool> m_cmCache;       // complex-material probe results
-    std::unordered_map<std::string, bool> m_cmHeightCache; // CM height-variation probe results
+    // Entry pointers stay valid until TextureRepository::Clear (node-based
+    // map); the view-level invalidation clears repository and memos together.
+    std::unordered_map<std::string, TextureRepository::Entry*> m_memo;
 };
 
 } // namespace nsk

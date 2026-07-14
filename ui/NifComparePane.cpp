@@ -1,5 +1,7 @@
 #include "NifComparePane.h"
 
+#include "../core/StartupTrace.h"
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -110,11 +112,18 @@ void NifComparePane::UpdateStatsLabel()
 
 bool NifComparePane::Load(const std::wstring& path, std::string* error)
 {
+    StartupTrace::Phase total("Pane Load total");
     auto doc = std::make_unique<NifDocument>();
-    if (!doc->loadFromFile(path, error))
-        return false;
+    {
+        StartupTrace::Phase p("  NifDocument::loadFromFile");
+        if (!doc->loadFromFile(path, error))
+            return false;
+    }
     m_doc = std::move(doc);
-    m_viewport->SetDocument(m_doc.get());
+    {
+        StartupTrace::Phase p("  Viewport SetDocument (scene build)");
+        m_viewport->SetDocument(m_doc.get());
+    }
     UpdatePathLabel();
     UpdateStatsLabel();
     if (m_onDocumentChanged)
@@ -135,6 +144,11 @@ void NifComparePane::Clear()
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)
 {
     m_viewport->SetResourceResolver(resolver);
+}
+
+void NifComparePane::SetTextureRepository(TextureRepository* repository)
+{
+    m_viewport->SetTextureRepository(repository);
 }
 
 void NifComparePane::InvalidateTextureCache()

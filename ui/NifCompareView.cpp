@@ -127,6 +127,10 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     {
         pane->SetResourceResolver(m_resolver);
     }
+    if (m_textureRepository)
+    {
+        pane->SetTextureRepository(m_textureRepository);
+    }
     pane->Viewport().SetParallaxHeightScale(m_parallaxHeightScale);
     pane->Viewport().SetEnableParallax(m_enableParallax);
     pane->Viewport().SetEnableComplexMaterial(m_enableComplexMaterial);
@@ -447,8 +451,20 @@ void NifCompareView::SetResourceResolver(ResourceResolver* resolver)
         p->SetResourceResolver(resolver);
 }
 
+void NifCompareView::SetTextureRepository(TextureRepository* repository)
+{
+    m_textureRepository = repository;
+    for (auto& p : m_panes)
+        p->SetTextureRepository(repository);
+}
+
 void NifCompareView::InvalidateTextureCaches()
 {
+    // Resolution inputs changed (game data / override folders): the pooled
+    // SRVs may now be stale, so drop the shared pool together with every
+    // pane's resolution memo (memoized Entry pointers die with the pool).
+    if (m_textureRepository != nullptr)
+        m_textureRepository->Clear();
     for (auto& p : m_panes)
         p->InvalidateTextureCache();
 }

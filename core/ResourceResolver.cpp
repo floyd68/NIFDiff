@@ -1,11 +1,16 @@
 #include "ResourceResolver.h"
 
+#include "NifLog.h"
+#include "StartupTrace.h"
+
 #include <ArchiveTypes.h>
 
 #include <algorithm>
 #include <cctype>
+#include <execution>
 #include <filesystem>
 #include <fstream>
+#include <numeric>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -16,6 +21,36 @@ namespace nsk
 {
 namespace
 {
+    // Log-safe UTF-8 narrowing (path::string() can throw on non-ACP chars).
+    std::string ToUtf8ForLog(const std::wstring& w)
+    {
+        if (w.empty())
+            return {};
+        const int len = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
+                                            nullptr, 0, nullptr, nullptr);
+        std::string s(static_cast<std::size_t>(len), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
+                            s.data(), len, nullptr, nullptr);
+        return s;
+    }
+
+    std::wstring LowerWide(std::wstring s)
+    {
+        for (wchar_t& c : s)
+            c = static_cast<wchar_t>(towlower(c));
+        return s;
+    }
+
+    // ResourceBytes::sourceKey for a loose-file hit: lowercased,
+    // slash-normalized absolute path, so the same file reached through
+    // different casing / separators dedups to one identity.
+    std::string MakeFileSourceKey(std::wstring diskPath)
+    {
+        for (wchar_t& c : diskPath)
+            c = (c == L'/') ? L'\\' : static_cast<wchar_t>(towlower(c));
+        return "file:" + ToUtf8ForLog(diskPath);
+    }
+
     bool FileExists(const std::wstring& path)
     {
         const DWORD attr = GetFileAttributesW(path.c_str());
@@ -61,6 +96,11 @@ namespace
     }
 }
 
+ResourceResolver::~ResourceResolver()
+{
+    WaitForArchiveScan();
+}
+
 void ResourceResolver::SetGameData(std::wstring dataDir)
 {
     m_gameData = std::move(dataDir);
@@ -79,9 +119,9 @@ void ResourceResolver::SetOverrideFolders(std::vector<std::wstring> folders)
     }
 }
 
-bool ResourceResolver::ArchiveHasTexturesOrMaterials(Floar::IArchiveReader& archive)
+bool ResourceResolver::ArchiveHasTexturesOrMaterials(const std::vector<Floar::ArchiveEntry>& entries)
 {
-    for (const Floar::ArchiveEntry& entry : archive.ListEntries())
+    for (const Floar::ArchiveEntry& entry : entries)
     {
         if (entry.isDirectory)
             continue;
@@ -101,26 +141,62 @@ bool ResourceResolver::ArchiveHasTexturesOrMaterials(Floar::IArchiveReader& arch
 
 void ResourceResolver::ReloadArchives()
 {
+    // Join any in-flight scan first so two workers never fill m_archives
+    // concurrently (SetGameData can re-trigger from UI callbacks).
+    WaitForArchiveScan();
     m_archives.clear();
-    if (!m_autoLoadArchives || m_gameData.empty())
+
+    std::shared_future<void> scan;
+    if (m_autoLoadArchives && !m_gameData.empty())
+    {
+        scan = std::async(std::launch::async,
+            [this, gameData = m_gameData] { ScanArchives(std::move(gameData)); }).share();
+    }
+
+    std::lock_guard<std::mutex> lock(m_scanMutex);
+    m_pendingScan = std::move(scan);
+}
+
+void ResourceResolver::WaitForArchiveScan() const
+{
+    std::shared_future<void> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_scanMutex);
+        pending = m_pendingScan;
+    }
+    if (!pending.valid())
         return;
+
+    const auto t0 = StartupTrace::Clock::now();
+    pending.wait();
+    const double waitedMs = std::chrono::duration<double, std::milli>(StartupTrace::Clock::now() - t0).count();
+    if (waitedMs > 0.5)
+        NIFLOG_INFO("[STARTUP]   blocked {:.2f} ms waiting for the archive scan", waitedMs);
+}
+
+void ResourceResolver::ScanArchives(std::wstring gameData)
+{
+    StartupTrace::Phase total("Archive scan (worker thread)");
 
     namespace fs = std::filesystem;
     std::error_code ec;
-    if (!fs::is_directory(m_gameData, ec))
+    if (!fs::is_directory(gameData, ec))
         return;
 
     std::vector<fs::path> candidates;
-    for (const fs::directory_entry& entry : fs::directory_iterator(m_gameData, ec))
     {
-        if (ec || !entry.is_regular_file(ec))
-            continue;
-        std::wstring e = entry.path().extension().wstring();
-        for (wchar_t& c : e)
-            c = static_cast<wchar_t>(towlower(c));
-        if (!Floar::ArchiveTypes::IsBethesdaArchiveExt(e))
-            continue;
-        candidates.push_back(entry.path());
+        StartupTrace::Phase p("  Archive scan: directory scan");
+        for (const fs::directory_entry& entry : fs::directory_iterator(gameData, ec))
+        {
+            if (ec || !entry.is_regular_file(ec))
+                continue;
+            std::wstring e = entry.path().extension().wstring();
+            for (wchar_t& c : e)
+                c = static_cast<wchar_t>(towlower(c));
+            if (!Floar::ArchiveTypes::IsBethesdaArchiveExt(e))
+                continue;
+            candidates.push_back(entry.path());
+        }
     }
 
     std::sort(candidates.begin(), candidates.end(),
@@ -129,14 +205,61 @@ void ResourceResolver::ReloadArchives()
             return _wcsicmp(a.filename().c_str(), b.filename().c_str()) < 0;
         });
 
-    for (const fs::path& path : candidates)
+    // Open + probe every candidate in parallel: the per-archive cost is a
+    // flat ~5ms of file-open/TOC-parse (measured; independent of archive
+    // size), so a modded Data folder with 150+ archives spent >1.2s here
+    // when opened sequentially. Readers are self-contained per instance
+    // (own ifstream per operation), so distinct archives can open on
+    // distinct threads; the keep-order of m_archives stays the sorted
+    // candidate order because results are joined by index afterwards.
+    struct ScanResult
     {
-        auto archive = Floar::ArchiveReaderFactory::Open(path);
-        if (!archive)
-            continue;
-        if (ArchiveHasTexturesOrMaterials(*archive))
-            m_archives.push_back(std::move(archive));
+        std::unique_ptr<Floar::IArchiveReader> archive;
+        std::size_t entryCount = 0;
+        bool keep = false;
+        double openMs = 0.0;
+        double scanMs = 0.0;
+    };
+    std::vector<ScanResult> scans(candidates.size());
+    {
+        StartupTrace::Phase p("  Archive scan: parallel open+probe");
+        std::vector<std::size_t> indices(candidates.size());
+        std::iota(indices.begin(), indices.end(), std::size_t { 0 });
+        std::for_each(std::execution::par, indices.begin(), indices.end(),
+            [&](std::size_t i)
+            {
+                using TraceClock = StartupTrace::Clock;
+                ScanResult& r = scans[i];
+                const auto tOpen = TraceClock::now();
+                r.archive = Floar::ArchiveReaderFactory::Open(candidates[i]);
+                const auto tList = TraceClock::now();
+                r.openMs = std::chrono::duration<double, std::milli>(tList - tOpen).count();
+                if (!r.archive)
+                    return;
+                const std::vector<Floar::ArchiveEntry> entries = r.archive->ListEntries();
+                r.entryCount = entries.size();
+                r.keep = ArchiveHasTexturesOrMaterials(entries);
+                r.scanMs = std::chrono::duration<double, std::milli>(TraceClock::now() - tList).count();
+            });
     }
+
+    for (std::size_t i = 0; i < scans.size(); ++i)
+    {
+        ScanResult& r = scans[i];
+        if (!r.archive)
+        {
+            NIFLOG_INFO("[STARTUP]   archive open FAILED {:>8.2f} ms  {}",
+                r.openMs, ToUtf8ForLog(candidates[i].filename().wstring()));
+            continue;
+        }
+        NIFLOG_TRACE("[STARTUP]   archive {} open={:.2f}ms list+scan={:.2f}ms({} entries)  {}",
+            r.keep ? "KEEP" : "skip", r.openMs, r.scanMs, r.entryCount,
+            ToUtf8ForLog(candidates[i].filename().wstring()));
+        if (r.keep)
+            m_archives.push_back({ candidates[i].wstring(), std::move(r.archive) });
+    }
+
+    NIFLOG_INFO("[STARTUP]   Archive scan: {} candidates -> {} kept", candidates.size(), m_archives.size());
 }
 
 std::string ResourceResolver::NormalizeRelative(std::string path)
@@ -206,6 +329,7 @@ ResourceBytes ResourceResolver::FindNormalized(const std::string& rel,
         if (!LooseExists(root, rel))
             return false;
         result.diskPath = JoinLoose(root, rel);
+        result.sourceKey = MakeFileSourceKey(result.diskPath);
         return true;
     };
 
@@ -221,15 +345,23 @@ ResourceBytes ResourceResolver::FindNormalized(const std::string& rel,
     if (!m_gameData.empty() && tryLoose(m_gameData))
         return result;
 
+    // Loose-file hits above never wait; only the archive fallback needs the
+    // background scan to have finished (usually long done by the time the
+    // first frame's textures resolve - see the "blocked ... ms" log line).
+    WaitForArchiveScan();
+
     const std::wstring wideRel = ToWidePath(rel);
     for (const auto& archive : m_archives)
     {
-        if (!archive || !archive->HasEntry(wideRel))
+        if (!archive.reader || !archive.reader->HasEntry(wideRel))
             continue;
         // ExtractToMemory is logically const for our purposes (IO into a buffer).
-        result.data = const_cast<Floar::IArchiveReader&>(*archive).ExtractToMemory(wideRel);
+        result.data = const_cast<Floar::IArchiveReader&>(*archive.reader).ExtractToMemory(wideRel);
         if (!result.data.empty())
+        {
+            result.sourceKey = "bsa:" + ToUtf8ForLog(LowerWide(archive.path)) + "|" + rel;
             return result;
+        }
         result.data.clear();
     }
 
@@ -247,6 +379,7 @@ ResourceBytes ResourceResolver::Find(const std::string& relativePath,
         if (FileExists(abs))
         {
             ResourceBytes r;
+            r.sourceKey = MakeFileSourceKey(abs);
             r.diskPath = std::move(abs);
             return r;
         }
@@ -266,6 +399,7 @@ ResourceBytes ResourceResolver::Find(const std::string& relativePath,
 
 std::vector<std::wstring> ResourceResolver::DetectGameDataFolders()
 {
+    StartupTrace::Phase p("DetectGameDataFolders (registry)");
     std::vector<std::wstring> out;
 
     struct Candidate
