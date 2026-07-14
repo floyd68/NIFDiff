@@ -68,6 +68,13 @@ public:
     ID3D11Texture2D* ColorTexture() const { return m_colorTex.Get(); }
     ID3D11ShaderResourceView* ColorSRV() const { return m_colorSRV.Get(); }
 
+    // Saves the offscreen color target's current contents (the last
+    // rendered frame, no UI chrome) as a PNG via WIC - the calling thread
+    // must have COM initialized (the app's UI thread does, via
+    // OleInitialize). Alpha is forced opaque: the RT's alpha channel holds
+    // blending residue, not coverage.
+    bool SaveColorToPng(const std::wstring& path, std::string* error = nullptr);
+
     // Drops all cached per-geometry GPU buffers. Call when a new NIF has
     // been loaded so stale geometry pointers cannot be reused.
     void InvalidateMeshCache();

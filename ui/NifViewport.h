@@ -92,6 +92,13 @@ public:
     void SetShowHiddenNodes(bool show);
     void ResetCamera();
 
+    // Saves this viewport's last rendered 3D frame (the offscreen color
+    // target - clean render, no path/stats chrome) as a PNG.
+    bool SaveScreenshot(const std::wstring& path, std::string* error = nullptr)
+    {
+        return m_renderer.SaveColorToPng(path, error);
+    }
+
     // Whether any loaded mesh actually runs the height-based parallax the
     // "Parallax Height" slider controls: a vanilla parallax material
     // (ST_Heightmap + _p.dds) or a complex material carrying height in its

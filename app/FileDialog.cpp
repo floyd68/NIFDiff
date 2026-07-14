@@ -75,4 +75,54 @@ bool ShowPickFolderDialog(void* ownerWindowHwnd, const wchar_t* title, std::wstr
                           FOS_PICKFOLDERS | FOS_PATHMUSTEXIST, outPath);
 }
 
+bool ShowSavePngDialog(void* ownerWindowHwnd, const std::wstring& initialFolder,
+                       const std::wstring& initialFileName, std::wstring& outPath)
+{
+    using Microsoft::WRL::ComPtr;
+
+    ComPtr<IFileSaveDialog> dialog;
+    HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || !dialog)
+        return false;
+
+    static constexpr COMDLG_FILTERSPEC kFilters[] =
+    {
+        { L"PNG image (*.png)", L"*.png" },
+    };
+    dialog->SetFileTypes(static_cast<UINT>(std::size(kFilters)), kFilters);
+    dialog->SetFileTypeIndex(1);
+    dialog->SetDefaultExtension(L"png");
+    dialog->SetTitle(L"Save Screenshot");
+    if (!initialFileName.empty())
+        dialog->SetFileName(initialFileName.c_str());
+    if (!initialFolder.empty())
+    {
+        ComPtr<IShellItem> folder;
+        if (SUCCEEDED(SHCreateItemFromParsingName(initialFolder.c_str(), nullptr, IID_PPV_ARGS(&folder))) && folder)
+            dialog->SetFolder(folder.Get());
+    }
+
+    DWORD flags = 0;
+    dialog->GetOptions(&flags);
+    dialog->SetOptions(flags | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+
+    hr = dialog->Show(reinterpret_cast<HWND>(ownerWindowHwnd));
+    if (FAILED(hr))
+        return false;
+
+    ComPtr<IShellItem> item;
+    hr = dialog->GetResult(&item);
+    if (FAILED(hr) || !item)
+        return false;
+
+    PWSTR path = nullptr;
+    hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+    if (FAILED(hr) || !path)
+        return false;
+
+    outPath = path;
+    CoTaskMemFree(path);
+    return true;
+}
+
 } // namespace nsk

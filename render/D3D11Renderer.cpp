@@ -12,6 +12,7 @@
 
 #include <d3d11sdklayers.h>
 #include <DirectXPackedVector.h>
+#include <DirectXTex.h>
 #include <algorithm>
 #include <cmath>
 #include <tuple>
@@ -495,6 +496,43 @@ ID3D11BlendState* D3D11Renderer::GetBlendState(std::uint8_t srcBlend, std::uint8
     ID3D11BlendState* raw = state.Get();
     m_blendCache.emplace(key, std::move(state));
     return raw ? raw : m_blendAlpha.Get();
+}
+
+bool D3D11Renderer::SaveColorToPng(const std::wstring& path, std::string* error)
+{
+    if (!m_device || !m_context || !m_colorTex)
+    {
+        if (error) *error = "no rendered frame to save";
+        return false;
+    }
+
+    DirectX::ScratchImage captured;
+    HRESULT hr = DirectX::CaptureTexture(m_device.Get(), m_context.Get(), m_colorTex.Get(), captured);
+    if (FAILED(hr) || captured.GetImageCount() == 0)
+    {
+        if (error) *error = "CaptureTexture failed";
+        return false;
+    }
+
+    // B8G8R8A8 readback: stamp the alpha byte opaque so the PNG shows what
+    // the viewport shows instead of ghosting where blended draws left
+    // partial alpha behind.
+    const DirectX::Image* img = captured.GetImage(0, 0, 0);
+    for (std::size_t y = 0; y < img->height; ++y)
+    {
+        std::uint8_t* row = img->pixels + y * img->rowPitch;
+        for (std::size_t x = 0; x < img->width; ++x)
+            row[x * 4 + 3] = 0xFF;
+    }
+
+    hr = DirectX::SaveToWICFile(*img, DirectX::WIC_FLAGS_NONE,
+        DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG), path.c_str());
+    if (FAILED(hr))
+    {
+        if (error) *error = "SaveToWICFile failed";
+        return false;
+    }
+    return true;
 }
 
 bool D3D11Renderer::Resize(UINT width, UINT height)

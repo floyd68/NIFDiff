@@ -49,6 +49,40 @@ namespace
     constexpr UINT kMenuIdOpenPane = 4;
     constexpr UINT kMenuIdClosePane = 5;
     constexpr UINT kMenuIdOpenFolder = 6;
+    constexpr UINT kMenuIdSaveScreenshot = 7;
+
+    // Saves the pane's last rendered 3D frame (the offscreen color target -
+    // clean render, no UI chrome) as a PNG. Defaults to the loaded NIF's
+    // own folder with the first unused <stem>_screenshotN.png name; the
+    // Save dialog lets the user redirect anywhere.
+    void SavePaneScreenshot(HWND hwnd, NifComparePane& pane)
+    {
+        const NifDocument* doc = pane.Document();
+        std::filesystem::path nifPath = doc ? std::filesystem::path(doc->filePath()) : std::filesystem::path();
+        const std::wstring folder = nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring();
+        const std::wstring stem = nifPath.has_stem() ? nifPath.stem().wstring() : L"nifdiff";
+
+        std::wstring name = stem + L"_screenshot1.png";
+        for (int n = 1; !folder.empty() && n < 1000; ++n)
+        {
+            name = stem + L"_screenshot" + std::to_wstring(n) + L".png";
+            std::error_code ec;
+            if (!std::filesystem::exists(std::filesystem::path(folder) / name, ec))
+                break;
+        }
+
+        std::wstring outPath;
+        if (!ShowSavePngDialog(hwnd, folder, name, outPath))
+            return;
+
+        std::string error;
+        if (!pane.Viewport().SaveScreenshot(outPath, &error))
+        {
+            NIFLOG_ERROR("Screenshot save failed ({}).", error);
+            MessageBoxW(hwnd, (L"Failed to save screenshot:\n" + outPath).c_str(),
+                        L"NIFDiff", MB_OK | MB_ICONERROR);
+        }
+    }
 
     // Opens Explorer with the pane's loaded .nif pre-selected. explorer's
     // /select verb needs no COM apartment (unlike SHOpenFolderAndSelectItems),
@@ -91,6 +125,7 @@ namespace
             const UINT folderFlags = MF_STRING |
                 (doc != nullptr && !doc->filePath().empty() ? MF_ENABLED : MF_GRAYED);
             AppendMenuW(menu, folderFlags, kMenuIdOpenFolder, L"Open Containing &Folder");
+            AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
@@ -120,6 +155,11 @@ namespace
         case kMenuIdOpenFolder:
             if (pane != nullptr && pane->Document() != nullptr)
                 OpenContainingFolder(pane->Document()->filePath());
+            break;
+
+        case kMenuIdSaveScreenshot:
+            if (pane != nullptr)
+                SavePaneScreenshot(hwnd, *pane);
             break;
 
         case kMenuIdAbout:
