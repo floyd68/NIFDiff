@@ -248,14 +248,15 @@ or `third_party/Floar` look uninitialized.
 
 ## Status
 
-Implemented: NIF parsing/scene-building/D3D11 rendering (originally ported
-from NifSkope's `liteviewer` prototype at `D:\Works\nifskope\liteviewer`,
-`nsk` namespace, since extended with the material/shader coverage listed
-under Features), and a dynamic **1-8 pane** compare UI laid out
-FICture2-style (bottom control strip, two-row equal-width pane grid via
+Implemented: NIF parsing/scene-building/D3D11 rendering (a Qt-free
+reimplementation of the relevant parts of
+[NifSkope](https://github.com/niftools/nifskope) - see "Origins" above -
+since extended with the material/shader coverage listed under Features),
+and a dynamic **1-8 pane** compare UI laid out FICture2-style (bottom
+control strip, two-row equal-width pane grid via
 `NifCompareSplitCoordinator`, ported/adapted from FICture2's own
-`ImageBrowserSplitCoordinator`) - not liteviewer's original fixed
-2-pane/right-sidebar layout. App shell (window bootstrap, INI session
+`ImageBrowserSplitCoordinator`) - not NifSkope's fixed
+2-pane/right-sidebar diff layout. App shell (window bootstrap, INI session
 persistence for up to 8 files, Win32 file dialogs, single-instance IPC)
 hosts one `NifCompareView`.
 
@@ -271,4 +272,4 @@ Possible follow-ups, not required for the current feature set:
    `CaptureHorizontalSplitRatios`/`ApplyHorizontalSplitRatios` pattern).
 2. File drag-and-drop onto a pane (FICture2's `ImageBrowserDragController`
    equivalent) as an alternative to the "Open..." button.
-3. An app icon / `.ico` (none exists yet, matching liteviewer).
+3. An app icon / `.ico` (none exists yet).
