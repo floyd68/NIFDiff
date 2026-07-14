@@ -39,6 +39,15 @@ public:
     std::size_t PaneCount() const { return m_panes.size(); }
     NifComparePane& Pane(std::size_t index) { return *m_panes[index]; }
 
+    // The ACTIVE pane (FICture2's focused-browser equivalent): set by any
+    // click inside a pane, by the 1-8 number keys, and by a drop's target
+    // pane; drawn with an accent border while several panes are open. It
+    // is the target for pane-context hotkeys (Ctrl+O opens into it, F12
+    // screenshots it). Never null while panes exist: a stale pointer
+    // (pane closed since) falls back to the first pane.
+    NifComparePane* ActivePane() const;
+    void SetActivePane(NifComparePane* pane);
+
     // Called by the app shell when a pane's own "Open..." button (or a
     // restored/command-line file) needs a path picked/loaded. The app shell
     // owns the actual file dialog + NifComparePane::Load() call; this view
@@ -95,8 +104,9 @@ public:
     // reach this view through Backplate's focused-then-broadcast routing):
     //   F              Reset View            G  Grid       X  Axes
     //   W              Wireframe             H  Hidden
-    //   PgUp / PgDn    cycle camera preset   Ctrl+O  Open into a pane
-    //   F12            Save Pane Screenshot (first pane with a document)
+    //   1..8           select the active pane
+    //   PgUp / PgDn    cycle camera preset   Ctrl+O  Open into active pane
+    //   F12            Save Screenshot of the active pane
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
     // Explorer drag&drop (Backplate's OLE drop target, enabled by the app
@@ -187,6 +197,7 @@ private:
     static void CALLBACK TimerThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
 
     std::vector<std::shared_ptr<NifComparePane>> m_panes;
+    NifComparePane* m_activePane = nullptr; // read through ActivePane() - validates + falls back
     NifComparePane* m_dragOverlayPane = nullptr;
     DragOverlayKind m_dragOverlayKind = DragOverlayKind::None;
     std::wstring m_hostName; // current first-child host tree, removed on rebuild (see RebuildHostTree)

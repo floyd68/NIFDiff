@@ -44,9 +44,13 @@ own copies.
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a
   frontal-light mode.
+- **Active pane** (FICture2's focused-browser equivalent): any click in
+  a pane makes it active, drawn with an accent border while several
+  panes are open; pane-context shortcuts target it.
 - **Keyboard shortcuts**: `F` reset view, `G` grid, `X` axes,
-  `W` wireframe, `H` hidden, `PgUp`/`PgDn` cycle the camera preset,
-  `Ctrl+O` open a file into a pane, `F12` save a pane screenshot.
+  `W` wireframe, `H` hidden, `1`-`8` select the active pane,
+  `PgUp`/`PgDn` cycle the camera preset, `Ctrl+O` open a file into the
+  active pane, `F12` save a screenshot of the active pane.
 - **Per-pane context menu**: open/close the pane, open the containing
   folder in Explorer with the file selected, and save the pane's 3D
   render as a PNG (defaults next to the .nif, auto-numbered).

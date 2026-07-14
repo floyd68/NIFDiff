@@ -332,8 +332,35 @@ bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
     return FD2D::SplitPanel::OnCommandEvent(event);
 }
 
+NifComparePane* NifCompareView::ActivePane() const
+{
+    for (const auto& p : m_panes)
+    {
+        if (p.get() == m_activePane)
+            return m_activePane;
+    }
+    return m_panes.empty() ? nullptr : m_panes.front().get();
+}
+
+void NifCompareView::SetActivePane(NifComparePane* pane)
+{
+    if (m_activePane == pane)
+        return;
+    m_activePane = pane;
+    Invalidate();
+}
+
 bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
 {
+    // Any click inside a pane makes it the active one (FICture2's focused
+    // browser), BEFORE the children consume the event - a viewport orbit
+    // drag or a path-label click both count as "working in this pane".
+    if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint)
+    {
+        if (NifComparePane* hit = PaneAt(event.point))
+            SetActivePane(hit);
+    }
+
     if (FD2D::SplitPanel::OnInputEvent(event))
         return true;
 
@@ -441,6 +468,7 @@ bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, con
             target = inserted;
     }
 
+    SetActivePane(target); // dropping into a pane means "work here now"
     std::string error;
     if (!target->Load(nifs.front(), &error))
         NIFLOG_WARN("Drop: failed to load into the target pane ({}).", error);
@@ -489,8 +517,25 @@ NifComparePane* NifCompareView::InsertPaneAfter(NifComparePane* after)
 void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
 {
     FD2D::SplitPanel::OnRenderOverlay(target);
+    if (target == nullptr)
+        return;
 
-    if (target == nullptr || m_dragOverlayKind == DragOverlayKind::None || m_dragOverlayPane == nullptr)
+    // Active-pane accent border (FICture2's focused-browser highlight).
+    // Only meaningful while several panes compete for the pane-context
+    // hotkeys; a single pane is trivially the active one.
+    if (m_panes.size() > 1)
+    {
+        if (NifComparePane* active = ActivePane())
+        {
+            D2D1_RECT_F rc = active->LayoutRect();
+            rc.left += 1.0f; rc.top += 1.0f; rc.right -= 1.0f; rc.bottom -= 1.0f;
+            Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> accent;
+            if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.30f, 0.58f, 0.95f, 0.85f), &accent)))
+                target->DrawRectangle(rc, accent.Get(), 2.0f);
+        }
+    }
+
+    if (m_dragOverlayKind == DragOverlayKind::None || m_dragOverlayPane == nullptr)
         return;
     // A deferred close during the drag could have destroyed the pane;
     // only draw over one that is still ours.
@@ -540,34 +585,27 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_PRIOR: m_controls->CycleOrientation(-1); return true; // PgUp
     case VK_NEXT:  m_controls->CycleOrientation(+1); return true; // PgDn
 
+    case '1': case '2': case '3': case '4':
+    case '5': case '6': case '7': case '8':
+    {
+        const std::size_t index = static_cast<std::size_t>(event.keyCode - '1');
+        if (index < m_panes.size())
+            SetActivePane(m_panes[index].get());
+        return true;
+    }
+
     case 'O':
         if (!ctrl)
             return false;
-        // Open into the first empty pane (the front pane when all are
-        // occupied - same "best pane" preference as the IPC drain).
-        {
-            NifComparePane* target = nullptr;
-            for (auto& p : m_panes)
-            {
-                if (p && p->Document() == nullptr) { target = p.get(); break; }
-            }
-            if (!target && !m_panes.empty())
-                target = m_panes.front().get();
-            if (target)
-                RequestOpenPane(*target);
-        }
+        if (NifComparePane* target = ActivePane())
+            RequestOpenPane(*target);
         return true;
 
     case VK_F12:
-        // Screenshot the first pane that has something to show.
-        for (auto& p : m_panes)
+        if (NifComparePane* target = ActivePane())
         {
-            if (p && p->Document() != nullptr)
-            {
-                if (m_onScreenshotRequested)
-                    m_onScreenshotRequested(*p);
-                return true;
-            }
+            if (m_onScreenshotRequested)
+                m_onScreenshotRequested(*target);
         }
         return true;
 
