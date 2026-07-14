@@ -248,6 +248,18 @@ void NifCompareControlPanel::SetOnShowAxesChanged(std::function<void(bool)> hand
 void NifCompareControlPanel::SetOnWireframeChanged(std::function<void(bool)> handler) { m_wireframeChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnShowHiddenChanged(std::function<void(bool)> handler) { m_showHiddenChk->OnCheckedChanged(std::move(handler)); }
 
+void NifCompareControlPanel::ToggleShowGrid()   { m_showGridChk->SetChecked(!m_showGridChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowAxes()   { m_showAxesChk->SetChecked(!m_showAxesChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleWireframe()  { m_wireframeChk->SetChecked(!m_wireframeChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowHidden() { m_showHiddenChk->SetChecked(!m_showHiddenChk->Checked(), /*notify=*/true); }
+
+void NifCompareControlPanel::CycleOrientation(int delta)
+{
+    constexpr int kOrientationCount = 6; // Front/Back/Left/Right/Top/Bottom
+    const int idx = ((m_orientationCombo->SelectedIndex() + delta) % kOrientationCount + kOrientationCount) % kOrientationCount;
+    m_orientationCombo->SetSelectedIndex(idx, /*notify=*/true);
+}
+
 void NifCompareControlPanel::SetOnBrightnessChanged(std::function<void(float)> handler) { m_brightnessSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnAmbientChanged(std::function<void(float)> handler) { m_ambientSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnDeclinationChanged(std::function<void(float)> handler) { m_declinationSlider->OnValueChanged(std::move(handler)); }

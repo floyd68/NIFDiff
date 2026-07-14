@@ -90,10 +90,21 @@ public:
     // it landed outside every pane) so the menu can offer per-pane Open/
     // Close actions. The app shell owns the actual menu (About / file
     // association / Exit live at the app level, not in this view).
+    //
+    // Also handles the application-wide keyboard shortcuts (KeyDown events
+    // reach this view through Backplate's focused-then-broadcast routing):
+    //   F              Reset View            G  Grid       X  Axes
+    //   W              Wireframe             H  Hidden
+    //   PgUp / PgDn    cycle camera preset   Ctrl+O  Open into a pane
+    //   F12            Save Pane Screenshot (first pane with a document)
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
     // `clientPt` is in window client coordinates.
     void SetOnContextMenuRequested(std::function<void(POINT clientPt, NifComparePane* pane)> handler);
+
+    // F12 shortcut target: the app shell owns the Save dialog + the actual
+    // write (same flow as the context menu's "Save Pane Screenshot...").
+    void SetOnScreenshotRequested(std::function<void(NifComparePane&)> handler);
 
     // Context-menu actions on a specific pane, invoked by the app shell's
     // menu handler. RequestOpenPane forwards to the SetOnPaneOpenRequested
@@ -128,6 +139,8 @@ private:
     // Grays out the "Parallax Height" slider and the three extended-material
     // toggles unless some loaded pane carries material each control affects.
     void RefreshExtendedMaterialControls();
+    // Application-wide shortcuts - see OnInputEvent's comment for the map.
+    bool HandleShortcutKey(const FD2D::InputEvent& event);
     // Publishes the loaded documents' file names/count into m_ipcQueue so
     // the IPC worker threads can gate incoming forwards without touching
     // the UI thread. Called wherever the document set changes.
@@ -160,6 +173,7 @@ private:
 
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
     std::function<void(POINT, NifComparePane*)> m_onContextMenuRequested;
+    std::function<void(NifComparePane&)> m_onScreenshotRequested;
 
     bool m_syncViews = true;
     bool m_syncLighting = true;

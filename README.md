@@ -40,9 +40,16 @@ own copies.
   overlays it in wireframe, and reports its shader classification; each
   pane also shows a shader-kind summary (e.g. `Default x8 · Parallax x3`)
   and total triangle count in its status line.
-- Orientation presets, Center/Reset view, wireframe/grid/axes toggles,
+- Orientation presets, Center/Reset view, wireframe/grid/axes toggles
+  (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a
   frontal-light mode.
+- **Keyboard shortcuts**: `F` reset view, `G` grid, `X` axes,
+  `W` wireframe, `H` hidden, `PgUp`/`PgDn` cycle the camera preset,
+  `Ctrl+O` open a file into a pane, `F12` save a pane screenshot.
+- **Per-pane context menu**: open/close the pane, open the containing
+  folder in Explorer with the file selected, and save the pane's 3D
+  render as a PNG (defaults next to the .nif, auto-numbered).
 
 ### Bethesda resource pipeline
 

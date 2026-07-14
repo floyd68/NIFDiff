@@ -578,6 +578,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
+        // F12 shortcut: same Save-dialog flow as the context menu item.
+        compareView->SetOnScreenshotRequested([weakBackplate](NifComparePane& pane)
+        {
+            auto bp = weakBackplate.lock();
+            if (bp && bp->Window() != nullptr)
+                SavePaneScreenshot(bp->Window(), pane);
+        });
+
         compareView->SetOnPaneOpenRequested([weakBackplate](NifComparePane& pane)
         {
             auto bp = weakBackplate.lock();

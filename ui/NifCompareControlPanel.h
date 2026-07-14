@@ -44,6 +44,15 @@ public:
     // NifSkope's "Show Hidden": render NiAVObject-hidden subtrees too.
     void SetOnShowHiddenChanged(std::function<void(bool)> handler);
 
+    // Keyboard-shortcut hooks (see NifCompareView's key handling): flip a
+    // display checkbox exactly as a click would (the wired handler runs),
+    // or step the orientation preset with wrap-around.
+    void ToggleShowGrid();
+    void ToggleShowAxes();
+    void ToggleWireframe();
+    void ToggleShowHidden();
+    void CycleOrientation(int delta);
+
     void SetOnBrightnessChanged(std::function<void(float)> handler);
     void SetOnAmbientChanged(std::function<void(float)> handler);
     void SetOnDeclinationChanged(std::function<void(float)> handler);
