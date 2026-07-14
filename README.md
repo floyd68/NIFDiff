@@ -13,18 +13,88 @@ app-shell conventions - to 3D NIF models. The actual NIF-parsing/3D-scene/
 compare-UI logic needed for that (which FICture2 never had) is ported in
 from NifSkope - see "Origins" below.
 
-NIF parsing (`core/`), D3D11 rendering (`render/`), and a dynamic 2-4 pane
+NIF parsing (`core/`), D3D11 rendering (`render/`), and a dynamic 1-8 pane
 FICture2-style compare UI (`ui/`, `app/`) are implemented and build/run -
 confirmed with an actual `cmake --build build --config Debug` run producing
 `NIFDiff.exe` (the app), `NifValidate.exe` (console parser smoke-test) and
 `ResourceResolveTest.exe` (Bethesda search-order smoke-test), plus manual
 verification of loading NIF files into panes, dynamically adding/removing
-panes (up to 4, equal-width), and camera/lighting sync across panes.
+panes (up to 8, equal-width), and camera/lighting sync across panes.
 
 Third-party submodules (`FD2D`, `Floar`, `external/DirectXTex`,
 `external/spdlog`) are independent clones from their GitHub URLs, not
 references into the local `D:\Works\Ficture2` checkout - this repo owns its
 own copies.
+
+## Features
+
+### Side-by-side comparison
+
+- **1-8 panes** in an equal-width grid (1-4 in a single row, 5-6 as 3x2,
+  7-8 as 4x2), added and removed at runtime; per-pane Open/Close via the
+  pane's own buttons or the right-click context menu.
+- **Synced cameras and lighting** across panes (each sync individually
+  toggleable), so one orbit/pan/zoom or light change hits every model at
+  once.
+- **Click-to-select**: a left click picks the sub-mesh under the cursor,
+  overlays it in wireframe, and reports its shader classification; each
+  pane also shows a shader-kind summary (e.g. `Default x8 · Parallax x3`)
+  and total triangle count in its status line.
+- Orientation presets, Center/Reset view, wireframe/grid/axes toggles,
+  brightness/ambient sliders, light declination/planar angle, and a
+  frontal-light mode.
+
+### Bethesda resource pipeline
+
+- Loads Skyrim LE/SE and Fallout 4 NIFs for static bind-pose comparison
+  (no skinning/morphs/particles/controllers - see `SceneBuilder.h`'s
+  scope note).
+- Textures resolve in engine order: override folders -> the NIF's own
+  directory -> Game Data -> BSA/BA2 archives (via Floar), with Game Data
+  auto-detection and an override-folder UI in the bottom strip. A
+  named-but-unresolved diffuse renders magenta instead of blending in as
+  a plain white surface.
+- Textures are pooled process-wide - each unique resolved source is
+  decoded and uploaded once, shared across panes - and BSA scanning runs
+  in parallel in the background at startup (cold start around half a
+  second).
+- Session persistence (open files, Game Data path, override folders),
+  `.nif` file association, and single-instance forwarding: opening a
+  file whose NAME matches a document already open lands in a new pane of
+  the existing window - the "compare two mods' versions of the same
+  mesh" workflow; unrelated files start their own window.
+
+### Material / shader coverage
+
+- **Vanilla lit path**: specular, glow/emissive, environment mapping
+  with per-material cubemaps, soft/rim/back lighting, model-space
+  normals (with external specular maps), multilayer parallax, skin/hair
+  tint, face tint/detail masks, effect shaders (falloff, greyscale
+  palettes, weapon blood), NiAlphaProperty blend functions and alpha
+  test, decals (depth-biased), double-sided materials; refraction planes
+  are omitted rather than drawn wrong.
+- **Parallax** (`_p.dds`): parallax occlusion mapping with height-field
+  self-shadowing; the "Parallax Height" slider drives the vanilla/`_m`
+  height scale.
+- **Complex material** (ENB / Community Shaders `_m.dds`): detected by
+  the ecosystem's non-opaque-coarsest-mip rule, channels read as
+  R/G/B/A = reflection/glossiness/metalness/height. Complex-material
+  parallax only runs over alphas that are real height fields - a
+  CPU-side probe rejects flat alphas and binary 0/255 masks, and BC1
+  sources are skipped outright (1-bit alpha cannot carry a height
+  gradient).
+- **True PBR** (Community Shaders / PBRNifPatcher): detected by the
+  SLSF2_Unused01 marker; reads the albedo/normal/displacement/RMAOS
+  (+ optional subsurface) slot conventions, shades with GGX/
+  Cook-Torrance, runs displacement POM at the authored scale, and feeds
+  ambient specular from a procedural sky/ground IBL cubemap so metals
+  get directional, colored reflections. Brightness is calibrated to sit
+  comparably next to the legacy path - a credible preview, not CS-exact.
+- **Extended-material toggles**: Parallax / Complex Mat / True PBR
+  checkboxes in the bottom strip, each enabled only while some loaded
+  pane carries material it would affect. OFF renders the closest legacy
+  interpretation instead: no POM/displacement, complex materials as
+  plain env-mapped surfaces, True PBR through the vanilla lit path.
 
 ## Origins
 
@@ -48,7 +118,7 @@ What NIFDiff carries over from FICture2 directly:
 - **Floar** - VFS/BSA-BA2 archive support (FICture2 already browses `.ba2`
   archives for textures; NIFDiff needs the same search order for meshes).
 - **external/DirectXTex** - DDS decode + D3D11 SRV creation for
-  `render/TextureCache.cpp` (material textures on NIF models). ImageCore
+  `render/TextureRepository.cpp` (material textures on NIF models). ImageCore
   and the vendored `CommonUtil.h`/`AppLog.h` headers were carried over too
   but removed in a later dependency cleanup once FD2D stopped requiring
   them - see CMakeLists.txt's dependency notes.
@@ -82,7 +152,8 @@ the long-standing Qt-based NIF editor:
   `src/gl/glscene.h`/`glnode.h` scenegraph (world-transform flattening
   only; no skinning/morphs/particles/controllers needed for a static
   bind-pose comparison).
-- `render/D3D11Renderer.h/.cpp` / `render/TextureCache.h/.cpp` replace
+- `render/D3D11Renderer.h/.cpp` / `render/TextureRepository.h/.cpp` (+ the
+  per-viewport `render/TextureCache.h` memo) replace
   NifSkope's Qt/OpenGL `src/gl/renderer.cpp/.h` and
   `gltex.cpp`+`gltexloaders.cpp` with a D3D11 draw path (feeding off
   DirectXTex for DDS decode/SRV creation instead of NifSkope's own
@@ -144,12 +215,16 @@ included (ENB, Community Shaders, PBRNifPatcher).
 
 ```
 app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
-                   AppSettings.h (INI persistence), FileDialog.h/.cpp,
+                   AppSettings.h (INI persistence), AppIpc.h/.cpp (single-instance
+                   forwarding), FileDialog.h/.cpp,
                    ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests
-core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera
-render/            D3D11 renderer / texture cache
+core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera /
+                   ResourceResolver (override -> nif dir -> Game Data -> BSA/BA2 order)
+render/            D3D11 renderer, HLSL shaders (shaders/, fxc-precompiled at build time),
+                   TextureRepository (process-wide pooled DDS decode + complex-material
+                   probes) with a per-viewport TextureCache memo on top
 ui/                NifViewport (single 3D view), NifComparePane (view + Open/Close),
-                   NifCompareSplitCoordinator (2-4 pane equal-width layout),
+                   NifCompareSplitCoordinator (1-8 pane two-row equal-width grid),
                    NifCompareControlPanel (bottom strip), NifCompareView (top-level)
 schema_reference/  nif.xml reference (vendored from niftools/nifxml, not parsed at runtime)
 test_assets/       local-only smoke-test .nif fixtures (gitignored - game-
@@ -173,14 +248,16 @@ or `third_party/Floar` look uninitialized.
 
 ## Status
 
-Implemented: NIF parsing/scene-building/D3D11 rendering (ported from
-NifSkope's `liteviewer` prototype at `D:\Works\nifskope\liteviewer`,
-`nsk` namespace, essentially verbatim), and a dynamic **2-4 pane** compare
-UI laid out FICture2-style (bottom control strip, equal-width pane
-splitting up to 4 via `NifCompareSplitCoordinator`, ported/adapted from
-FICture2's own `ImageBrowserSplitCoordinator`) - not liteviewer's original
-fixed 2-pane/right-sidebar layout. App shell (window bootstrap, INI session
-persistence for up to 4 files, Win32 file dialogs) hosts one `NifCompareView`.
+Implemented: NIF parsing/scene-building/D3D11 rendering (originally ported
+from NifSkope's `liteviewer` prototype at `D:\Works\nifskope\liteviewer`,
+`nsk` namespace, since extended with the material/shader coverage listed
+under Features), and a dynamic **1-8 pane** compare UI laid out
+FICture2-style (bottom control strip, two-row equal-width pane grid via
+`NifCompareSplitCoordinator`, ported/adapted from FICture2's own
+`ImageBrowserSplitCoordinator`) - not liteviewer's original fixed
+2-pane/right-sidebar layout. App shell (window bootstrap, INI session
+persistence for up to 8 files, Win32 file dialogs, single-instance IPC)
+hosts one `NifCompareView`.
 
 Not yet ported/implemented: skinning/morphs/particles/controllers (out of
 scope per `SceneBuilder.h`'s documented scope note - static bind-pose
@@ -194,9 +271,4 @@ Possible follow-ups, not required for the current feature set:
    `CaptureHorizontalSplitRatios`/`ApplyHorizontalSplitRatios` pattern).
 2. File drag-and-drop onto a pane (FICture2's `ImageBrowserDragController`
    equivalent) as an alternative to the "Open..." button.
-3. Push the local, currently-unpublished FD2D commits (Slider/CheckBox/
-   ComboBox controls, `Text::Measure` DirectWrite-metrics fix) from
-   `D:\Works\Ficture2\FD2D` to `origin` (`github.com/floyd68/FD2D`) - the
-   submodule pin here (`75dd6e1`) currently only resolves from a local
-   fetch, not a fresh `git submodule update --init` against GitHub alone.
-4. An app icon / `.ico` (none exists yet, matching liteviewer).
+3. An app icon / `.ico` (none exists yet, matching liteviewer).
