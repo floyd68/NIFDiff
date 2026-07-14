@@ -57,7 +57,7 @@ own copies.
   `Shift+Tab` select it, `R` resets its camera, `C` focuses its
   selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+W` closes it,
   `Del` clears its document, `Ctrl+E` shows its file in Explorer,
-  `F12` saves its screenshot.
+  `F12` saves its screenshot; `I` toggles the material diff panel.
 - **Per-pane context menu**: open/close the pane, open the containing
   folder in Explorer with the file selected, and save the pane's 3D
   render as a PNG (defaults next to the .nif, auto-numbered).
@@ -122,6 +122,11 @@ own copies.
   Vertex Colors, Specular (legacy AND PBR GGX), Emissive, or Lighting
   (raw unlit texture) off one at a time to isolate which shading input
   makes two panes differ.
+- **Material diff panel** (`I` to toggle): while a sub-mesh is selected,
+  an overlay table shows its BSLightingShaderProperty data - shader
+  type/flags, texture slots, specular/emissive/alpha/UV values, alpha
+  and depth state - side by side with the same-named mesh in every
+  other loaded pane, highlighting exactly which values differ.
 
 ## Origins
 

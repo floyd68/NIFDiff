@@ -2,10 +2,13 @@
 #include "../core/NifLog.h"
 
 #include <Backplate.h>
+#include <Core.h>
 #include <Util.h>
 #include <algorithm>
+#include <cctype>
 #include <cwctype>
 #include <filesystem>
+#include <format>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -545,11 +548,238 @@ NifComparePane* NifCompareView::InsertPaneAfter(NifComparePane* after)
     return raw;
 }
 
+namespace
+{
+    std::wstring Utf8ToWideStr(const std::string& s)
+    {
+        if (s.empty())
+            return std::wstring();
+        const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
+        std::wstring out(static_cast<std::size_t>(len), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), out.data(), len);
+        return out;
+    }
+
+    // Texture paths are long; the interesting part is the tail (file name +
+    // a bit of the folder).
+    std::wstring PathTail(const std::string& path, std::size_t maxChars = 34)
+    {
+        std::wstring w = Utf8ToWideStr(path);
+        if (w.size() <= maxChars)
+            return w;
+        return L"…" + w.substr(w.size() - maxChars);
+    }
+
+    std::wstring F2(float v)  { return std::format(L"{:.2f}", v); }
+    std::wstring Vec2Str(const Vector2& v) { return std::format(L"{:.2f}, {:.2f}", v[0], v[1]); }
+    std::wstring Col3Str(const Color3& c)  { return std::format(L"{:.2f} {:.2f} {:.2f}", c[0], c[1], c[2]); }
+    std::wstring Hex32(std::uint32_t v)    { return std::format(L"{:08X}", v); }
+}
+
+void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
+{
+    if (!m_showMaterialPanel)
+        return;
+    NifComparePane* active = ActivePane();
+    if (active == nullptr)
+        return;
+    const RenderMesh* sel = active->Viewport().SelectedMesh();
+    if (sel == nullptr)
+        return;
+
+    // Columns: every loaded pane in order (up to 4), the active pane's
+    // selection matched into the others by node name, then by index.
+    struct Column
+    {
+        NifComparePane* pane = nullptr;
+        const RenderMesh* mesh = nullptr;
+        std::wstring header;
+    };
+    std::string selNameLower = sel->nodeName;
+    for (char& c : selNameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    std::vector<Column> cols;
+    int paneNo = 0;
+    for (const auto& p : m_panes)
+    {
+        ++paneNo;
+        if (!p || p->Document() == nullptr)
+            continue;
+        Column col;
+        col.pane = p.get();
+        if (p.get() == active)
+        {
+            col.mesh = sel;
+        }
+        else
+        {
+            const std::vector<RenderMesh>& meshes = p->Viewport().Meshes();
+            for (const RenderMesh& m : meshes)
+            {
+                std::string nameLower = m.nodeName;
+                for (char& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (nameLower == selNameLower)
+                {
+                    col.mesh = &m;
+                    break;
+                }
+            }
+            if (col.mesh == nullptr)
+            {
+                const int idx = active->Viewport().SelectedMeshIndex();
+                if (idx >= 0 && static_cast<std::size_t>(idx) < meshes.size())
+                    col.mesh = &meshes[static_cast<std::size_t>(idx)];
+            }
+        }
+        col.header = L"Pane " + std::to_wstring(paneNo) + (p.get() == active ? L" ●" : L"");
+        cols.push_back(col);
+        if (cols.size() == 4)
+            break;
+    }
+    if (cols.empty())
+        return;
+
+    // Rows: formatted values per column; a row "differs" when any value
+    // deviates from the first column's.
+    struct Row
+    {
+        std::wstring label;
+        std::vector<std::wstring> vals;
+        bool differs = false;
+    };
+    std::vector<Row> rows;
+    const auto addRow = [&rows, &cols](const std::wstring& label, auto&& format, bool skipWhenAllEmpty = false)
+    {
+        Row r;
+        r.label = label;
+        bool anyContent = false;
+        for (const Column& c : cols)
+        {
+            std::wstring v = c.mesh != nullptr ? format(*c.mesh, *c.pane) : std::wstring(L"-");
+            anyContent = anyContent || (!v.empty() && v != L"-");
+            r.vals.push_back(std::move(v));
+        }
+        if (skipWhenAllEmpty && !anyContent)
+            return;
+        for (const std::wstring& v : r.vals)
+            r.differs = r.differs || v != r.vals.front();
+        rows.push_back(std::move(r));
+    };
+    const auto tex = [](const std::string& path) { return PathTail(path); };
+
+    addRow(L"Mesh",        [](const RenderMesh& m, NifComparePane&) { return Utf8ToWideStr(m.nodeName); });
+    addRow(L"Triangles",   [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.geometry ? m.geometry->triangles.size() : 0); });
+    addRow(L"Shader",      [](const RenderMesh& m, NifComparePane& p) { return p.Viewport().ShaderKindFor(m); });
+    addRow(L"Shader Type", [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.material.shaderType); });
+    addRow(L"SLSF1",       [](const RenderMesh& m, NifComparePane&) { return Hex32(m.material.shaderFlags1); });
+    addRow(L"SLSF2",       [](const RenderMesh& m, NifComparePane&) { return Hex32(m.material.shaderFlags2); });
+    addRow(L"Diffuse",     [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.diffuseTexture); }, true);
+    addRow(L"Normal",      [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.normalTexture); }, true);
+    addRow(L"Glow/Mask",   [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.glowTexture); }, true);
+    addRow(L"Height",      [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.heightTexture); }, true);
+    addRow(L"Cube Map",    [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.cubeTexture); }, true);
+    addRow(L"Env Mask",    [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.envMaskTexture); }, true);
+    addRow(L"Inner/Tint",  [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.innerTexture); }, true);
+    addRow(L"Backlight",   [&](const RenderMesh& m, NifComparePane&) { return tex(m.material.backlightTexture); }, true);
+    addRow(L"Spec Color",  [](const RenderMesh& m, NifComparePane&) { return Col3Str(m.material.specularColor); });
+    addRow(L"Spec Strength", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.specularStrength); });
+    addRow(L"Glossiness",  [](const RenderMesh& m, NifComparePane&) { return F2(m.material.glossiness); });
+    addRow(L"Emissive",    [](const RenderMesh& m, NifComparePane&) { return Col3Str(m.material.emissiveColor); });
+    addRow(L"Emissive Mult", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.emissiveMultiple); });
+    addRow(L"Alpha",       [](const RenderMesh& m, NifComparePane&) { return F2(m.material.alpha); });
+    addRow(L"UV Scale",    [](const RenderMesh& m, NifComparePane&) { return Vec2Str(m.material.uvScale); });
+    addRow(L"UV Offset",   [](const RenderMesh& m, NifComparePane&) { return Vec2Str(m.material.uvOffset); });
+    addRow(L"EnvMap Scale", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.environmentReflection); });
+    addRow(L"Light Eff 1/2", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.lightingEffect1) + L" / " + F2(m.material.lightingEffect2); });
+    addRow(L"Alpha Blend", [](const RenderMesh& m, NifComparePane&)
+    {
+        return m.material.hasAlphaBlend
+            ? L"On " + std::to_wstring(m.material.alphaSrcBlend) + L"/" + std::to_wstring(m.material.alphaDstBlend)
+            : std::wstring(L"Off");
+    });
+    addRow(L"Alpha Test",  [](const RenderMesh& m, NifComparePane&)
+    {
+        return m.material.hasAlphaTest ? L"On " + F2(m.material.alphaTestThreshold) : std::wstring(L"Off");
+    });
+    addRow(L"Depth Write", [](const RenderMesh& m, NifComparePane&) { return std::wstring(m.material.depthWrite ? L"On" : L"Off"); });
+    addRow(L"Double Sided", [](const RenderMesh& m, NifComparePane&) { return std::wstring(m.material.isDoubleSided ? L"Yes" : L"No"); });
+    addRow(L"Decal",       [](const RenderMesh& m, NifComparePane&) { return std::wstring(m.material.isDecal ? L"Yes" : L"No"); });
+
+    // --- layout & draw ----------------------------------------------------
+    if (!m_matPanelText)
+    {
+        FD2D::Core::DWriteFactory()->CreateTextFormat(L"Segoe UI", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+            12.0f, L"", &m_matPanelText);
+        if (m_matPanelText)
+            m_matPanelText->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+    if (!m_matPanelText)
+        return;
+
+    constexpr float kRowH = 17.0f;
+    constexpr float kLabelW = 108.0f;
+    constexpr float kColW = 208.0f;
+    constexpr float kPad = 8.0f;
+    const float panelW = kLabelW + kColW * cols.size() + kPad * 2.0f;
+    const float panelH = kRowH * (rows.size() + 1) + kPad * 2.0f;
+
+    const D2D1_RECT_F view = LayoutRect();
+    D2D1_RECT_F panel {
+        view.right - panelW - 12.0f,
+        view.top + 34.0f,
+        view.right - 12.0f,
+        view.top + 34.0f + panelH,
+    };
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0.05f, 0.05f, 0.06f, 0.90f), &brush)))
+        return;
+    target->FillRectangle(panel, brush.Get());
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f));
+    target->DrawRectangle(panel, brush.Get(), 1.0f);
+
+    const auto drawCell = [&](const std::wstring& text, float x, float y, float w, const D2D1_COLOR_F& color)
+    {
+        brush->SetColor(color);
+        const D2D1_RECT_F rc { x, y, x + w - 6.0f, y + kRowH };
+        target->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), m_matPanelText.Get(), rc, brush.Get(),
+                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    };
+
+    const D2D1_COLOR_F kLabelCol  = D2D1::ColorF(0.60f, 0.63f, 0.67f);
+    const D2D1_COLOR_F kValueCol  = D2D1::ColorF(0.88f, 0.88f, 0.90f);
+    const D2D1_COLOR_F kDiffCol   = D2D1::ColorF(1.00f, 0.62f, 0.25f);
+    const D2D1_COLOR_F kHeaderCol = D2D1::ColorF(0.52f, 0.56f, 0.61f);
+
+    float y = panel.top + kPad;
+    drawCell(L"MATERIAL DIFF (I)", panel.left + kPad, y, kLabelW, kHeaderCol);
+    for (std::size_t c = 0; c < cols.size(); ++c)
+        drawCell(cols[c].header, panel.left + kPad + kLabelW + kColW * c, y, kColW, kHeaderCol);
+    y += kRowH;
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f));
+    target->DrawLine({ panel.left + kPad, y }, { panel.right - kPad, y }, brush.Get(), 1.0f);
+
+    for (const Row& row : rows)
+    {
+        drawCell(row.label, panel.left + kPad, y, kLabelW, kLabelCol);
+        for (std::size_t c = 0; c < row.vals.size(); ++c)
+        {
+            const bool highlight = row.differs && (c == 0 || row.vals[c] != row.vals.front());
+            drawCell(row.vals[c], panel.left + kPad + kLabelW + kColW * c, y, kColW,
+                     highlight ? kDiffCol : kValueCol);
+        }
+        y += kRowH;
+    }
+}
+
 void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
 {
     FD2D::SplitPanel::OnRenderOverlay(target);
     if (target == nullptr)
         return;
+
+    DrawMaterialDiffPanel(target);
 
     // Active-pane accent border (FICture2's focused-browser highlight).
     // Only meaningful while several panes compete for the pane-context
@@ -614,6 +844,11 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case 'C': // focus the active pane's selected sub-mesh (whole scene when none)
         if (NifComparePane* active = ActivePane())
             active->Viewport().FocusOnSelection();
+        return true;
+
+    case 'I': // material diff panel (shows while a sub-mesh is selected)
+        m_showMaterialPanel = !m_showMaterialPanel;
+        Invalidate();
         return true;
 
     // Display toggles go through the control panel so the checkboxes stay

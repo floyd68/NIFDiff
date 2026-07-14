@@ -61,6 +61,9 @@ public:
     int SelectedMeshIndex() const { return m_selectedMesh; }
     const RenderMesh* SelectedMesh() const;
     std::size_t TotalTriangleCount() const; // across every mesh of the loaded scene
+    // The current render list (world transforms + material copies), used by
+    // the material diff panel to match the selected mesh across panes.
+    const std::vector<RenderMesh>& Meshes() const { return m_meshes; }
 
     // Human-readable shader classification for the UI labels, covering the
     // extended-material conventions on top of the vanilla shader types:

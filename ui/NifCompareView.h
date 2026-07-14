@@ -19,6 +19,8 @@
 #include "../core/ResourceResolver.h"
 
 #include <SplitPanel.h>
+#include <dwrite.h>
+#include <wrl/client.h>
 #include <functional>
 #include <memory>
 #include <string>
@@ -110,10 +112,12 @@ public:
     //   Tab / Shift+Tab  cycle the active pane
     //   R              reset this pane's camera
     //   C              focus its selected sub-mesh (whole scene when none)
+    //   I              toggle the material diff panel
     //   Ctrl+O         open a file into this pane
     //   Ctrl+W         close this pane        Del  clear its document
     //   Ctrl+E         open its containing folder in Explorer
     //   F12            save a screenshot of this pane
+    // (I toggles the material diff panel - see DrawMaterialDiffPanel.)
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
     // Explorer drag&drop (Backplate's OLE drop target, enabled by the app
@@ -174,6 +178,16 @@ private:
     bool HandleShortcutKey(const FD2D::InputEvent& event);
     NifComparePane* PaneAt(const POINT& clientPt) const;
 
+    // Material data diff panel (a diff-oriented take on NifSkope's block
+    // inspector): while a sub-mesh is selected in the active pane, an
+    // overlay table shows its BSLightingShaderProperty values - shader
+    // type/flags, specular/emissive/alpha/UV scalars, texture slots -
+    // side by side with the same-named mesh of every other loaded pane
+    // (index fallback, up to 4 columns), highlighting differing values.
+    // Rebuilt from the live materials every frame it is visible, so no
+    // refresh plumbing is needed. Toggled with the I key.
+    void DrawMaterialDiffPanel(ID2D1RenderTarget* target);
+
     // Drag&drop internals (see the OnFileDrag comment above). The overlay
     // pane pointer is validated against m_panes at draw time, so a pane
     // removed mid-drag cannot dangle into OnRenderOverlay.
@@ -217,6 +231,9 @@ private:
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
     std::function<void(POINT, NifComparePane*)> m_onContextMenuRequested;
     std::function<void(NifComparePane&)> m_onScreenshotRequested;
+
+    bool m_showMaterialPanel = true; // 'I' toggles; shown only while something is selected
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_matPanelText; // lazy, device-independent
 
     bool m_syncViews = true;
     bool m_syncLighting = true;
