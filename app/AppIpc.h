@@ -10,25 +10,26 @@
 //   client -> server : u32 protocol version, u32 payload byte count,
 //                      UTF-16 null-terminated path
 //   server -> client : u32 Waiting ack (sent immediately on receipt,
-//                      repeated every 500ms while the request is parked),
+//                      repeated every second while the request is pending),
 //                      then u32 Decision
 //
-// The Waiting ack decouples the client's patience from the server's UI
-// thread: while the server's onRequest callback is still deciding (e.g.
-// the primary instance is scanning game archives at startup), the repeated
-// acks keep the client parked. This is what lets Explorer-driven
-// consecutive opens land in the first instance's panes even while that
-// instance is still booting.
+// The server-side decision is designed to be immediate: the onRequest
+// callback only checks the file name against the primary instance's
+// open-documents snapshot and queues the path for the UI thread (see
+// NIFDiffApp.cpp / ui/IpcOpenRequest.h) - it never waits for the UI to
+// actually load anything. The Waiting acks therefore only bridge server
+// hiccups, not multi-second NIF loads.
 //
 // The client never trusts the server unconditionally - it applies staged
-// hard timeouts so no unpredictable server state can hang it:
+// hard bounds so no unpredictable server state can hang it:
 //   1. No single-instance mutex -> no IPC at all, run standalone
 //      (the caller's check in NIFDiffApp.cpp).
 //   2. Pipe connect + first server message: 500ms each. No Waiting ack in
 //      time means the server is not actually serving - run standalone.
-//   3. After each Waiting ack: 2s of silence allowed. A healthy-but-busy
-//      server refreshes the ack twice per second, so tripping this means
-//      the server froze or died mid-exchange - run standalone.
+//   3. After each Waiting ack: 2s of silence allowed (the server refreshes
+//      the ack every second), AND at most 3 Waiting acks total. Tripping
+//      either bound means the server froze or is wedged mid-decision - the
+//      client stops waiting and handles the file itself, standalone.
 #pragma once
 
 #include <functional>
@@ -45,9 +46,10 @@ namespace AppIpc
     // Starts a lightweight named-pipe server in a background thread.
     // Incoming requests contain a single UTF-16 file path. The callback runs
     // on a per-client worker thread (so one slow request cannot starve the
-    // accept loop when several instances launch back-to-back) and may block
-    // for its whole response budget; the client is parked on the Waiting ack
-    // meanwhile. Returns whether the request was handled.
+    // accept loop when several instances launch back-to-back) and is
+    // expected to decide quickly (queue-or-decline); if it does stall, the
+    // Waiting acks keep the client parked only up to the client's own
+    // 3-ack bound. Returns whether the request was handled.
     void StartServer(const std::function<Decision(const std::wstring&)>& onRequest);
 
     // Tries to send a single file path to an existing server and receive a

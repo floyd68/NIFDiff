@@ -15,6 +15,7 @@
 #include "NifComparePane.h"
 #include "NifCompareControlPanel.h"
 #include "NifCompareSplitCoordinator.h"
+#include "IpcOpenRequest.h"
 #include "../core/ResourceResolver.h"
 
 #include <SplitPanel.h>
@@ -57,26 +58,29 @@ public:
 
     // Loads `path` into the first empty pane, or into a newly added pane if
     // every existing one is occupied (and the pane count allows growing).
-    // Returns false when all kMaxPanes panes are occupied - the caller (the
-    // IPC path, see OnCommandEvent) treats that as "start a new instance
-    // instead". Used by the single-instance IPC handler; safe for any other
-    // caller on the UI thread too.
+    // Returns false when all kMaxPanes panes are occupied or the load
+    // failed. Used by the IPC drain below; safe for any other caller on the
+    // UI thread too.
     bool OpenIntoBestPane(const std::wstring& path);
 
-    // Single-instance IPC gate: the forward-into-a-pane behavior exists for
-    // one workflow - comparing the SAME file name from different folders
-    // side by side (e.g. two mods' versions of door.nif). An incoming path
-    // is accepted only when its file name matches a document already open in
-    // some pane (case-insensitive); anything else is unrelated work and
-    // belongs in its own window, so the request is declined and the sending
-    // process proceeds as a new instance. An instance with nothing loaded
-    // yet accepts any file.
-    bool AcceptsIpcOpen(const std::wstring& path) const;
+    // Single-instance IPC wiring (see ui/IpcOpenRequest.h for the gate
+    // semantics and threading): the IPC worker threads decide + enqueue
+    // against `queue`'s snapshot; this view keeps that snapshot current
+    // (UpdateIpcOpenSnapshot on every document change) and consumes the
+    // accepted paths on the UI thread (DrainIpcOpenQueue). Must be set
+    // before the first document loads.
+    void SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue);
 
-    // Handles CMD_NIFDIFF_IPC_OPEN broadcast from the IPC server thread
-    // (see app/IpcOpenRequest.h), mirroring FICture2's
-    // ImageBrowser::HandleIpcCompareMessage: load via OpenIntoBestPane,
-    // record the outcome on the request, signal its event.
+    // Opens every queued path via OpenIntoBestPane. A path that no longer
+    // fits (panes filled up since it was accepted) or fails to load is
+    // handed to a freshly spawned NIFDiff instance instead - the sending
+    // process was already told OpenedInPane and has exited, so the file
+    // must not be dropped silently. Called from the CMD_NIFDIFF_IPC_OPEN
+    // broadcast and once right after startup.
+    void DrainIpcOpenQueue();
+
+    // Handles the CMD_NIFDIFF_IPC_OPEN "drain now" broadcast posted by the
+    // IPC server thread (see app/NIFDiffApp.cpp's server callback).
     bool OnCommandEvent(const FD2D::CommandEvent& event) override;
 
     // Catches right-clicks no child consumed (viewport right-*drags* pan the
@@ -124,6 +128,10 @@ private:
     // Grays out the "Parallax Height" slider and the three extended-material
     // toggles unless some loaded pane carries material each control affects.
     void RefreshExtendedMaterialControls();
+    // Publishes the loaded documents' file names/count into m_ipcQueue so
+    // the IPC worker threads can gate incoming forwards without touching
+    // the UI thread. Called wherever the document set changes.
+    void UpdateIpcOpenSnapshot();
     void RecalcControlStripExtent();
     void ApplyOrientationPreset(int index);
 
@@ -146,6 +154,7 @@ private:
     std::wstring m_hostName; // current first-child host tree, removed on rebuild (see RebuildHostTree)
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
+    std::shared_ptr<IpcOpenQueue> m_ipcQueue;
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;
 

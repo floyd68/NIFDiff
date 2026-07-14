@@ -32,16 +32,10 @@ namespace
     constexpr wchar_t kSectionGeneral[] = L"General";
     constexpr wchar_t kSingleInstanceMutex[] = L"Local\\NIFDiff_SingleInstance";
 
-    // IPC server response budget: how long a second instance's request may
-    // wait for this instance's window to exist (startup renderer init +
-    // game-archive scan take seconds) plus the UI thread processing the
-    // open. The client is parked on AppIpc's Waiting ack for the duration;
-    // past the budget it is told to proceed as its own instance.
-    constexpr DWORD kIpcResponseBudgetMs = 10000;
-
     // Published through the ipcUiWindow atomic once shutdown begins, so
-    // pending/future IPC requests answer Ignore immediately instead of
-    // making their client sit out the full response budget.
+    // future IPC accepts stop posting drain broadcasts at a dying window
+    // (the accept itself is already declined via IpcOpenQueue's
+    // shuttingDown flag).
     const HWND kIpcUiWindowGone = reinterpret_cast<HWND>(static_cast<INT_PTR>(-1));
 
 #ifndef NIFDIFF_VERSION_WSTR
@@ -392,76 +386,39 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // (FICture2's shape, this file's previous shape) made back-to-back
     // Explorer opens spawn extra windows instead of extra panes.
     //
-    // No window exists yet, so the callback (a per-client AppIpc worker
-    // thread; the client is parked on the Waiting ack for the duration)
-    // first waits for `ipcUiWindow` to be published, then marshals the
-    // request onto the UI thread via WM_FD2D_BROADCAST, answering Ignore
-    // ("proceed as your own instance") if the whole exchange exceeds
-    // kIpcResponseBudgetMs.
+    // The callback (a per-client AppIpc worker thread) decides on the spot
+    // against the shared IpcOpenQueue - same-file-name gate + pane
+    // capacity - queues the accepted path, and answers immediately. The UI
+    // thread drains the queue when the CMD_NIFDIFF_IPC_OPEN broadcast
+    // arrives (or right after startup, for paths accepted before the
+    // window existed). It never waits for the UI to load anything, so
+    // back-to-back opens can't pile clients up behind multi-second loads.
     // ---------------------------------------------------------------------
     auto ipcUiWindow = std::make_shared<std::atomic<HWND>>(nullptr);
+    auto ipcQueue = std::make_shared<IpcOpenQueue>();
     if (!hadExistingInstance)
     {
         StartupTrace::Phase p("IPC server start");
-        AppIpc::StartServer([ipcUiWindow](const std::wstring& path) -> AppIpc::Decision
+        // Simultaneous multi-launch (Explorer multi-select): the losers'
+        // forwards must match against what THIS instance is about to load.
+        ipcQueue->SeedExpected(cmdFiles);
+        AppIpc::StartServer([ipcUiWindow, ipcQueue](const std::wstring& path) -> AppIpc::Decision
         {
-            const ULONGLONG deadline = GetTickCount64() + kIpcResponseBudgetMs;
+            if (!ipcQueue->TryEnqueue(path, NifCompareView::kMaxPanes))
+                return AppIpc::Decision::Ignore;
 
             HWND hwnd = ipcUiWindow->load();
-            while (hwnd == nullptr && GetTickCount64() < deadline)
+            if (hwnd != nullptr && hwnd != kIpcUiWindowGone)
             {
-                Sleep(25);
-                hwnd = ipcUiWindow->load();
-            }
-            if (hwnd == nullptr || hwnd == kIpcUiWindowGone)
-            {
-                NIFLOG_WARN("[IPC] Server: UI window not available within {}ms "
-                    "(still starting or shutting down) - client proceeds alone.", kIpcResponseBudgetMs);
-                return AppIpc::Decision::Ignore;
-            }
-
-            HANDLE doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            if (doneEvent == nullptr)
-                return AppIpc::Decision::Ignore;
-
-            auto* req = new IpcOpenRequest();
-            req->path = path;
-            req->doneEvent = doneEvent;
-            req->opened = false;
-
-            auto* bm = new FD2D::Backplate::BroadcastMessage();
-            bm->message = CMD_NIFDIFF_IPC_OPEN;
-            bm->wParam = 0;
-            bm->lParam = reinterpret_cast<LPARAM>(req);
-
-            if (!PostMessageW(hwnd, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(bm)))
-            {
-                NIFLOG_ERROR("[IPC] Server: PostMessageW failed (err={}) - ignoring.", GetLastError());
-                CloseHandle(doneEvent);
-                delete req;
-                delete bm;
-                return AppIpc::Decision::Ignore;
-            }
-
-            const ULONGLONG now = GetTickCount64();
-            const DWORD waitMs = now < deadline ? static_cast<DWORD>(deadline - now) : 0;
-            if (WaitForSingleObject(doneEvent, waitMs) != WAIT_OBJECT_0)
-            {
-                // Deliberate deviation from FICture2's original, which
-                // deletes req and closes the event here: the posted message
-                // still references them, so a UI thread that processes it
-                // *after* this timeout would touch freed memory / a recycled
-                // handle. Abandon them instead - a one-allocation leak on an
-                // exceptional path.
-                NIFLOG_WARN("[IPC] Server: UI thread did not respond within budget - "
-                    "returning Ignore (request intentionally abandoned, not freed).");
-                return AppIpc::Decision::Ignore;
-            }
-
-            AppIpc::Decision decision = AppIpc::Decision::Ignore;
-            if (req->opened)
-            {
-                decision = AppIpc::Decision::OpenedInPane;
+                // Wake the UI thread to drain; a null hwnd means the app is
+                // still booting and will drain explicitly once the view is
+                // up (see the post-initial-load drain below).
+                auto* bm = new FD2D::Backplate::BroadcastMessage();
+                bm->message = CMD_NIFDIFF_IPC_OPEN;
+                bm->wParam = 0;
+                bm->lParam = 0;
+                if (!PostMessageW(hwnd, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(bm)))
+                    delete bm; // queue entry stays; the startup/next drain picks it up
                 // Bring the compare window forward; the sending process
                 // granted us foreground rights via AllowSetForegroundWindow
                 // before connecting.
@@ -469,10 +426,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                     ShowWindowAsync(hwnd, SW_RESTORE);
                 SetForegroundWindow(hwnd);
             }
-
-            CloseHandle(doneEvent);
-            delete req;
-            return decision;
+            return AppIpc::Decision::OpenedInPane;
         });
     }
 
@@ -567,6 +521,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         }
         compareView->SetResourceResolver(resolver.get());
         compareView->SetTextureRepository(textureRepository.get());
+        compareView->SetIpcOpenQueue(ipcQueue);
         ApplyResourcesToUi(*compareView, *resolver);
 
         std::weak_ptr<NifCompareView> weakView = compareView;
@@ -675,10 +630,11 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             backplate->AddWnd(compareView);
         }
 
-        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow](HWND hwnd)
+        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow, ipcQueue](HWND hwnd)
         {
             // Stop routing IPC opens at a window that is about to die;
-            // pending/future requests answer Ignore right away.
+            // future requests answer Ignore right away.
+            ipcQueue->MarkShuttingDown();
             ipcUiWindow->store(kIpcUiWindowGone);
             SaveWindowPlacement(iniPath, hwnd);
             if (auto view = weakView.lock())
@@ -700,9 +656,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         }
 
         // UI is fully wired (view attached, initial files loaded) - publish
-        // the window so parked IPC requests can be posted at it. Broadcasts
-        // posted from here on are processed once RunMessageLoop starts.
+        // the window so IPC accepts can post their drain broadcast at it,
+        // then drain whatever was accepted while the window did not exist
+        // yet. Order matters: publish FIRST, so an accept racing this point
+        // either lands in the explicit drain below or posts its own
+        // broadcast (processed once RunMessageLoop starts) - never neither.
         ipcUiWindow->store(backplate->Window());
+        ipcQueue->MarkUiReady();
+        compareView->DrainIpcOpenQueue();
 
         const int effectiveShowCmd = hasSavedPlacement ? savedShowCmd : nCmdShow;
         {

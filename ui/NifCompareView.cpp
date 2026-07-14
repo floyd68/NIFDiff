@@ -1,5 +1,5 @@
 #include "NifCompareView.h"
-#include "IpcOpenRequest.h"
+#include "../core/NifLog.h"
 
 #include <Backplate.h>
 #include <Util.h>
@@ -11,6 +11,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 
 namespace nsk
 {
@@ -161,6 +162,7 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     pane->SetOnDocumentChanged([this]()
     {
         RefreshExtendedMaterialControls();
+        UpdateIpcOpenSnapshot();
     });
 }
 
@@ -254,49 +256,71 @@ bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
     return true;
 }
 
-namespace
+void NifCompareView::SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue)
 {
-    std::wstring FileNameLower(const std::wstring& path)
-    {
-        std::wstring name = std::filesystem::path(path).filename().wstring();
-        for (wchar_t& c : name)
-            c = static_cast<wchar_t>(std::towlower(c));
-        return name;
-    }
+    m_ipcQueue = std::move(queue);
+    UpdateIpcOpenSnapshot();
 }
 
-bool NifCompareView::AcceptsIpcOpen(const std::wstring& path) const
+void NifCompareView::UpdateIpcOpenSnapshot()
 {
-    const std::wstring incoming = FileNameLower(path);
-    if (incoming.empty())
-        return false;
+    if (!m_ipcQueue)
+        return;
 
-    bool anyLoaded = false;
+    std::vector<std::wstring> names;
     for (const auto& pane : m_panes)
     {
         const NifDocument* doc = pane ? pane->Document() : nullptr;
         if (doc == nullptr)
             continue;
-        anyLoaded = true;
-        if (FileNameLower(doc->filePath()) == incoming)
-            return true;
+        std::wstring name = IpcOpenQueue::FileNameLower(doc->filePath());
+        if (!name.empty())
+            names.push_back(std::move(name));
     }
-    // Nothing loaded yet: an empty viewer window is a fine home for any
-    // file; once something IS loaded, only same-named files may join.
-    return !anyLoaded;
+
+    std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
+    m_ipcQueue->loadedCount = names.size();
+    m_ipcQueue->openNamesLower = std::move(names);
+}
+
+void NifCompareView::DrainIpcOpenQueue()
+{
+    if (!m_ipcQueue)
+        return;
+
+    for (;;)
+    {
+        std::wstring path;
+        {
+            std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
+            if (m_ipcQueue->pending.empty())
+                break;
+            path = std::move(m_ipcQueue->pending.front());
+            m_ipcQueue->pending.pop_front();
+        }
+
+        if (OpenIntoBestPane(path))
+            continue;
+
+        // The sending process was told OpenedInPane and has exited, so the
+        // file must land somewhere: hand it to a fresh instance. (Rare -
+        // the gate's capacity check keeps this to genuine races or files
+        // that fail to load.)
+        NIFLOG_WARN("IPC drain: queued path no longer fits/loads here - spawning a new instance.");
+        wchar_t exePath[MAX_PATH] {};
+        if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0)
+        {
+            const std::wstring args = L"\"" + path + L"\"";
+            ShellExecuteW(nullptr, L"open", exePath, args.c_str(), nullptr, SW_SHOWNORMAL);
+        }
+    }
 }
 
 bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
 {
     if (event.id == CMD_NIFDIFF_IPC_OPEN)
     {
-        auto* req = reinterpret_cast<IpcOpenRequest*>(event.lParam);
-        if (req != nullptr)
-        {
-            req->opened = AcceptsIpcOpen(req->path) && OpenIntoBestPane(req->path);
-            if (req->doneEvent != nullptr)
-                SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
-        }
+        DrainIpcOpenQueue();
         return true;
     }
     return FD2D::SplitPanel::OnCommandEvent(event);
@@ -367,8 +391,10 @@ void NifCompareView::RebuildHostTree()
     Invalidate();
 
     // The pane set changed: the removed/added panes may change whether any
-    // extended-material document is still open.
+    // extended-material document is still open, and the IPC gate's
+    // loaded-documents snapshot.
     RefreshExtendedMaterialControls();
+    UpdateIpcOpenSnapshot();
 }
 
 void NifCompareView::RecalcControlStripExtent()

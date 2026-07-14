@@ -27,7 +27,15 @@ namespace
     // stage 3 (see AppIpc.h's protocol comment for the full ladder).
     constexpr DWORD kRequestResponseTimeoutMs = 500; // request sent -> first server message
     constexpr DWORD kPostAckTimeoutMs = 2000;        // silence allowed after each Waiting ack
-    constexpr DWORD kKeepAliveIntervalMs = 500;      // server refreshes the ack this often
+    constexpr DWORD kKeepAliveIntervalMs = 1000;     // server refreshes the ack this often
+    // The client's total patience: it processes at most this many Waiting
+    // acks (~kMaxWaitingAcks seconds of parking); one more ack means the
+    // server is alive but not deciding - the client stops waiting and
+    // handles the file itself as its own instance. The server-side decision
+    // is a queue-or-decline check (see NIFDiffApp's callback), so a healthy
+    // server answers after the first ack; this bound only trips when the
+    // primary instance is wedged.
+    constexpr int kMaxWaitingAcks = 3;
 
     bool WriteAll(HANDLE h, const void* data, DWORD bytes)
     {
@@ -129,13 +137,11 @@ namespace
 
         const std::wstring path(buf.data());
 
-        // Park the client before consulting the app: onRequest may block for
-        // its whole response budget (waiting for the UI window to exist and
-        // then for the UI thread to process the open). The client allows
-        // kPostAckTimeoutMs of silence after each ack, so refresh the ack
-        // every kKeepAliveIntervalMs while the decision is pending - a
-        // healthy-but-busy server keeps its client parked, a frozen one
-        // trips the client's stage-3 hard timeout instead of hanging it.
+        // Ack receipt before consulting the app. onRequest is a fast
+        // queue-or-decline check, so the decision normally follows this
+        // first ack within milliseconds; the keep-alive loop below only
+        // matters if the app callback stalls, and even then the client's
+        // own 3-ack bound caps how long it stays parked.
         const std::uint32_t ack = kWaitingAck;
         if (!WriteAll(pipe, &ack, sizeof(ack)))
             return false;
@@ -301,12 +307,23 @@ namespace AppIpc
         std::uint32_t resp = 0;
         ok = ok && OverlappedIo(h, ioEvent, false, &resp, sizeof(resp), kRequestResponseTimeoutMs);
 
-        // Stage 3: parked on Waiting acks. The server refreshes the ack
-        // every kKeepAliveIntervalMs while the request is pending, so more
-        // than kPostAckTimeoutMs of silence means it froze or died - stop
-        // waiting and run standalone.
+        // Stage 3: parked on Waiting acks, doubly bounded. Silence past
+        // kPostAckTimeoutMs after an ack means the server froze or died;
+        // more than kMaxWaitingAcks acks means it is alive but not deciding
+        // (a healthy server's queue-or-decline check answers right after
+        // the first ack). Either way: stop waiting, run standalone.
+        int acksSeen = 0;
         while (ok && resp == kWaitingAck)
+        {
+            if (++acksSeen > kMaxWaitingAcks)
+            {
+                NIFLOG_WARN("[IPC] Client: server still undecided after {} Waiting acks - proceeding alone.",
+                    kMaxWaitingAcks);
+                ok = false;
+                break;
+            }
             ok = OverlappedIo(h, ioEvent, false, &resp, sizeof(resp), kPostAckTimeoutMs);
+        }
 
         CloseHandle(ioEvent);
         CloseHandle(h);
