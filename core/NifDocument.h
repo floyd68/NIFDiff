@@ -234,6 +234,11 @@ struct NifSceneNode
     Transform localTransform;
 
     bool isShape = false;
+    // NiAVObject Flags bit 0 ("Hidden"/App_Culled): the engine never draws
+    // these - furniture animation-marker rigs, editor markers, bounds
+    // placeholders. Inherited down the subtree at scene-build time (a hidden
+    // NiNode hides everything under it), matching NifSkope's Node::isHidden.
+    bool isHidden = false;
     std::int32_t geometryBlockIndex = kNoRef;  // resolved NifGeometry owner, or kNoRef if inline (BSTriShape)
     NifGeometry inlineGeometry;                // populated directly for BSTriShape/BSSubIndexTriShape
     std::int32_t shaderPropertyIndex = kNoRef;
@@ -383,6 +388,7 @@ private:
     {
         std::string name;
         Transform transform;
+        std::uint32_t flags = 0; // NiAVObject Flags (bit 0 = Hidden)
         std::int32_t collisionObjectRef = kNoRef;
     };
     // outShaderType, when non-null and isBSLightingShaderProperty is set,

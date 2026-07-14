@@ -403,7 +403,7 @@ NifDocument::AvObjectHeader NifDocument::readAvObjectHeader(NifIStream& in, bool
 
     // nif.xml lines 3444-3499. BSVER (83/100/130) is always > 26, so the
     // 32-bit Flags variant (line 3446) applies, never the legacy ushort one.
-    in.u32();                                        // Flags, line 3446
+    hdr.flags = in.u32();                            // Flags, line 3446 (bit 0 = Hidden)
     Vector3 t = in.vector3();                        // Translation, line 3488
     Matrix rot = in.matrix33();                      // Rotation, line 3489
     float scale = in.f32();                           // Scale, line 3490
@@ -434,6 +434,7 @@ void NifDocument::parseNiNode(NifIStream& in, int blockIndex, bool /*isFadeNodeL
     node.name = hdr.name;
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
+    node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = false;
 
     std::uint32_t numChildren = in.u32();             // Num Children, nif.xml line 4390
@@ -461,6 +462,7 @@ void NifDocument::parseNiTriShapeOrStrips(NifIStream& in, int blockIndex, bool /
     node.name = hdr.name;
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
+    node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
 
     // NiGeometry fields (nif.xml lines 3866-3873): Data / Skin Instance /
@@ -621,6 +623,7 @@ void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex)
     node.name = hdr.name;
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
+    node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
     node.geometryBlockIndex = kNoRef; // inline geometry, not a separate *Data block
 

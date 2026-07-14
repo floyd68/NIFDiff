@@ -196,13 +196,38 @@ std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc)
     const auto& materials = doc.materials();
     const Matrix4 axisCorrection = axisCorrectionZupToYup();
 
+    // NiAVObject Hidden (Flags bit 0) culls the whole subtree in-engine -
+    // furniture NIFs ship entire animation-marker rigs (NPC body meshes,
+    // weapon/bone markers, bounds placeholders) flagged this way. Walk the
+    // parent chain like NifSkope's Node::isHidden; the guard mirrors
+    // localTransExcludingRoot's cycle protection.
+    const auto isHiddenInTree = [&nodes](int index)
+    {
+        int guard = 0;
+        while (index != kNoRef && guard++ < 256)
+        {
+            if (nodes[static_cast<std::size_t>(index)].isHidden)
+                return true;
+            index = nodes[static_cast<std::size_t>(index)].parentIndex;
+        }
+        return false;
+    };
+
     std::size_t shapeNodeCount = 0;
+    std::size_t hiddenShapeCount = 0;
     for (std::size_t i = 0; i < nodes.size(); ++i)
     {
         const NifSceneNode& node = nodes[i];
         if (!node.isShape)
             continue;
         ++shapeNodeCount;
+        if (isHiddenInTree(static_cast<int>(i)))
+        {
+            ++hiddenShapeCount;
+            NIFLOG_TRACE("SceneBuilder: shape '{}' (block {}) skipped - hidden (NiAVObject flag)",
+                node.name, node.blockIndex);
+            continue;
+        }
 
         const NifGeometry* geo = nullptr;
         if (node.geometryBlockIndex != kNoRef)
@@ -261,8 +286,8 @@ std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc)
         out.push_back(std::move(mesh));
     }
 
-    NIFLOG_INFO("SceneBuilder::build: {} shape node(s) considered, {} render mesh(es) produced",
-        shapeNodeCount, out.size());
+    NIFLOG_INFO("SceneBuilder::build: {} shape node(s) considered ({} hidden), {} render mesh(es) produced",
+        shapeNodeCount, hiddenShapeCount, out.size());
 
     return out;
 }
