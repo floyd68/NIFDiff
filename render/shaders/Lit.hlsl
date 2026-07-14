@@ -102,6 +102,7 @@ Texture2D    gEnvMaskTex   : register(t5);
 Texture2D    gLightMaskTex : register(t6);
 Texture2D    gBacklightTex : register(t7); // backlight map OR MSN specular map
 Texture2D    gAuxTex       : register(t8); // face tint mask / multilayer inner map / effect greyscale palette
+TextureCube  gIblCube      : register(t9); // procedural sky/ground cube (D3D11Renderer::BuildIblCubemap): PBR ambient specular
 SamplerState gSampler      : register(s0);
 
 struct VSInput
@@ -478,13 +479,18 @@ float4 PSMain(PSInput input) : SV_TARGET
         // stops darker than the legacy path on the same content. Compensate
         // with (1) a fixed ambient boost, (2) a sky/ground hemisphere tint
         // (world +Y up after the axis correction), and (3) Karis' env-BRDF
-        // approximation as ambient specular so metals and glossy areas
-        // aren't dead black without a cubemap.
+        // approximation as ambient specular, fed by the procedural sky/
+        // ground cube on t9: roughness walks its pre-flattened mip chain
+        // like a prefiltered radiance map, and Fenv's metal F0 = albedo
+        // tints the reflection the way conductors color theirs. The cube's
+        // sphere mean luminance is 1.0 (see BuildIblCubemap), so the
+        // dielectric brightness calibration below it is unchanged.
         const float kPBRAmbientBoost = 1.6f;
         float3 ambientP = gAmbient.xxx * kPBRAmbientBoost * ao;
         float hemi = lerp(0.75f, 1.25f, saturate(nP.y * 0.5f + 0.5f));
         float3 Fenv = F0 + (max((1.0f - roughness).xxx, F0) - F0) * pow(1.0f - NdotV, 5.0f);
-        colorP += diffuseColor * ambientP * hemi + Fenv * ambientP;
+        float3 iblSpec = gIblCube.SampleLevel(gSampler, reflect(-viewDir, nP), roughness * 6.0f).rgb;
+        colorP += diffuseColor * ambientP * hemi + Fenv * iblSpec * ambientP;
 
         if (gFlags & 8)
         {

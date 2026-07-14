@@ -11,6 +11,9 @@
 #include <HighlightPS.h>
 
 #include <d3d11sdklayers.h>
+#include <DirectXPackedVector.h>
+#include <algorithm>
+#include <cmath>
 #include <tuple>
 #include <vector>
 #include <cstring>
@@ -157,6 +160,7 @@ bool D3D11Renderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* contex
         makeSolid(0xFFFF00FFu, m_missingTexSRV);     // magenta (1,0,1): a material's diffuse path that fails to RESOLVE renders loudly instead of blending in as white
     }
 
+    BuildIblCubemap();
     BuildGridAndAxesGeometry();
 
 #if defined(_DEBUG)
@@ -174,6 +178,135 @@ bool D3D11Renderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* contex
 #endif
 
     return true;
+}
+
+void D3D11Renderer::BuildIblCubemap()
+{
+    // Procedural sky/ground environment cube for the True PBR branch's
+    // ambient specular (shaders/Lit.hlsl t9). The viewer has no scene IBL;
+    // a vertical gradient - dark warm ground, light horizon, cool bright
+    // sky (world +Y up after SceneBuilder's axis correction) - gives
+    // metals directional, colored reflections instead of the flat grey a
+    // constant Fenv term produced. Each mip is generated with a wider
+    // horizon band and pulled toward the sphere mean, so roughness-indexed
+    // SampleLevel behaves like a prefiltered radiance chain. The whole
+    // chain is normalized to mean luminance 1.0 over the sphere: the
+    // shader multiplies it into the already-calibrated ambient term, so
+    // dielectric brightness is unchanged by construction.
+    constexpr UINT kSize = 64;
+    constexpr UINT kMips = 7; // 64 -> 1
+
+    // dir.y for a cube face texel; only the vertical component matters for
+    // the gradient. Face order/orientation is the D3D11 TextureCube layout.
+    auto faceDirY = [](UINT face, float u, float v) -> float
+    {
+        float d[3] {};
+        switch (face)
+        {
+        case 0: d[0] =  1; d[1] = -v; d[2] = -u; break; // +X
+        case 1: d[0] = -1; d[1] = -v; d[2] =  u; break; // -X
+        case 2: d[0] =  u; d[1] =  1; d[2] =  v; break; // +Y
+        case 3: d[0] =  u; d[1] = -1; d[2] = -v; break; // -Y
+        case 4: d[0] =  u; d[1] = -v; d[2] =  1; break; // +Z
+        default: d[0] = -u; d[1] = -v; d[2] = -1; break; // -Z
+        }
+        return d[1] / std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    };
+
+    // Gradient at vertical component y (-1..1); soften (0..1, from the mip
+    // level) widens the ground/sky transition band.
+    auto envColor = [](float y, float soften, float rgb[3])
+    {
+        static constexpr float kGround[3]  = { 0.40f, 0.35f, 0.30f };
+        static constexpr float kHorizon[3] = { 0.95f, 0.91f, 0.87f };
+        static constexpr float kZenith[3]  = { 0.85f, 1.00f, 1.25f };
+        auto smooth = [](float a, float b, float x)
+        {
+            x = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+            return x * x * (3.0f - 2.0f * x);
+        };
+        const float band = 0.12f + 0.9f * soften;
+        const float up = smooth(-band, band, y);      // ground -> sky
+        const float high = smooth(0.0f, 1.0f, y);     // horizon -> zenith
+        for (int c = 0; c < 3; ++c)
+        {
+            const float sky = kHorizon[c] + (kZenith[c] - kHorizon[c]) * high;
+            rgb[c] = kGround[c] + (sky - kGround[c]) * up;
+        }
+    };
+
+    // Pass 1: float RGB per texel of every (face, mip), plus the
+    // solid-angle-weighted mean luminance over mip 0.
+    std::vector<std::vector<float>> texels(6u * kMips); // rgb triplets
+    double lumSum = 0.0, weightSum = 0.0;
+    for (UINT face = 0; face < 6; ++face)
+    {
+        for (UINT mip = 0; mip < kMips; ++mip)
+        {
+            const UINT s = kSize >> mip;
+            const float soften = static_cast<float>(mip) / (kMips - 1);
+            auto& data = texels[face * kMips + mip];
+            data.resize(static_cast<std::size_t>(s) * s * 3);
+            for (UINT yPx = 0; yPx < s; ++yPx)
+            {
+                for (UINT xPx = 0; xPx < s; ++xPx)
+                {
+                    const float u = 2.0f * (xPx + 0.5f) / s - 1.0f;
+                    const float v = 2.0f * (yPx + 0.5f) / s - 1.0f;
+                    float* rgb = &data[(static_cast<std::size_t>(yPx) * s + xPx) * 3];
+                    envColor(faceDirY(face, u, v), soften, rgb);
+                    if (mip == 0)
+                    {
+                        // Texel solid angle on the unit cube: (1+u^2+v^2)^-3/2.
+                        const double w = std::pow(1.0 + u * u + v * v, -1.5);
+                        lumSum += w * (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]);
+                        weightSum += w;
+                    }
+                }
+            }
+        }
+    }
+    const float norm = (lumSum > 0.0) ? static_cast<float>(weightSum / lumSum) : 1.0f;
+
+    // Pass 2: normalize and pack as half4 in D3D subresource order
+    // (face-major: subresource = face * kMips + mip).
+    using DirectX::PackedVector::XMConvertFloatToHalf;
+    const std::uint16_t kHalfOne = XMConvertFloatToHalf(1.0f);
+    std::vector<std::vector<std::uint16_t>> packed(6u * kMips);
+    std::vector<D3D11_SUBRESOURCE_DATA> init(6u * kMips);
+    for (UINT face = 0; face < 6; ++face)
+    {
+        for (UINT mip = 0; mip < kMips; ++mip)
+        {
+            const UINT s = kSize >> mip;
+            const auto& src = texels[face * kMips + mip];
+            auto& dst = packed[face * kMips + mip];
+            dst.resize(static_cast<std::size_t>(s) * s * 4);
+            for (std::size_t i = 0; i < static_cast<std::size_t>(s) * s; ++i)
+            {
+                dst[i * 4 + 0] = XMConvertFloatToHalf(src[i * 3 + 0] * norm);
+                dst[i * 4 + 1] = XMConvertFloatToHalf(src[i * 3 + 1] * norm);
+                dst[i * 4 + 2] = XMConvertFloatToHalf(src[i * 3 + 2] * norm);
+                dst[i * 4 + 3] = kHalfOne;
+            }
+            init[face * kMips + mip] = {
+                .pSysMem = dst.data(),
+                .SysMemPitch = s * 4 * static_cast<UINT>(sizeof(std::uint16_t)),
+            };
+        }
+    }
+
+    const D3D11_TEXTURE2D_DESC td {
+        .Width = kSize, .Height = kSize, .MipLevels = kMips, .ArraySize = 6,
+        .Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+        .SampleDesc = { .Count = 1 },
+        .Usage = D3D11_USAGE_IMMUTABLE,
+        .BindFlags = D3D11_BIND_SHADER_RESOURCE,
+        .MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE,
+    };
+    ComPtr<ID3D11Texture2D> tex;
+    if (SUCCEEDED(m_device->CreateTexture2D(&td, init.data(), &tex)))
+        m_device->CreateShaderResourceView(tex.Get(), nullptr, &m_iblCubeSRV);
 }
 
 bool D3D11Renderer::CreateShaders(std::string* error)
@@ -596,6 +729,9 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
         m_context->VSSetShader(m_litVS.Get(), nullptr, 0);
         m_context->PSSetShader(m_litPS.Get(), nullptr, 0);
         m_context->PSSetSamplers(0, 1, m_sampler.GetAddressOf());
+        // Scene-independent IBL stand-in for the PBR ambient specular
+        // (t9, see BuildIblCubemap) - bound once, not per material.
+        m_context->PSSetShaderResources(9, 1, m_iblCubeSRV.GetAddressOf());
 
         CBPerFrameLit cbFrame {};
         std::memcpy(cbFrame.viewProj, viewProj.data(), sizeof(cbFrame.viewProj));
@@ -911,8 +1047,8 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
     // must not stay bound when Backplate hands the context to D2D.
     ID3D11RenderTargetView* nullRTV[] = { nullptr };
     m_context->OMSetRenderTargets(1, nullRTV, nullptr);
-    ID3D11ShaderResourceView* nullSRVs[9] = {};
-    m_context->PSSetShaderResources(0, 9, nullSRVs);
+    ID3D11ShaderResourceView* nullSRVs[10] = {};
+    m_context->PSSetShaderResources(0, 10, nullSRVs);
 }
 
 } // namespace nsk

@@ -87,6 +87,7 @@ private:
     const GpuMesh* GetOrCreateGpuMesh(const NifGeometry* geometry);
     void DrawImmediateLines(const std::vector<float>& interleavedPosColor, const Matrix4& world, const Matrix4& viewProj, D3D11_PRIMITIVE_TOPOLOGY topology);
     void BuildGridAndAxesGeometry();
+    void BuildIblCubemap();
 
     Microsoft::WRL::ComPtr<ID3D11Device> m_device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
@@ -136,6 +137,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_blackTexSRV;     // 1x1 black fallback (glow / backlight)
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_flatNormalSRV;   // 1x1 flat normal + full spec mask
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_missingTexSRV;   // 1x1 magenta: named-but-unresolved diffuse marker
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_iblCubeSRV;      // procedural sky/ground cube (t9): PBR ambient specular stand-in
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_gridAxesVB;
     UINT m_gridVertexCount = 0;
