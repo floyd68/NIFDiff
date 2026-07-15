@@ -160,6 +160,7 @@ void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
         if (m_currentFile != nifPath)
         {
             m_currentFile = nifPath;
+            CenterCurrentFile(); // keep the selection centered in the strip
             Invalidate();
         }
         return;
@@ -244,6 +245,11 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 
     // Queue the new folder's files for the background worker.
     EnqueuePending();
+
+    // Center the highlighted file (card sizes are provisional until thumbnails
+    // render, but a re-list is followed by the pane's selection so this lands
+    // close; a later same-folder pick re-centers precisely).
+    CenterCurrentFile();
 
     // Presence (and thus our measured extent) may have changed, so relayout.
     if (FD2D::Backplate* bp = BackplateRef())
@@ -550,6 +556,11 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
             RenderParsedThumb(m_entries[pt.index], pt);
             ++done;
         }
+        // Rendering resized some cards (aspect-driven widths), which shifts the
+        // highlighted card - re-center it while auto-centering is in effect, so
+        // the selection stays put as the strip settles.
+        if (done > 0 && m_autoCenter)
+            CenterCurrentFile();
     }
     if (!m_ready.empty())
         Invalidate(); // keep draining next frame
@@ -616,6 +627,47 @@ void ThumbnailStrip::ClampScroll()
     const float viewMain = m_horizontal ? (r.right - r.left) : (r.bottom - r.top);
     const float maxScroll = (std::max)(0.0f, ContentExtent() - viewMain);
     m_scroll = std::clamp(m_scroll, 0.0f, maxScroll);
+}
+
+void ThumbnailStrip::CenterCurrentFile()
+{
+    if (m_currentFile.empty() || m_entries.empty())
+        return;
+    // Locate the highlighted file's card.
+    int idx = -1;
+    for (std::size_t i = 0; i < m_entries.size(); ++i)
+        if (m_entries[i].kind == EntryKind::File && m_entries[i].path == m_currentFile)
+        {
+            idx = static_cast<int>(i);
+            break;
+        }
+    if (idx < 0)
+        return;
+    m_autoCenter = true; // intent to keep centered; retried in OnRenderD3D as the layout settles
+
+    const D2D1_RECT_F r = LayoutRect();
+    const float viewMain = m_horizontal ? (r.right - r.left) : (r.bottom - r.top);
+    if (viewMain <= 1.0f)
+        return; // layout not established yet - OnRenderD3D re-centers once it is
+
+    const float content = ContentExtent();
+    const float maxScroll = (std::max)(0.0f, content - viewMain);
+    const float cardOff = CardOffset(static_cast<std::size_t>(idx)); // content-space start
+    const float cardExt = CardExtent(static_cast<std::size_t>(idx));
+    const float edgeZone = 0.5f * viewMain;
+
+    // Center the card, but snap to the ends for items within half a viewport of
+    // either edge (matches FICture2's EnsureCentered - no dead space at the ends).
+    float target;
+    if (cardOff <= edgeZone)
+        target = 0.0f;
+    else if (cardOff + cardExt >= content - edgeZone)
+        target = maxScroll;
+    else
+        target = (cardOff + cardExt * 0.5f) - viewMain * 0.5f;
+
+    m_scroll = std::clamp(target, 0.0f, maxScroll);
+    Invalidate();
 }
 
 void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const
@@ -844,8 +896,10 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
         if (event.hasPoint && inStrip(event.point))
         {
             // Wheel scrolls the strip's main axis (down/away = later items).
-            // Scroll ~half a typical card per wheel notch.
+            // Scroll ~half a typical card per wheel notch. Manual scroll takes
+            // over from auto-centering.
             m_scroll -= static_cast<float>(event.wheelDelta) / 120.0f * (ThumbSide() + kPad * 2.0f) * 0.5f;
+            m_autoCenter = false;
             ClampScroll();
             Invalidate();
             return true;

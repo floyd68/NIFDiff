@@ -209,6 +209,11 @@ private:
     float LeadGutter() const;
     float ContentExtent() const; // total size along the scroll axis
     void ClampScroll();
+    // Scroll so the highlighted current-file card sits in the middle of the
+    // strip (FICture2's EnsureCentered): items within half a viewport of either
+    // end snap flush to that end instead, so the first/last cards don't leave a
+    // gap. No-op until the strip has a valid layout and the file is listed.
+    void CenterCurrentFile();
 
     RenderDevice* m_renderDevice = nullptr;
     ResourceResolver* m_resolver = nullptr;
@@ -228,6 +233,7 @@ private:
     float m_fixedExtent = kSizeMedium; // strip thickness (see SetFixedExtent)
     bool m_horizontal = false;
     float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)
+    bool m_autoCenter = false;      // keep the selection centered as cards settle, until the user scrolls
     int m_hoverCard = -1;
 
     // Drag-to-resize state (grip on the strip's inner edge).
