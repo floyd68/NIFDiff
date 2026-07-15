@@ -43,6 +43,16 @@ public:
     void SetDocument(const NifDocument* doc);
     const NifDocument* Document() const { return m_doc; }
 
+    // Async pane-load hand-off: install a scene whose NifDocument parse and
+    // SceneBuilder::build already ran on the load pool, so the UI thread only
+    // does the post-build setup (texture prefetch + camera fit), never the
+    // parse/build. `doc` must outlive this viewport (the pane holds it).
+    void SetPrebuiltScene(const NifDocument* doc, std::vector<RenderMesh> meshes);
+
+    // Whether hidden (NiAVObject-marked) subtrees are included in the built
+    // scene - the async load worker needs it to build the same mesh set.
+    bool ShowHiddenNodes() const { return m_showHiddenNodes; }
+
     // Shared Game Data / override / BSA resolver. Must outlive this viewport.
     void SetResourceResolver(ResourceResolver* resolver);
 
@@ -165,6 +175,9 @@ public:
 
 private:
     void RebuildScene();
+    // Post-build setup shared by RebuildScene and SetPrebuiltScene (async load):
+    // async texture prefetch + camera framing from the current m_meshes.
+    void FinishSceneLoad();
     void EnsureD2DTarget();
     void UpdateFrontalLight();
     int PickMeshAt(POINT pt) const; // -1 when no mesh under pt

@@ -132,6 +132,30 @@ void NifViewport::RebuildScene()
         m_meshes = SceneBuilder::build(*m_doc, m_showHiddenNodes);
     }
 
+    FinishSceneLoad();
+}
+
+void NifViewport::SetPrebuiltScene(const NifDocument* doc, std::vector<RenderMesh> meshes)
+{
+    // The parse + SceneBuilder::build already ran on the load pool; here we
+    // only swap in the result and do the UI-thread post-build setup.
+    SetSelectedMesh(-1); // a new document invalidates any picked mesh
+    m_doc = doc;
+    if (doc && !doc->filePath().empty())
+    {
+        std::filesystem::path p(doc->filePath());
+        m_nifDirectory = p.parent_path().wstring();
+        if (m_textures)
+            m_textures->SetNifDirectory(m_nifDirectory);
+    }
+    m_meshCache.Clear(); // old geometries about to be dropped
+    m_meshes = std::move(meshes);
+    FinishSceneLoad();
+    Invalidate();
+}
+
+void NifViewport::FinishSceneLoad()
+{
     // Front-load every texture the scene references through the pool's async
     // prefetch: decode + upload (~8ms each, measured 414ms for a 26-shape PBR
     // exterior) happen on the shared pool instead of blocking this UI-thread

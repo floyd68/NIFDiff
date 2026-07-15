@@ -519,10 +519,7 @@ namespace
             const std::wstring key = L"File" + std::to_wstring(i);
             std::wstring path;
             if (i < view.PaneCount())
-            {
-                if (const NifDocument* doc = view.Pane(i).Document())
-                    path = doc->filePath();
-            }
+                path = view.Pane(i).CurrentPath(); // pending path too, if still loading
             AppSettings::SetString(iniPath, kSectionSession, key, path);
         }
 

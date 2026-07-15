@@ -387,7 +387,9 @@ bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
     NifComparePane* target = nullptr;
     for (auto& pane : m_panes)
     {
-        if (pane && pane->Document() == nullptr)
+        // A still-loading pane reads as occupied (CurrentPath() is its pending
+        // path), so a burst of opens doesn't stack onto one not-yet-filled pane.
+        if (pane && pane->CurrentPath().empty())
         {
             target = pane.get();
             break;

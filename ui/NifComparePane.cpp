@@ -1,6 +1,7 @@
 #include "NifComparePane.h"
 
 #include "../core/ResourceManager.h" // GetOrParseNif (shared NifCache)
+#include "../core/SceneBuilder.h"    // build the scene on the load pool
 #include "../core/StartupTrace.h"
 
 #ifndef NOMINMAX
@@ -105,8 +106,16 @@ NifComparePane::NifComparePane(const std::wstring& name)
 
 void NifComparePane::UpdatePathLabel()
 {
-    const std::wstring path = m_doc ? m_doc->filePath() : std::wstring();
-    std::wstring text = m_doc ? path : L"(no file)";
+    // While loading, show the pending path with a marker so the pane reads as
+    // "this file, coming" rather than empty; a failed load says so.
+    const std::wstring path = CurrentPath();
+    std::wstring text;
+    if (m_state == LoadState::Loading)
+        text = L"Loading  " + path;
+    else if (m_state == LoadState::Failed)
+        text = L"Failed to load  " + path;
+    else
+        text = m_doc ? path : L"(no file)";
     if (!m_selectedName.empty())
     {
         text += L"    ▸ " + m_selectedName;
@@ -142,47 +151,91 @@ void NifComparePane::UpdateStatsLabel()
 
 bool NifComparePane::Load(const std::wstring& path, std::string* error)
 {
-    StartupTrace::Phase total("Pane Load total");
-    std::shared_ptr<const NifDocument> doc;
+    if (path.empty())
+        return false;
+
+    // No pool wired (tests / headless): synchronous parse+build so callers that
+    // rely on the immediate result still work.
+    if (!m_resourceManager)
     {
-        StartupTrace::Phase p("  NifDocument::loadFromFile");
-        // Through the shared NifCache: if this file is already parsed (another
-        // pane, or its own thumbnail) we reuse the doc instead of re-parsing.
-        // Falls back to a direct parse if no manager is wired (e.g. tests).
-        if (m_resourceManager)
-        {
-            // UI thread: not IoGate-throttled, so an open never waits behind
-            // background thumbnail reads (it still shares/populates the cache).
-            doc = m_resourceManager->GetOrParseNif(
-                path, error, ResourceManager::Priority::ActivePane, /*throttle=*/false);
-        }
-        else
-        {
-            auto fresh = std::make_shared<NifDocument>();
-            if (fresh->loadFromFile(path, error) && fresh->isValid())
-                doc = std::move(fresh);
-        }
-        if (!doc)
+        auto fresh = std::make_shared<NifDocument>();
+        if (!fresh->loadFromFile(path, error) || !fresh->isValid())
             return false;
+        AcceptLoaded(path, fresh, SceneBuilder::build(*fresh, m_viewport->ShowHiddenNodes()));
+        return true;
     }
-    m_doc = std::move(doc);
-    {
-        StartupTrace::Phase p("  Viewport SetDocument (scene build)");
-        m_viewport->SetDocument(m_doc.get());
-    }
+
+    // Async: enter Loading immediately (the viewport shows its placeholder grid
+    // and the path label reads "Loading"), then parse+build on the shared pool.
+    // Bumping our generation drops any previous in-flight load (retarget).
+    m_loadGen = m_resourceManager->BumpGeneration(this);
+    m_pendingPath = path;
+    m_state = LoadState::Loading;
+    m_viewport->SetDocument(nullptr);
     UpdatePathLabel();
     UpdateStatsLabel();
-    // This pane's strip lists the just-loaded file's folder, highlighting it.
-    m_thumbStrip->ShowForFile(path);
+    m_thumbStrip->ShowForFile(path); // the strip can list the folder right away
+
+    ResourceManager* const mgr = m_resourceManager;
+    NifComparePane* const self = this;
+    const std::uint64_t gen = m_loadGen;
+    const bool includeHidden = m_viewport->ShowHiddenNodes();
+    mgr->Submit(ResourceManager::Priority::ActivePane, { self, gen },
+        [mgr, self, gen, path, includeHidden]()
+        {
+            // Pool thread: parse (shared cache, IoGate-gated) + build, both free
+            // of shared state. `self` is only forwarded to the UI completion,
+            // never dereferenced here.
+            std::shared_ptr<const NifDocument> doc = mgr->GetOrParseNif(
+                path, nullptr, ResourceManager::Priority::ActivePane, /*throttle=*/true);
+            std::vector<RenderMesh> meshes;
+            if (doc)
+                meshes = SceneBuilder::build(*doc, includeHidden);
+            mgr->PostCompletion({ self, gen },
+                [self, path, doc, meshes = std::move(meshes)]() mutable
+                { self->AcceptLoaded(path, std::move(doc), std::move(meshes)); });
+        });
+    return true;
+}
+
+void NifComparePane::AcceptLoaded(const std::wstring& path,
+                                  std::shared_ptr<const NifDocument> doc,
+                                  std::vector<RenderMesh> meshes)
+{
+    if (!doc)
+    {
+        // Parse or build failed: leave the placeholder, mark the pane Failed.
+        m_state = LoadState::Failed;
+        m_pendingPath = path;
+        m_doc.reset();
+        m_viewport->SetDocument(nullptr);
+        UpdatePathLabel();
+        UpdateStatsLabel();
+        if (m_onDocumentChanged)
+            m_onDocumentChanged();
+        return;
+    }
+    m_doc = std::move(doc);
+    m_state = LoadState::Ready;
+    m_pendingPath.clear();
+    // Hand the worker-built scene straight to the viewport (no re-parse/build).
+    m_viewport->SetPrebuiltScene(m_doc.get(), std::move(meshes));
+    UpdatePathLabel();
+    UpdateStatsLabel();
+    m_thumbStrip->ShowForFile(path); // list the loaded file's folder, highlighted
     if (m_onDocumentChanged)
         m_onDocumentChanged();
     if (m_onFileOpened)
         m_onFileOpened(path);
-    return true;
 }
 
 void NifComparePane::Clear()
 {
+    // Drop any in-flight load so its late completion doesn't repopulate us.
+    if (m_resourceManager)
+        m_loadGen = m_resourceManager->BumpGeneration(this);
+    m_state = LoadState::Empty;
+    m_pendingPath.clear();
     m_doc.reset();
     m_viewport->SetDocument(nullptr);
     UpdatePathLabel();
@@ -190,6 +243,14 @@ void NifComparePane::Clear()
     m_thumbStrip->ShowForFile(std::wstring()); // nothing loaded -> empty strip
     if (m_onDocumentChanged)
         m_onDocumentChanged();
+}
+
+NifComparePane::~NifComparePane()
+{
+    // Cancel any in-flight load so its completion (which captures `this`) is
+    // dropped by the manager instead of dereferencing a destroyed pane.
+    if (m_resourceManager)
+        m_resourceManager->Cancel(this);
 }
 
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)

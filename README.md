@@ -146,6 +146,13 @@ own copies.
   shared load pool (IoGate-bounded so it doesn't thrash the disk) and each
   texture pops into the model as it finishes, so opening a heavy PBR
   exterior leaves the UI responsive instead of freezing on the decode.
+- Opening a file is asynchronous end to end: the NIF parse and scene build
+  run on the load pool too, so a pane switches to a placeholder immediately
+  and the model appears when it's ready, and the UI thread only does the
+  final hand-off. A burst of opens (session restore, multi-file drag&drop,
+  single-instance forwarding) fills every pane at once and each model
+  streams in independently; re-pointing or closing a pane mid-load drops the
+  superseded load instead of letting a stale result land in the wrong pane.
 - Session persistence (open files, splitter ratios, recent-files list,
   Game Data path, override folders),
   `.nif` file association, and single-instance forwarding: opening a

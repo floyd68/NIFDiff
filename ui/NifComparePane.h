@@ -15,6 +15,7 @@
 
 #include <DockPanel.h>
 #include <Text.h>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -26,13 +27,32 @@ class NifComparePane : public FD2D::DockPanel
 {
 public:
     explicit NifComparePane(const std::wstring& name);
+    ~NifComparePane();
+
+    // Load lifecycle: an async Load moves Empty/Ready -> Loading immediately
+    // (viewport shows its placeholder grid) and settles on Ready or Failed when
+    // the pool finishes the parse+build.
+    enum class LoadState { Empty, Loading, Ready, Failed };
 
     NifViewport& Viewport() { return *m_viewport; }
     const NifDocument* Document() const { return m_doc.get(); }
-    // Full path of the .nif currently loaded here, empty when the pane is
-    // cleared - the thumbnail strip follows this to list the pane's folder.
-    std::wstring CurrentPath() const { return m_doc ? m_doc->filePath() : std::wstring(); }
+    LoadState State() const { return m_state; }
+    bool IsLoading() const { return m_state == LoadState::Loading; }
+    // Full path of the .nif loaded (or loading) here, empty only when the pane
+    // is truly free - the thumbnail strip follows this, and pane placement
+    // treats a still-loading pane as occupied (its pending path is non-empty).
+    std::wstring CurrentPath() const
+    {
+        if (m_state == LoadState::Loading || m_state == LoadState::Failed)
+            return m_pendingPath;
+        return m_doc ? m_doc->filePath() : std::wstring();
+    }
 
+    // Accepts the load (sets the pending path + Loading state, queues the
+    // parse+build on the shared pool) and returns true; the model fills in when
+    // the pool completes. Returns false only when the path can't be accepted
+    // (empty). Without a resource manager wired it loads synchronously and
+    // returns the real parse result (tests / headless).
     bool Load(const std::wstring& path, std::string* error = nullptr);
     void Clear();
 
@@ -84,6 +104,10 @@ public:
 private:
     void UpdatePathLabel();
     void UpdateStatsLabel();
+    // UI-thread completion of an async Load (already generation-checked by the
+    // manager). `doc` null => the parse/build failed.
+    void AcceptLoaded(const std::wstring& path, std::shared_ptr<const NifDocument> doc,
+                      std::vector<RenderMesh> meshes);
 
     std::shared_ptr<NifViewport> m_viewport;
     std::shared_ptr<ThumbnailStrip> m_thumbStrip; // bottom strip: this pane's folder browser
@@ -99,6 +123,14 @@ private:
     // its own file: the doc is parsed once and held here (pinning its entry).
     std::shared_ptr<const NifDocument> m_doc;
     ResourceManager* m_resourceManager = nullptr;
+
+    // Async-load state. m_loadGen is this pane's ResourceManager generation;
+    // Load bumps it so a superseded load (retarget) or a closed pane drops its
+    // in-flight result. m_pendingPath is the file being loaded (shown as the
+    // pane's path while Loading, and saved with the session if closed mid-load).
+    LoadState m_state = LoadState::Empty;
+    std::wstring m_pendingPath;
+    std::uint64_t m_loadGen = 0;
 };
 
 } // namespace nsk
