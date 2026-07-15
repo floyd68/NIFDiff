@@ -154,6 +154,10 @@ own copies.
   the UI thread only does the final hand-off. At launch the window opens with
   every pane already present and labelled with its file name (the last
   session's pane count, restored first) while the models load in behind them.
+  Model parsing needs no archive scan, so the models parse and appear DURING
+  the several-second BSA/BA2 scan (plainly shaded until their textures
+  resolve) rather than only after it; once the scan lands, each loaded pane's
+  archive-backed textures are re-resolved and pop in.
   Every pane's model NIF is loaded ahead of the (lower-priority) folder
   thumbnails - the shared queue always drains the main models first - so
   opening several panes fills them all with models before the thumbnail strips

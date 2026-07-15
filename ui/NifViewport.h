@@ -53,6 +53,11 @@ public:
     // scene - the async load worker needs it to build the same mesh set.
     bool ShowHiddenNodes() const { return m_showHiddenNodes; }
 
+    // Re-resolve + re-prefetch this scene's textures (drops the memo first).
+    // Used once the archive scan lands, so archive textures a model loaded
+    // during the scan (loose-only resolution) now pop in.
+    void RefreshTextures();
+
     // Draw a centered "Loading..." overlay while the pane's model is being
     // parsed/built on the pool (the viewport otherwise shows just its grid).
     void SetLoading(bool loading)
@@ -185,6 +190,8 @@ private:
     // Post-build setup shared by RebuildScene and SetPrebuiltScene (async load):
     // async texture prefetch + camera framing from the current m_meshes.
     void FinishSceneLoad();
+    // Submit the async texture prefetch for the current m_meshes (no camera fit).
+    void PrefetchSceneTextures();
     void EnsureD2DTarget();
     void UpdateFrontalLight();
     int PickMeshAt(POINT pt) const; // -1 when no mesh under pt

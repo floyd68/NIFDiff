@@ -356,10 +356,16 @@ ResourceLocation ResourceResolver::LocateNormalized(const std::string& rel,
     if (!m_gameData.empty() && tryLoose(m_gameData))
         return result;
 
-    // Loose-file hits above never wait; only the archive fallback needs the
-    // background scan to have finished (usually long done by the time the
-    // first frame's textures resolve - see the "blocked ... ms" log line).
-    WaitForArchiveScan();
+    // Loose-file hits above never wait. The archive fallback needs the
+    // background scan to have finished; rather than BLOCK on it (which froze
+    // startup - the whole reason the pump-wait existed), a lookup made while
+    // the scan is still running just reports "not resolved yet". The startup
+    // re-resolves every loaded pane's textures once the scan lands (see
+    // NifCompareView::RefreshTexturesAfterScan), so archive textures pop in
+    // then instead of stalling the UI now.
+    if (!IsArchiveScanReady())
+        return {};
+    WaitForArchiveScan(); // ready (or none pending): returns immediately
 
     // Cheap HasEntry probe only (read-only map lookup) - the byte extraction
     // is deferred to Extract, which a worker runs off the UI thread. First

@@ -432,23 +432,43 @@ void NifCompareView::PlaceQueuedIpcPanesNamesOnly()
 
 void NifCompareView::LoadAllPendingPanes()
 {
-    // Second phase of startup: kick off the async load for every pane that is
-    // named but not yet loaded - both the initial session/command-line panes
-    // and any IPC panes placed names-only during the scan wait. StartPendingLoad
-    // only queues the parse job (no per-pane UI work), so ALL main loads are
+    StartAllPendingLoads();
+    ShowAllThumbnailStrips();
+}
+
+void NifCompareView::StartAllPendingLoads()
+{
+    // Kick off the async load for every pane that is named but not yet loaded -
+    // the initial session/command-line panes and any IPC panes placed names-only
+    // during the scan wait. StartPendingLoad only queues the parse job (no
+    // per-pane UI work, and it no-ops if already queued), so ALL main loads are
     // enqueued before any completion runs - keeping every pane's main NIF ahead
-    // of the (lower-priority) folder thumbnails in the shared queue.
+    // of the (lower-priority) folder thumbnails in the shared queue. Parsing
+    // needs no archive scan, so this can (and does) run during the scan.
     for (auto& pane : m_panes)
         if (pane)
             pane->StartPendingLoad();
+}
 
-    // Every main is now queued (P0). Show the thumbnail strips (folder listing +
-    // P3 thumbnails) so they take their proper height right away instead of
-    // popping in as each model finishes; the mains still parse first (higher
-    // priority), and each strip's thumbnails trail them.
+void NifCompareView::ShowAllThumbnailStrips()
+{
+    // Show the thumbnail strips (folder listing + P3 thumbnails) so they take
+    // their proper height right away; the mains still parse first (priority),
+    // and each strip's thumbnails trail them. Called after the scan so a strip's
+    // one-shot thumbnail render resolves archive textures.
     for (auto& pane : m_panes)
         if (pane)
             pane->ShowThumbnailFolder();
+}
+
+void NifCompareView::RefreshTexturesAfterScan()
+{
+    // The archive scan landed: re-resolve every loaded pane's textures so the
+    // BSA-backed ones (skipped as "not ready" while the scan ran) pop into the
+    // models already on screen.
+    for (auto& pane : m_panes)
+        if (pane)
+            pane->RefreshTextures();
 }
 
 bool NifCompareView::OpenIntoBestPane(const std::wstring& path)

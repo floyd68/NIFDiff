@@ -89,6 +89,11 @@ public:
     //    every named-but-unloaded pane (initial session + IPC-placed alike).
     void PlaceQueuedIpcPanesNamesOnly();
     void LoadAllPendingPanes();
+    // Phases of the startup load, so the mains can parse DURING the archive scan
+    // and the textures/thumbnails follow once it lands:
+    void StartAllPendingLoads();     // queue every named pane's parse job (scan-safe)
+    void ShowAllThumbnailStrips();   // list folders + queue thumbnails (after scan)
+    void RefreshTexturesAfterScan(); // re-resolve loaded panes' textures once ready
 
     // Rebuild the IPC same-name snapshot from the panes' current (loaded OR
     // pending) files. Call once after the initial panes are named, so forwards

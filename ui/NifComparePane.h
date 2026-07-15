@@ -73,6 +73,10 @@ public:
     // lower-priority thumbnails still trail the mains in the shared queue).
     void ShowThumbnailFolder() { m_thumbStrip->ShowForFile(CurrentPath()); }
 
+    // Re-resolve this pane's textures after the archive scan lands (no-op until
+    // a model is loaded). Archive textures that missed during the scan pop in.
+    void RefreshTextures() { if (m_doc) m_viewport->RefreshTextures(); }
+
     void SetResourceResolver(ResourceResolver* resolver);
     void SetTextureRepository(TextureRepository* repository);
     void SetRenderDevice(RenderDevice* device);
@@ -150,6 +154,7 @@ private:
     LoadState m_state = LoadState::Empty;
     std::wstring m_pendingPath;
     std::uint64_t m_loadGen = 0;
+    bool m_loadSubmitted = false; // parse job queued (guards StartPendingLoad re-calls)
 };
 
 } // namespace nsk

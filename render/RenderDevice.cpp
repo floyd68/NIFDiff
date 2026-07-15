@@ -854,14 +854,16 @@ void RenderDevice::RenderScene(RenderTarget& target, RenderMeshCache& cache,
             const std::string kNone;
 
             auto [diffuseSrv, hasDiffuse] = resolve(mat.diffuseTexture, m_whiteTexSRV.Get());
-            if (!hasDiffuse && !mat.diffuseTexture.empty())
+            if (!hasDiffuse && !mat.diffuseTexture.empty() && !settings.texturesPending)
             {
                 // The material NAMES a diffuse texture but it didn't resolve
                 // (missing loose file/archive entry or a failed decode):
                 // sample the magenta marker instead of degrading to the
                 // untextured white path, so missing content is unmissable.
                 // Materials with no diffuse path at all keep the white
-                // constant - that's authored, not broken.
+                // constant - that's authored, not broken. While the archive
+                // scan is still running (texturesPending), an unresolved BSA
+                // diffuse is "not ready yet", not missing - keep it plain.
                 diffuseSrv = m_missingTexSRV.Get();
                 hasDiffuse = true;
             }

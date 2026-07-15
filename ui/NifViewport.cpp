@@ -155,31 +155,46 @@ void NifViewport::SetPrebuiltScene(const NifDocument* doc, std::vector<RenderMes
     Invalidate();
 }
 
-void NifViewport::FinishSceneLoad()
+void NifViewport::PrefetchSceneTextures()
 {
     // Front-load every texture the scene references through the pool's async
     // prefetch: decode + upload (~8ms each, measured 414ms for a 26-shape PBR
     // exterior) happen on the shared pool instead of blocking this UI-thread
     // load. Meshes render untextured for the first frame(s) and each texture
     // pops in as its decode completes (see TextureRepository::PrefetchAsync).
-    if (m_textures)
+    if (!m_textures)
+        return;
+    StartupTrace::Phase p("    Texture prefetch (submit async)");
+    std::vector<std::string> paths;
+    paths.reserve(m_meshes.size() * 4);
+    for (const RenderMesh& mesh : m_meshes)
     {
-        StartupTrace::Phase p("    Texture prefetch (submit async)");
-        std::vector<std::string> paths;
-        paths.reserve(m_meshes.size() * 4);
-        for (const RenderMesh& mesh : m_meshes)
+        const NifMaterial& m = mesh.material;
+        for (const std::string* tex : { &m.diffuseTexture, &m.normalTexture, &m.glowTexture,
+                                        &m.heightTexture, &m.cubeTexture, &m.envMaskTexture,
+                                        &m.innerTexture, &m.backlightTexture, &m.greyscaleTexture })
         {
-            const NifMaterial& m = mesh.material;
-            for (const std::string* tex : { &m.diffuseTexture, &m.normalTexture, &m.glowTexture,
-                                            &m.heightTexture, &m.cubeTexture, &m.envMaskTexture,
-                                            &m.innerTexture, &m.backlightTexture, &m.greyscaleTexture })
-            {
-                if (!tex->empty())
-                    paths.push_back(*tex);
-            }
+            if (!tex->empty())
+                paths.push_back(*tex);
         }
-        m_textures->PrefetchAsync(paths);
     }
+    m_textures->PrefetchAsync(paths);
+}
+
+void NifViewport::RefreshTextures()
+{
+    // The archive scan just landed: drop this view's texture memo (which cached
+    // "not resolved yet" for BSA paths while the scan ran) and re-prefetch, so
+    // archive-backed textures resolve and pop into the already-shown model.
+    if (m_textures)
+        m_textures->Clear();
+    PrefetchSceneTextures();
+    Invalidate();
+}
+
+void NifViewport::FinishSceneLoad()
+{
+    PrefetchSceneTextures();
 
     // Fit the camera to the combined bounding sphere of every mesh, mirroring
     // GLView's "center on load" behaviour (glview.cpp's Scene::updateSceneOptions
@@ -295,6 +310,9 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
     m_settings.proj = Camera::projectionMatrix(kFovY, aspect, nearZ, farZ);
     m_settings.eyePos = m_camera.eyePosition();
     m_settings.selectedMesh = m_selectedMesh;
+    // While the archive scan runs, BSA diffuse textures resolve to null (not
+    // ready yet) - render them plain, not the magenta "missing" marker.
+    m_settings.texturesPending = m_resolver && !m_resolver->IsArchiveScanReady();
 
     // One-shot: the very first 3D scene render in the process is where the
     // lazy texture loads land, so it is a startup phase in its own right.

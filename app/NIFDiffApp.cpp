@@ -982,14 +982,19 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         }
 
         // Show the window BEFORE the several-second initial load so it appears
-        // right away instead of only after every pane + its BSA textures are
-        // ready. The load stalls on the background archive scan, so keep the
-        // (named-placeholder) window painting/responsive until the scan lands -
-        // then the pane loads below resolve textures without a long freeze.
+        // right away. NIF parsing needs no archive scan, so start every pane's
+        // model load NOW - the models parse on the pool and appear DURING the
+        // scan (textures that resolve from loose files show too; BSA textures
+        // are re-resolved once the scan lands). The window stays responsive on
+        // the pump loop until the scan finishes.
         const int effectiveShowCmd = hasSavedPlacement ? savedShowCmd : nCmdShow;
         {
             StartupTrace::Phase p("Backplate Show");
             backplate->Show(effectiveShowCmd);
+        }
+        {
+            StartupTrace::Phase p("Start initial NIF loads (parse during scan)");
+            compareView->StartAllPendingLoads();
         }
         bool windowAlive = true;
         {
@@ -1005,10 +1010,11 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 }
                 if (!IsWindow(hwnd)) { windowAlive = false; break; } // closed while waiting
                 // IPC forwards that arrive while we wait (Vortex/Explorer opening
-                // several files at once): create their named panes RIGHT NOW so
-                // they show up beside the first one, without waiting for the scan
-                // or the first load. The actual loads run below, once ready.
+                // several files at once): create their named panes RIGHT NOW and
+                // start their model loads too (parsing needs no scan), so they
+                // fill in beside the first ones.
                 compareView->PlaceQueuedIpcPanesNamesOnly();
+                compareView->StartAllPendingLoads();
                 if (resolver && !resolver->IsArchiveScanReady())
                     Sleep(6); // brief; keeps CPU free for the scan
             }
@@ -1017,13 +1023,15 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         if (windowAlive)
         {
             {
-                // Panes + names are already up (CreateNamedPanes, plus any IPC
-                // panes placed names-only during the wait). Place any last IPC
-                // arrival, then kick off the async load for EVERY named pane
-                // (scan is ready, so texture resolve won't block).
-                StartupTrace::Phase p("Initial NIF load (panes)");
+                // Scan is ready. Place + load any last IPC arrival, re-resolve
+                // the textures the models loaded during the scan (BSA-backed
+                // ones missed then), then show the thumbnail strips (their
+                // one-shot render now resolves archive textures).
+                StartupTrace::Phase p("Post-scan textures + thumbnails");
                 compareView->PlaceQueuedIpcPanesNamesOnly();
-                compareView->LoadAllPendingPanes();
+                compareView->StartAllPendingLoads();
+                compareView->RefreshTexturesAfterScan();
+                compareView->ShowAllThumbnailStrips();
             }
             initialLoadDone->store(true); // the session is now safe to persist
 

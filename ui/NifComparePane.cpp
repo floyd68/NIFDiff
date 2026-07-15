@@ -185,6 +185,7 @@ void NifComparePane::SubmitParseJob(const std::wstring& path)
     // every pane's main job before any completion - and thus any lower-priority
     // thumbnail - runs.
     m_loadGen = m_resourceManager->BumpGeneration(this);
+    m_loadSubmitted = true;
     ResourceManager* const mgr = m_resourceManager;
     NifComparePane* const self = this;
     const std::uint64_t gen = m_loadGen;
@@ -212,7 +213,8 @@ void NifComparePane::StartPendingLoad()
     // the parse job. No SetDocument/SetLoading/label work here, so a batch of
     // these can't trigger a synchronous render (which would run a completion
     // and submit thumbnails) before every main is queued.
-    if (m_state != LoadState::Loading || m_pendingPath.empty() || !m_resourceManager)
+    if (m_state != LoadState::Loading || m_pendingPath.empty() || m_loadSubmitted ||
+        !m_resourceManager)
         return;
     SubmitParseJob(m_pendingPath);
 }
@@ -262,6 +264,7 @@ void NifComparePane::ShowPendingFile(const std::wstring& path)
     // placement and the session save already treat the pane as occupied.
     m_pendingPath = path;
     m_state = LoadState::Loading;
+    m_loadSubmitted = false; // named only; StartPendingLoad will queue the job
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(true);
     UpdatePathLabel();
@@ -275,6 +278,7 @@ void NifComparePane::Clear()
         m_loadGen = m_resourceManager->BumpGeneration(this);
     m_state = LoadState::Empty;
     m_pendingPath.clear();
+    m_loadSubmitted = false;
     m_doc.reset();
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(false);

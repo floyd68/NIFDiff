@@ -62,6 +62,11 @@ struct RenderSettings
     bool enableSpecular = true;     // off: legacy Blinn-Phong AND PBR GGX specular dropped
     bool enableGlow = true;         // off: emissive/glow contributions dropped
     bool enableLighting = true;     // off: raw textured surface (unlit)
+    // The archive scan is still running, so a diffuse that names a texture may
+    // simply not be resolvable YET (BSA lookups are skipped until the scan
+    // lands). Render those as plain/white instead of the loud magenta
+    // missing-content marker, which is reserved for genuinely absent textures.
+    bool texturesPending = false;
     Color4 clearColor { 0.09f, 0.09f, 0.10f, 1.0f };
     bool showGrid = true;
     bool showAxes = true;
