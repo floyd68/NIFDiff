@@ -575,6 +575,7 @@ bool D3D11Renderer::Resize(UINT width, UINT height)
 void D3D11Renderer::InvalidateMeshCache()
 {
     m_meshCache.clear();
+    m_lineCache.clear();
 }
 
 const D3D11Renderer::GpuMesh* D3D11Renderer::GetOrCreateGpuMesh(const NifGeometry* geometry)
@@ -657,6 +658,69 @@ const D3D11Renderer::GpuMesh* D3D11Renderer::GetOrCreateGpuMesh(const NifGeometr
     m_device->CreateBuffer(&ibDesc, &ibData, &mesh.indexBuffer);
 
     auto [insertedIt, _] = m_meshCache.emplace(geometry, std::move(mesh));
+    return &insertedIt->second;
+}
+
+const D3D11Renderer::GpuLineMesh* D3D11Renderer::GetOrCreateLineMesh(const NifGeometry* geometry)
+{
+    if (auto it = m_lineCache.find(geometry); it != m_lineCache.end())
+        return &it->second;
+    if (!geometry || geometry->positions.empty())
+        return nullptr;
+
+    // Segment length from the geometry's own local bounds (NifSkope's
+    // bounds-relative vector length): scale-consistent per mesh, and the
+    // world transform then scales the lines together with the surface.
+    Vector3 lo = geometry->positions.front(), hi = lo;
+    for (const Vector3& p : geometry->positions)
+    {
+        for (int a = 0; a < 3; ++a)
+        {
+            lo[a] = std::min(lo[a], p[a]);
+            hi[a] = std::max(hi[a], p[a]);
+        }
+    }
+    const float dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
+    const float radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float len = std::max(radius, 1e-3f) * 0.04f;
+
+    const float normalColor[4]  = { 0.25f, 0.75f, 1.0f, 1.0f }; // cyan
+    const float tangentColor[4] = { 1.0f, 0.35f, 0.85f, 1.0f }; // magenta
+
+    std::vector<LineVertex> verts;
+    verts.reserve((geometry->normals.size() + geometry->tangents.size()) * 2);
+    auto pushSegments = [&](const std::vector<Vector3>& dirs, const float (&color)[4])
+    {
+        const std::size_t count = std::min(dirs.size(), geometry->positions.size());
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const Vector3& p = geometry->positions[i];
+            const Vector3& d = dirs[i];
+            verts.push_back({ { p[0], p[1], p[2] }, { color[0], color[1], color[2], color[3] } });
+            verts.push_back({ { p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len },
+                              { color[0], color[1], color[2], color[3] } });
+        }
+    };
+
+    GpuLineMesh lines;
+    pushSegments(geometry->normals, normalColor);
+    lines.normalVertexCount = static_cast<UINT>(verts.size());
+    lines.tangentVertexStart = lines.normalVertexCount;
+    pushSegments(geometry->tangents, tangentColor);
+    lines.tangentVertexCount = static_cast<UINT>(verts.size()) - lines.tangentVertexStart;
+    if (verts.empty())
+        return nullptr; // no normal AND no tangent data - nothing to cache
+
+    const D3D11_BUFFER_DESC desc {
+        .ByteWidth = static_cast<UINT>(sizeof(LineVertex) * verts.size()),
+        .Usage = D3D11_USAGE_IMMUTABLE,
+        .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+    };
+    const D3D11_SUBRESOURCE_DATA data { .pSysMem = verts.data() };
+    if (FAILED(m_device->CreateBuffer(&desc, &data, &lines.vertexBuffer)))
+        return nullptr;
+
+    auto [insertedIt, _] = m_lineCache.emplace(geometry, std::move(lines));
     return &insertedIt->second;
 }
 
@@ -1090,6 +1154,59 @@ void D3D11Renderer::RenderScene(const std::vector<RenderMesh>& meshes, const Ren
                 m_context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
                 m_context->IASetIndexBuffer(gpu->indexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0);
                 m_context->DrawIndexed(gpu->indexCount, 0, 0);
+            }
+        }
+
+        // --- Vertex normal/tangent line overlays ---
+        // NifSkope's gltools drawNormals/drawTangents equivalent: colored
+        // line segments from each vertex (cyan = normal, magenta = tangent),
+        // for the selected mesh only when one is picked, otherwise for every
+        // mesh. Depth-tested, so lines on back faces stay hidden.
+        if (settings.showNormals || settings.showTangents)
+        {
+            m_context->IASetInputLayout(m_unlitLayout.Get());
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->VSSetShader(m_unlitVS.Get(), nullptr, 0);
+            m_context->PSSetShader(m_unlitPS.Get(), nullptr, 0);
+            m_context->OMSetBlendState(m_blendOpaque.Get(), nullptr, 0xFFFFFFFF);
+            m_context->OMSetDepthStencilState(m_depthDefault.Get(), 0);
+            m_context->RSSetState(m_rasterSolid.Get());
+
+            CBPerFrameUnlit cbFrame;
+            std::memcpy(cbFrame.viewProj, viewProj.data(), sizeof(cbFrame.viewProj));
+            UploadDynamicCB(m_context.Get(), m_cbPerFrameUnlit.Get(), &cbFrame, sizeof(cbFrame));
+            ID3D11Buffer* frameCb2 = m_cbPerFrameUnlit.Get();
+            m_context->VSSetConstantBuffers(0, 1, &frameCb2);
+
+            auto drawLines = [&](const RenderMesh& mesh)
+            {
+                const GpuLineMesh* lines = mesh.geometry ? GetOrCreateLineMesh(mesh.geometry) : nullptr;
+                if (!lines || !lines->vertexBuffer)
+                    return;
+
+                CBPerObjectUnlit cbObj;
+                std::memcpy(cbObj.world, mesh.worldTransform.data(), sizeof(cbObj.world));
+                UploadDynamicCB(m_context.Get(), m_cbPerObjectUnlit.Get(), &cbObj, sizeof(cbObj));
+                ID3D11Buffer* objCb = m_cbPerObjectUnlit.Get();
+                m_context->VSSetConstantBuffers(1, 1, &objCb);
+
+                UINT stride = sizeof(LineVertex), offset = 0;
+                ID3D11Buffer* vb = lines->vertexBuffer.Get();
+                m_context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+                if (settings.showNormals && lines->normalVertexCount > 0)
+                    m_context->Draw(lines->normalVertexCount, 0);
+                if (settings.showTangents && lines->tangentVertexCount > 0)
+                    m_context->Draw(lines->tangentVertexCount, lines->tangentVertexStart);
+            };
+
+            if (settings.selectedMesh >= 0 && static_cast<std::size_t>(settings.selectedMesh) < meshes.size())
+            {
+                drawLines(meshes[static_cast<std::size_t>(settings.selectedMesh)]);
+            }
+            else
+            {
+                for (const RenderMesh& mesh : meshes)
+                    drawLines(mesh);
             }
         }
     }

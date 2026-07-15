@@ -56,6 +56,11 @@ struct RenderSettings
     Color4 clearColor { 0.09f, 0.09f, 0.10f, 1.0f };
     bool showGrid = true;
     bool showAxes = true;
+    // Vertex normal/tangent line overlays (NifSkope's gltools drawNormals
+    // port): cyan normals / magenta tangents, drawn for the selected mesh
+    // only when one is picked, for every mesh otherwise.
+    bool showNormals = false;
+    bool showTangents = false;
     bool wireframe = false;
     int selectedMesh = -1; // index into RenderScene's meshes; drawn again as a wireframe overlay when valid
 };
@@ -96,11 +101,22 @@ private:
         Microsoft::WRL::ComPtr<ID3D11Buffer> indexBuffer;
         UINT indexCount = 0;
     };
+    // Per-geometry vertex normal/tangent line segments (model space, length
+    // scaled to the geometry's own bounds so the world transform keeps them
+    // proportional). One buffer: normal segments first, tangent segments
+    // after, so either overlay can be drawn without the other.
+    struct GpuLineMesh
+    {
+        Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
+        UINT normalVertexCount = 0;
+        UINT tangentVertexStart = 0;
+        UINT tangentVertexCount = 0;
+    };
 
     bool CreateShaders(std::string* error);
     bool CreateStateObjects();
     const GpuMesh* GetOrCreateGpuMesh(const NifGeometry* geometry);
-    void DrawImmediateLines(const std::vector<float>& interleavedPosColor, const Matrix4& world, const Matrix4& viewProj, D3D11_PRIMITIVE_TOPOLOGY topology);
+    const GpuLineMesh* GetOrCreateLineMesh(const NifGeometry* geometry);
     void BuildGridAndAxesGeometry();
     void BuildIblCubemap();
 
@@ -160,6 +176,7 @@ private:
     UINT m_axesVertexCount = 0;
 
     std::unordered_map<const NifGeometry*, GpuMesh> m_meshCache;
+    std::unordered_map<const NifGeometry*, GpuLineMesh> m_lineCache;
 };
 
 } // namespace nsk

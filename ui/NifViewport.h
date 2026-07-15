@@ -93,6 +93,10 @@ public:
     void SetFrontalLight(bool enabled) { m_frontalLight = enabled; Invalidate(); }
     void SetShowGrid(bool show) { m_settings.showGrid = show; Invalidate(); }
     void SetShowAxes(bool show) { m_settings.showAxes = show; Invalidate(); }
+    // Vertex normal/tangent line overlays (selected mesh when one is
+    // picked, all meshes otherwise) - see RenderSettings.
+    void SetShowNormals(bool show) { m_settings.showNormals = show; Invalidate(); }
+    void SetShowTangents(bool show) { m_settings.showTangents = show; Invalidate(); }
     void SetWireframe(bool wire) { m_settings.wireframe = wire; Invalidate(); }
     void SetParallaxHeightScale(float v) { m_settings.parallaxHeightScale = v; Invalidate(); }
     void SetEnableParallax(bool on) { m_settings.enableParallax = on; Invalidate(); }

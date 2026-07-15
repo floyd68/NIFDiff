@@ -281,6 +281,8 @@ private:
     bool m_enableComplexMaterial = true;
     bool m_enablePBR = true;
     bool m_showHiddenNodes = false;      // NifSkope "Show Hidden" equivalent, mirrored onto new panes
+    bool m_showNormals = false;          // vertex normal/tangent line overlays, mirrored onto new panes
+    bool m_showTangents = false;
     bool m_enableTextures = true;        // render-channel toggles, mirrored onto new panes
     bool m_enableVertexColors = true;
     bool m_enableSpecular = true;

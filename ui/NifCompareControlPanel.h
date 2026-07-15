@@ -43,6 +43,9 @@ public:
     void SetOnWireframeChanged(std::function<void(bool)> handler);
     // NifSkope's "Show Hidden": render NiAVObject-hidden subtrees too.
     void SetOnShowHiddenChanged(std::function<void(bool)> handler);
+    // NifSkope's vertex normal/tangent line overlays (gltools drawNormals).
+    void SetOnShowNormalsChanged(std::function<void(bool)> handler);
+    void SetOnShowTangentsChanged(std::function<void(bool)> handler);
 
     // Keyboard-shortcut hooks (see NifCompareView's key handling): flip a
     // display checkbox exactly as a click would (the wired handler runs),
@@ -51,6 +54,8 @@ public:
     void ToggleShowAxes();
     void ToggleWireframe();
     void ToggleShowHidden();
+    void ToggleShowNormals();
+    void ToggleShowTangents();
     void CycleOrientation(int delta);
 
     void SetOnBrightnessChanged(std::function<void(float)> handler);
@@ -111,6 +116,8 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_showAxesChk;
     std::shared_ptr<FD2D::CheckBox> m_wireframeChk;
     std::shared_ptr<FD2D::CheckBox> m_showHiddenChk;
+    std::shared_ptr<FD2D::CheckBox> m_showNormalsChk;
+    std::shared_ptr<FD2D::CheckBox> m_showTangentsChk;
     std::shared_ptr<FD2D::Slider> m_brightnessSlider;
     std::shared_ptr<FD2D::Slider> m_ambientSlider;
     std::shared_ptr<FD2D::Slider> m_declinationSlider;

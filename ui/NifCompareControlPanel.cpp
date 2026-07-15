@@ -93,6 +93,17 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_wireframeChk->SetLabel(L"Wireframe");
     display->AddChild(m_wireframeChk);
 
+    // NifSkope's vertex normal/tangent line overlays (gltools drawNormals):
+    // cyan normal / magenta tangent segments, for the selected mesh when one
+    // is picked, every mesh otherwise. For debugging normal/tangent data.
+    m_showNormalsChk = std::make_shared<FD2D::CheckBox>(L"ShowNormals");
+    m_showNormalsChk->SetLabel(L"Normals");
+    display->AddChild(m_showNormalsChk);
+
+    m_showTangentsChk = std::make_shared<FD2D::CheckBox>(L"ShowTangents");
+    m_showTangentsChk->SetLabel(L"Tangents");
+    display->AddChild(m_showTangentsChk);
+
     // NifSkope's "Show Hidden": NiAVObject-hidden subtrees (furniture
     // marker rigs, editor markers) are culled by default; this opts them
     // back in for inspection.
@@ -286,11 +297,15 @@ void NifCompareControlPanel::SetOnShowGridChanged(std::function<void(bool)> hand
 void NifCompareControlPanel::SetOnShowAxesChanged(std::function<void(bool)> handler) { m_showAxesChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnWireframeChanged(std::function<void(bool)> handler) { m_wireframeChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnShowHiddenChanged(std::function<void(bool)> handler) { m_showHiddenChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnShowNormalsChanged(std::function<void(bool)> handler) { m_showNormalsChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnShowTangentsChanged(std::function<void(bool)> handler) { m_showTangentsChk->OnCheckedChanged(std::move(handler)); }
 
-void NifCompareControlPanel::ToggleShowGrid()   { m_showGridChk->SetChecked(!m_showGridChk->Checked(), /*notify=*/true); }
-void NifCompareControlPanel::ToggleShowAxes()   { m_showAxesChk->SetChecked(!m_showAxesChk->Checked(), /*notify=*/true); }
-void NifCompareControlPanel::ToggleWireframe()  { m_wireframeChk->SetChecked(!m_wireframeChk->Checked(), /*notify=*/true); }
-void NifCompareControlPanel::ToggleShowHidden() { m_showHiddenChk->SetChecked(!m_showHiddenChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowGrid()     { m_showGridChk->SetChecked(!m_showGridChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowAxes()     { m_showAxesChk->SetChecked(!m_showAxesChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleWireframe()    { m_wireframeChk->SetChecked(!m_wireframeChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowHidden()   { m_showHiddenChk->SetChecked(!m_showHiddenChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowNormals()  { m_showNormalsChk->SetChecked(!m_showNormalsChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleShowTangents() { m_showTangentsChk->SetChecked(!m_showTangentsChk->Checked(), /*notify=*/true); }
 
 void NifCompareControlPanel::CycleOrientation(int delta)
 {

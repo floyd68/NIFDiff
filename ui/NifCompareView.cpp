@@ -63,6 +63,16 @@ NifCompareView::NifCompareView(const std::wstring& name)
         m_showHiddenNodes = on;
         for (auto& p : m_panes) p->Viewport().SetShowHiddenNodes(on);
     });
+    m_controls->SetOnShowNormalsChanged([this](bool on)
+    {
+        m_showNormals = on;
+        for (auto& p : m_panes) p->Viewport().SetShowNormals(on);
+    });
+    m_controls->SetOnShowTangentsChanged([this](bool on)
+    {
+        m_showTangents = on;
+        for (auto& p : m_panes) p->Viewport().SetShowTangents(on);
+    });
 
     // Lighting sliders are shared UI (not per-pane manipulable like camera
     // drag), so "Sync Lighting" here means "apply to every pane" (on) vs.
@@ -172,6 +182,8 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetEnableComplexMaterial(m_enableComplexMaterial);
     pane->Viewport().SetEnablePBR(m_enablePBR);
     pane->Viewport().SetShowHiddenNodes(m_showHiddenNodes);
+    pane->Viewport().SetShowNormals(m_showNormals);
+    pane->Viewport().SetShowTangents(m_showTangents);
     pane->Viewport().SetEnableTextures(m_enableTextures);
     pane->Viewport().SetEnableVertexColors(m_enableVertexColors);
     pane->Viewport().SetEnableSpecular(m_enableSpecular);
@@ -1198,6 +1210,14 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case 'G': m_controls->ToggleShowGrid();   return true;
     case 'X': m_controls->ToggleShowAxes();   return true;
     case 'H': m_controls->ToggleShowHidden(); return true;
+
+    // N toggles the vertex normal overlay; Shift+N the tangent overlay.
+    case 'N':
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+            m_controls->ToggleShowTangents();
+        else
+            m_controls->ToggleShowNormals();
+        return true;
 
     case 'W':
         if (!ctrl)

@@ -51,11 +51,17 @@ own copies.
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a
   frontal-light mode.
+- **Vertex normal/tangent overlays** (NifSkope's gltools line-drawing
+  equivalent): cyan normal / magenta tangent line segments per vertex,
+  for debugging normal-map/tangent-space issues. Drawn for the selected
+  sub-mesh when one is picked, every mesh otherwise; segment length
+  scales with each mesh's own bounds.
 - **Active pane** (FICture2's focused-browser equivalent): any click in
   a pane makes it active, drawn with an accent border while several
   panes are open; pane-context shortcuts target it.
 - **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
-  `W` wireframe, `H` hidden, `PgUp`/`PgDn` cycle the camera preset;
+  `W` wireframe, `H` hidden, `N` normals, `Shift+N` tangents,
+  `PgUp`/`PgDn` cycle the camera preset;
   pane-context keys acting on the active pane: `1`-`8` / `Tab` /
   `Shift+Tab` select it, `R` resets its camera, `C` focuses its
   selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+W` closes it,
