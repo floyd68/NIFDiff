@@ -153,6 +153,11 @@ void NifComparePane::SetTextureRepository(TextureRepository* repository)
     m_viewport->SetTextureRepository(repository);
 }
 
+void NifComparePane::SetRenderDevice(RenderDevice* device)
+{
+    m_viewport->SetRenderDevice(device);
+}
+
 void NifComparePane::InvalidateTextureCache()
 {
     m_viewport->InvalidateTextureCache();

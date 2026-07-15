@@ -205,12 +205,17 @@ the long-standing Qt-based NIF editor:
   `src/gl/glscene.h`/`glnode.h` scenegraph (world-transform flattening
   only; no skinning/morphs/particles/controllers needed for a static
   bind-pose comparison).
-- `render/D3D11Renderer.h/.cpp` / `render/TextureRepository.h/.cpp` (+ the
-  per-viewport `render/TextureCache.h` memo) replace
-  NifSkope's Qt/OpenGL `src/gl/renderer.cpp/.h` and
+- `render/RenderDevice.h/.cpp` (the single app-wide render core: shaders,
+  state objects, IBL, fallback textures) with per-view `render/RenderTarget`
+  framebuffers and `render/RenderMeshCache` geometry caches, plus
+  `render/TextureRepository.h/.cpp` (+ the per-viewport `render/TextureCache.h`
+  memo) replace NifSkope's Qt/OpenGL `src/gl/renderer.cpp/.h` and
   `gltex.cpp`+`gltexloaders.cpp` with a D3D11 draw path (feeding off
   DirectXTex for DDS decode/SRV creation instead of NifSkope's own
-  texture loaders).
+  texture loaders). Splitting the old per-viewport `D3D11Renderer` into a
+  shared device + lightweight targets means the shaders/IBL are built once
+  instead of once per pane, and any scene can be rendered into an arbitrary
+  offscreen target.
 - `ui/NifCompareView.h/.cpp` reimplements the layout of NifSkope's own
   `src/ui/nifdiffviewer.cpp`/`.h` (the Qt `File -> NIF Diff Viewer...`
   feature), documented in `D:\Works\nifskope\NIF_DIFF_VIEWER.md` - laid

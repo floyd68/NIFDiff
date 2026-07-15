@@ -34,6 +34,7 @@ public:
 
     void SetResourceResolver(ResourceResolver* resolver);
     void SetTextureRepository(TextureRepository* repository);
+    void SetRenderDevice(RenderDevice* device);
     void InvalidateTextureCache();
 
     // Fires after Load/Clear changed this pane's document - NifCompareView

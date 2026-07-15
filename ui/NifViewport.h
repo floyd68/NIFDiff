@@ -4,19 +4,24 @@
 // GLView was a QGLWidget subclass mixing camera-drag mouse handling, an
 // immediate OpenGL draw call, and a paintEvent-driven Qt render loop.
 // NifViewport is an FD2D::Wnd instead: FD2D::Wnd::OnRenderD3D() renders the
-// current NifDocument's scene into an offscreen D3D11 texture via
-// D3D11Renderer, and OnRender() (the D2D pass) composites that texture into
-// the control's on-screen rect by wrapping it as an ID2D1Bitmap1 over the
-// shared DXGI surface (same GPU device end-to-end, no CPU copy) - the same
-// interop technique FD2D::Backplate already uses for its own offscreen
-// double-buffer (see Backplate.cpp's CreateBitmapFromDxgiSurface calls).
+// current NifDocument's scene into this view's own RenderTarget (offscreen
+// D3D11 texture) via the shared RenderDevice, and OnRender() (the D2D pass)
+// composites that texture into the control's on-screen rect by wrapping it as
+// an ID2D1Bitmap1 over the shared DXGI surface (same GPU device end-to-end, no
+// CPU copy) - the same interop technique FD2D::Backplate already uses for its
+// own offscreen double-buffer (see Backplate.cpp's CreateBitmapFromDxgiSurface
+// calls). The shaders/states/IBL live once in the app-wide RenderDevice; only
+// the framebuffer (RenderTarget) and geometry cache (RenderMeshCache) are
+// per-view.
 #pragma once
 
 #include "../core/NifDocument.h"
 #include "../core/SceneBuilder.h"
 #include "../core/Camera.h"
 #include "../core/ResourceResolver.h"
-#include "../render/D3D11Renderer.h"
+#include "../render/RenderDevice.h"
+#include "../render/RenderTarget.h"
+#include "../render/RenderMeshCache.h"
 #include "../render/TextureCache.h"
 
 #include <Wnd.h>
@@ -45,6 +50,11 @@ public:
     // TextureCache is only a resolution memo on top). Must outlive this
     // viewport and be set before it is attached to a backplate.
     void SetTextureRepository(TextureRepository* repository);
+
+    // The single app-wide render core (shaders/states/IBL). Must outlive this
+    // viewport and be set before it is attached to a backplate. The viewport
+    // still owns its own RenderTarget (framebuffer) and RenderMeshCache.
+    void SetRenderDevice(RenderDevice* device) { m_renderDevice = device; }
 
     void InvalidateTextureCache();
 
@@ -125,7 +135,7 @@ public:
     // target - clean render, no path/stats chrome) as a PNG.
     bool SaveScreenshot(const std::wstring& path, std::string* error = nullptr)
     {
-        return m_renderer.SaveColorToPng(path, error);
+        return m_target.SaveColorToPng(m_device, m_context, path, error);
     }
 
     // Whether any loaded mesh actually runs the height-based parallax the
@@ -171,7 +181,13 @@ private:
     bool m_frontalLight = false;
     bool m_showHiddenNodes = false;
 
-    D3D11Renderer m_renderer;
+    // Shared render core (device-level resources) + this view's own
+    // framebuffer and geometry cache (see the render/ headers).
+    RenderDevice* m_renderDevice = nullptr;
+    RenderTarget m_target;
+    RenderMeshCache m_meshCache;
+    ID3D11Device* m_device = nullptr;
+    ID3D11DeviceContext* m_context = nullptr;
     std::unique_ptr<TextureCache> m_textures;
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;

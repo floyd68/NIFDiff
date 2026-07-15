@@ -171,6 +171,10 @@ public:
     // Must outlive this view.
     void SetTextureRepository(TextureRepository* repository);
 
+    // The single app-wide render core (shaders/states/IBL), shared by every
+    // pane's viewport. Must outlive this view.
+    void SetRenderDevice(RenderDevice* device);
+
     void InvalidateTextureCaches();
 
     // Resources panel callbacks (Game Data / overrides), forwarded to the
@@ -256,6 +260,7 @@ private:
     std::shared_ptr<IpcOpenQueue> m_ipcQueue;
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;
+    RenderDevice* m_renderDevice = nullptr;
 
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
     std::function<void(const std::wstring&)> m_onFileOpened;

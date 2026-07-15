@@ -177,6 +177,10 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     {
         pane->SetTextureRepository(m_textureRepository);
     }
+    if (m_renderDevice)
+    {
+        pane->SetRenderDevice(m_renderDevice);
+    }
     pane->Viewport().SetParallaxHeightScale(m_parallaxHeightScale);
     pane->Viewport().SetEnableParallax(m_enableParallax);
     pane->Viewport().SetEnableComplexMaterial(m_enableComplexMaterial);
@@ -1508,6 +1512,13 @@ void NifCompareView::SetTextureRepository(TextureRepository* repository)
     m_textureRepository = repository;
     for (auto& p : m_panes)
         p->SetTextureRepository(repository);
+}
+
+void NifCompareView::SetRenderDevice(RenderDevice* device)
+{
+    m_renderDevice = device;
+    for (auto& p : m_panes)
+        p->SetRenderDevice(device);
 }
 
 void NifCompareView::InvalidateTextureCaches()

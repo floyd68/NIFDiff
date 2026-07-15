@@ -1,22 +1,31 @@
-// D3D11Renderer.h - replacement for src/gl/renderer.h (Phase 3).
+// RenderDevice.h - the single shared D3D11 rendering core (was D3D11Renderer,
+// which duplicated every shader/state/IBL resource AND its own framebuffer
+// per viewport).
 //
-// See NifDocument.h / SceneBuilder.h for the data-side scope notes. On the
-// render side: this class does NOT own an ID3D11Device/IDXGISwapChain -
-// Initialize() takes an existing device+context. For the standalone exe
-// (this plan's first deliverable) that device is created by FD2D::Backplate
-// (see NifViewport.cpp); when this is later embedded into FICture2, the same
-// Initialize() call takes FICture2's already-shared device instead, with no
-// interface change. This directly satisfies the plan's Phase 3 note: "이후
-// FICture2 통합 시 디바이스 공유로 교체 예정임을 인터페이스에 반영".
+// This object owns only device-level, immutable-once-built resources:
+// shaders, input layouts, constant buffers, blend/depth/raster/sampler state
+// objects, the 1x1 fallback textures, the procedural IBL cubemap, and the
+// grid/axes buffer. One instance is created for the whole app (see
+// NIFDiffApp.cpp) and shared by every NifViewport - and, for item 12, by the
+// background thumbnail renderer - so those costs are paid once instead of
+// once per pane. It does NOT own a framebuffer or a geometry cache: draw
+// targets are RenderTarget (per view/thumbnail) and geometry buffers are
+// RenderMeshCache (per view), both passed into RenderScene.
+//
+// It does NOT own an ID3D11Device/IDXGISwapChain either - EnsureInitialized()
+// takes an existing device+context (created by FD2D::Backplate; when embedded
+// into FICture2 later, the same call takes FICture2's shared device).
 //
 // Also folds in Phase 3's gltools.cpp port (grid/axes immediate-mode draws,
-// tracked as phase3_tools) as DrawGrid/DrawAxes, since both the lit mesh
-// path and the unlit tools path share the same device/context/state-object
-// plumbing - see shaders/Unlit.hlsl for why one unlit shader covers gltools' whole
+// tracked as phase3_tools), since both the lit mesh path and the unlit tools
+// path share the same device/context/state-object plumbing - see
+// shaders/Unlit.hlsl for why one unlit shader covers gltools' whole
 // immediate-mode drawing surface.
 #pragma once
 
 #include "../core/SceneBuilder.h"
+#include "RenderMeshCache.h"
+#include "RenderTarget.h"
 #include <d3d11_1.h>
 #include <wrl/client.h>
 #include <unordered_map>
@@ -65,71 +74,37 @@ struct RenderSettings
     int selectedMesh = -1; // index into RenderScene's meshes; drawn again as a wireframe overlay when valid
 };
 
-class D3D11Renderer
+class RenderDevice
 {
 public:
-    bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context, std::string* error = nullptr);
+    // Idempotent: the first call builds every shared resource from the given
+    // device+context; later calls (each viewport's OnAttached passes the same
+    // backplate device) are no-ops. Returns false only if the first build
+    // fails.
+    bool EnsureInitialized(ID3D11Device* device, ID3D11DeviceContext* context, std::string* error = nullptr);
     bool IsInitialized() const { return m_device != nullptr; }
 
-    // (Re)creates the offscreen color+depth render targets at the given
-    // pixel size. Safe to call every frame; it is a no-op if the size did
-    // not change.
-    bool Resize(UINT width, UINT height);
-    UINT Width() const { return m_width; }
-    UINT Height() const { return m_height; }
+    ID3D11Device* Device() const { return m_device.Get(); }
+    ID3D11DeviceContext* Context() const { return m_context.Get(); }
 
-    ID3D11Texture2D* ColorTexture() const { return m_colorTex.Get(); }
-    ID3D11ShaderResourceView* ColorSRV() const { return m_colorSRV.Get(); }
-
-    // Saves the offscreen color target's current contents (the last
-    // rendered frame, no UI chrome) as a PNG via WIC - the calling thread
-    // must have COM initialized (the app's UI thread does, via
-    // OleInitialize). Alpha is forced opaque: the RT's alpha channel holds
-    // blending residue, not coverage.
-    bool SaveColorToPng(const std::wstring& path, std::string* error = nullptr);
-
-    // Drops all cached per-geometry GPU buffers. Call when a new NIF has
-    // been loaded so stale geometry pointers cannot be reused.
-    void InvalidateMeshCache();
-
-    void RenderScene(const std::vector<RenderMesh>& meshes, const RenderSettings& settings, TextureCache* textures);
+    // Renders `meshes` into `target`, caching that view's geometry buffers in
+    // `cache`. The caller sizes `target` (RenderTarget::Resize) first. The
+    // shared shaders/states/IBL come from this device; nothing here is
+    // per-view except the two by-reference parameters.
+    void RenderScene(RenderTarget& target, RenderMeshCache& cache,
+                     const std::vector<RenderMesh>& meshes, const RenderSettings& settings,
+                     TextureCache* textures);
 
 private:
-    struct GpuMesh
-    {
-        Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> indexBuffer;
-        UINT indexCount = 0;
-    };
-    // Per-geometry vertex normal/tangent line segments (model space, length
-    // scaled to the geometry's own bounds so the world transform keeps them
-    // proportional). One buffer: normal segments first, tangent segments
-    // after, so either overlay can be drawn without the other.
-    struct GpuLineMesh
-    {
-        Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
-        UINT normalVertexCount = 0;
-        UINT tangentVertexStart = 0;
-        UINT tangentVertexCount = 0;
-    };
-
     bool CreateShaders(std::string* error);
     bool CreateStateObjects();
-    const GpuMesh* GetOrCreateGpuMesh(const NifGeometry* geometry);
-    const GpuLineMesh* GetOrCreateLineMesh(const NifGeometry* geometry);
+    const GpuMesh* GetOrCreateGpuMesh(RenderMeshCache& cache, const NifGeometry* geometry);
+    const GpuLineMesh* GetOrCreateLineMesh(RenderMeshCache& cache, const NifGeometry* geometry);
     void BuildGridAndAxesGeometry();
     void BuildIblCubemap();
 
     Microsoft::WRL::ComPtr<ID3D11Device> m_device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
-
-    UINT m_width = 0;
-    UINT m_height = 0;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_colorTex;
-    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_colorRTV;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_colorSRV;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_depthTex;
-    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_depthDSV;
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_litVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_litPS;
@@ -174,9 +149,6 @@ private:
     UINT m_gridVertexCount = 0;
     UINT m_axesVertexStart = 0;
     UINT m_axesVertexCount = 0;
-
-    std::unordered_map<const NifGeometry*, GpuMesh> m_meshCache;
-    std::unordered_map<const NifGeometry*, GpuLineMesh> m_lineCache;
 };
 
 } // namespace nsk

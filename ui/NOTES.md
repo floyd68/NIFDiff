@@ -4,7 +4,8 @@ Empty scaffold placeholder - git does not track empty directories, so this
 file holds the spot.
 
 To implement here:
-- `NifViewport.h/.cpp` - one 3D view (camera nav + D3D11Renderer host).
+- `NifViewport.h/.cpp` - one 3D view (camera nav; owns a RenderTarget +
+  RenderMeshCache, driven by the shared RenderDevice).
 - `NifCompareControlPanel.h/.cpp` - shared bottom control strip (sync
   views/lighting, orientation presets, wireframe, Game Data/override
   folders).

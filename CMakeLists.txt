@@ -82,13 +82,13 @@ add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/Floar" "${CMAKE_BINARY_DIR}/_deps/
 
 # ---------------------------------------------------------------------------
 # Shader precompilation: render/shaders/*.hlsl -> bytecode headers via fxc.
-# D3D11Renderer.cpp embeds the generated g_* arrays directly, so startup pays
+# RenderDevice.cpp embeds the generated g_* arrays directly, so startup pays
 # no D3DCompile cost (~260ms for the six entry points, measured via
 # core/StartupTrace.h) and the exe keeps zero runtime shader-file
 # dependencies. /Ges mirrors the D3DCOMPILE_ENABLE_STRICTNESS flag the old
 # runtime D3DCompile path used; optimization stays at fxc's default (POM
 # SampleLevel loops TDR the GPU when left unoptimized - see the comment
-# that used to live in D3D11Renderer::CreateShaders).
+# that used to live in RenderDevice::CreateShaders).
 # ---------------------------------------------------------------------------
 find_program(NIFDIFF_FXC_TOOL FXC.EXE
     HINTS "C:/Program Files (x86)/Windows Kits/10/bin/${CMAKE_SYSTEM_VERSION}/x64"
@@ -161,8 +161,11 @@ add_executable(NIFDiff WIN32
     core/Camera.h
     core/ResourceResolver.h
     core/ResourceResolver.cpp
-    render/D3D11Renderer.h
-    render/D3D11Renderer.cpp
+    render/RenderDevice.h
+    render/RenderDevice.cpp
+    render/RenderTarget.h
+    render/RenderTarget.cpp
+    render/RenderMeshCache.h
     render/TextureCache.h
     render/TextureRepository.h
     render/TextureRepository.cpp

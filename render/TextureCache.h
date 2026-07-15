@@ -37,7 +37,7 @@ public:
     // relativePath uses forward slashes (see NifDocument::normalizeSlashes).
     // Returns a pooled or freshly loaded SRV, or nullptr when the path does
     // not resolve / fails to decode - the renderer decides how to present a
-    // missing texture per slot (D3D11Renderer's resolve lambda). Failures
+    // missing texture per slot (RenderDevice's resolve lambda). Failures
     // are memoized too, so an unresolvable path doesn't re-run the resolver
     // chain every frame.
     ID3D11ShaderResourceView* GetOrLoad(const std::string& relativePath)

@@ -10,6 +10,7 @@
 #include "../core/ResourceResolver.h"
 #include "../core/StartupTrace.h"
 #include "../render/TextureRepository.h"
+#include "../render/RenderDevice.h"
 
 #include <Application.h>
 #include <Backplate.h>
@@ -654,6 +655,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // viewports that keep pointers into it.
     auto textureRepository = std::make_shared<TextureRepository>(resolver.get());
 
+    // Single shared render core (shaders/states/IBL): built once when the
+    // first viewport attaches, reused by every pane - and later by item 12's
+    // thumbnail renderer - instead of one full renderer per pane. Same
+    // lifetime rationale as the texture pool above.
+    auto renderDevice = std::make_shared<RenderDevice>();
+
     RECT savedRect {};
     int savedShowCmd = SW_SHOWNORMAL;
     const bool hasSavedPlacement = ReadWindowPlacement(settings, savedRect, savedShowCmd);
@@ -696,6 +703,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         }
         compareView->SetResourceResolver(resolver.get());
         compareView->SetTextureRepository(textureRepository.get());
+        compareView->SetRenderDevice(renderDevice.get());
         compareView->SetIpcOpenQueue(ipcQueue);
         ApplyResourcesToUi(*compareView, *resolver);
 

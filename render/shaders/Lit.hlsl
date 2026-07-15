@@ -30,7 +30,7 @@
 //
 // HLSL is compiled at BUILD time by fxc (see the "Shader precompilation"
 // section of the top-level CMakeLists.txt): each entry point becomes a
-// generated header with a bytecode array that D3D11Renderer.cpp embeds
+// generated header with a bytecode array that RenderDevice.cpp embeds
 // directly, so the exe still has no runtime shaders/ dependency and pays
 // no D3DCompile cost at startup (was ~260ms per viewport - StartupTrace).
 
@@ -40,7 +40,7 @@
 // normals/uvs/colors/tangents), defaulting missing channels to
 // (0,0,1)/(0,0)/(1,1,1,1)/(1,0,0) respectively (a missing tangent is only
 // ever sampled when the material also has no normal map - see
-// D3D11Renderer.cpp's GetOrCreateGpuMesh).
+// RenderDevice.cpp's GetOrCreateGpuMesh).
 // row_major matches Matrix4's plain row-major float[4][4] C++ layout
 // (see NifTypes.h Matrix4::data()/toColumnMajor()) exactly, so matrices are
 // uploaded as-is with no CPU-side transpose. Combined with mul(matrix,
@@ -48,7 +48,7 @@
 // M*v column-vector convention Camera.h's viewMatrix()/projectionMatrix()
 // and Transform::toMatrix4() already use on the CPU side.
 // Feature bitmask for PerObject gFlags - keep in sync with
-// D3D11Renderer.cpp's kLit* constants.
+// RenderDevice.cpp's kLit* constants.
 //   1     diffuse texture bound         4096    model-space normals (sk_msn path)
 //   2     normal map bound              8192    t7 holds the MSN specular map (not backlight)
 //   4     glow map (ST 2 + SLSF2:6)     16384   face detail mask in t3 (ST 4)
@@ -104,7 +104,7 @@ Texture2D    gEnvMaskTex   : register(t5);
 Texture2D    gLightMaskTex : register(t6);
 Texture2D    gBacklightTex : register(t7); // backlight map OR MSN specular map
 Texture2D    gAuxTex       : register(t8); // face tint mask / multilayer inner map / effect greyscale palette
-TextureCube  gIblCube      : register(t9); // procedural sky/ground cube (D3D11Renderer::BuildIblCubemap): PBR ambient specular
+TextureCube  gIblCube      : register(t9); // procedural sky/ground cube (RenderDevice::BuildIblCubemap): PBR ambient specular
 SamplerState gSampler      : register(s0);
 
 struct VSInput

@@ -62,11 +62,15 @@ void NifViewport::OnAttached(FD2D::Backplate& backplate)
 
     ID3D11Device* device = backplate.D3DDevice();
     ID3D11DeviceContext* context = backplate.D3DContext();
-    if (device && context)
+    m_device = device;
+    m_context = context;
+    if (device && context && m_renderDevice)
     {
         StartupTrace::Phase p("  Viewport renderer init (shaders)");
         std::string err;
-        if (m_renderer.Initialize(device, context, &err) && m_textureRepository != nullptr)
+        // Idempotent: only the first attached viewport actually builds the
+        // shared shaders/states/IBL; the rest reuse them.
+        if (m_renderDevice->EnsureInitialized(device, context, &err) && m_textureRepository != nullptr)
         {
             m_textureRepository->SetDevice(device);
             m_textures = std::make_unique<TextureCache>(m_textureRepository);
@@ -117,7 +121,9 @@ void NifViewport::SetDocument(const NifDocument* doc)
 void NifViewport::RebuildScene()
 {
     m_meshes.clear();
-    m_renderer.InvalidateMeshCache();
+    // Drop this view's cached geometry buffers before the old document's
+    // geometries are freed (the cache only holds their pointers as keys).
+    m_meshCache.Clear();
     if (!m_doc || !m_doc->isValid())
         return;
 
@@ -225,13 +231,13 @@ void NifViewport::UpdateFrontalLight()
 
 void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
 {
-    if (!m_renderer.IsInitialized())
+    if (!m_renderDevice || !m_renderDevice->IsInitialized() || !m_device)
         return;
 
     D2D1_RECT_F rect = LayoutRect();
     UINT w = static_cast<UINT>((std::max)(1.0f, rect.right - rect.left));
     UINT h = static_cast<UINT>((std::max)(1.0f, rect.bottom - rect.top));
-    if (!m_renderer.Resize(w, h))
+    if (!m_target.Resize(m_device, w, h))
         return;
 
     if (m_frontalLight)
@@ -262,20 +268,20 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
     {
         s_firstSceneRendered = true;
         StartupTrace::Phase p("First 3D frame (incl. texture loads)");
-        m_renderer.RenderScene(m_meshes, m_settings, m_textures.get());
+        m_renderDevice->RenderScene(m_target, m_meshCache, m_meshes, m_settings, m_textures.get());
     }
     else
     {
-        m_renderer.RenderScene(m_meshes, m_settings, m_textures.get());
+        m_renderDevice->RenderScene(m_target, m_meshCache, m_meshes, m_settings, m_textures.get());
     }
 }
 
 void NifViewport::EnsureD2DTarget()
 {
-    if (!m_backplate || !m_renderer.ColorTexture())
+    if (!m_backplate || !m_target.ColorTexture())
         return;
-    UINT w = m_renderer.Width();
-    UINT h = m_renderer.Height();
+    UINT w = m_target.Width();
+    UINT h = m_target.Height();
     if (m_d2dBitmap && w == m_d2dBitmapWidth && h == m_d2dBitmapHeight)
         return;
 
@@ -287,7 +293,7 @@ void NifViewport::EnsureD2DTarget()
         return;
 
     Microsoft::WRL::ComPtr<IDXGISurface> surface;
-    if (FAILED(m_renderer.ColorTexture()->QueryInterface(IID_PPV_ARGS(&surface))))
+    if (FAILED(m_target.ColorTexture()->QueryInterface(IID_PPV_ARGS(&surface))))
         return;
 
     D2D1_BITMAP_PROPERTIES1 bp {};
