@@ -32,7 +32,10 @@ own copies.
 
 - **1-8 panes** in an equal-width grid (1-4 in a single row, 5-6 as 3x2,
   7-8 as 4x2), added and removed at runtime; per-pane Open/Close via the
-  pane's own buttons or the right-click context menu.
+  pane's own buttons or the right-click context menu. Dragged splitter
+  positions survive pane add/remove (FICture2's capture/apply-split-ratios
+  pattern) and are saved with the session, so a restored window comes back
+  with the same pane widths.
 - **Synced cameras and lighting** across panes (each sync individually
   toggleable), so one orbit/pan/zoom or light change hits every model at
   once.
@@ -82,7 +85,8 @@ own copies.
   decoded and uploaded once, shared across panes - and BSA scanning runs
   in parallel in the background at startup (cold start around half a
   second).
-- Session persistence (open files, Game Data path, override folders),
+- Session persistence (open files, splitter ratios, Game Data path,
+  override folders),
   `.nif` file association, and single-instance forwarding: opening a
   file whose NAME matches a document already open lands in a new pane of
   the existing window - the "compare two mods' versions of the same
@@ -303,14 +307,9 @@ hosts one `NifCompareView`.
 
 Not yet ported/implemented: skinning/morphs/particles/controllers (out of
 scope per `SceneBuilder.h`'s documented scope note - static bind-pose
-comparison only), a `.ico`/app icon, and pane-splitter-ratio persistence
-across add/remove (each add/remove currently resets to equal widths).
+comparison only) and a `.ico`/app icon.
 
 ## Next steps
 
 Possible follow-ups, not required for the current feature set:
-1. Persist per-pane split ratios across add/remove (FICture2's
-   `CaptureHorizontalSplitRatios`/`ApplyHorizontalSplitRatios` pattern).
-2. File drag-and-drop onto a pane (FICture2's `ImageBrowserDragController`
-   equivalent) as an alternative to the "Open..." button.
-3. An app icon / `.ico` (none exists yet).
+1. An app icon / `.ico` (none exists yet).

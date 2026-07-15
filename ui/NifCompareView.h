@@ -150,6 +150,16 @@ public:
     void RequestOpenPane(NifComparePane& pane);
     void RequestClosePane(NifComparePane& pane);
 
+    // Splitter-ratio persistence (FICture2's Capture/ApplyHorizontalSplitRatios
+    // pattern, extended to this view's two-row grid): the pre-order list of
+    // every SplitPanel ratio inside the pane host tree. RebuildHostTree
+    // captures before and re-applies after, so dragged splitters survive
+    // pane add/remove; the app shell also saves/restores them with the
+    // session. Applying is positional best-effort - a different pane count
+    // consumes whatever prefix still lines up.
+    std::vector<float> CaptureSplitRatios() const;
+    void ApplySplitRatios(const std::vector<float>& ratios);
+
     void SetResourceResolver(ResourceResolver* resolver);
 
     // Shared cross-pane texture pool; also cleared by InvalidateTextureCaches.
@@ -235,6 +245,7 @@ private:
     NifComparePane* m_dragOverlayPane = nullptr;
     DragOverlayKind m_dragOverlayKind = DragOverlayKind::None;
     std::wstring m_hostName; // current first-child host tree, removed on rebuild (see RebuildHostTree)
+    std::shared_ptr<FD2D::Wnd> m_hostRoot; // same tree, kept for the split-ratio walks
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
     std::shared_ptr<IpcOpenQueue> m_ipcQueue;

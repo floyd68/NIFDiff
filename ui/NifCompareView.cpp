@@ -1297,8 +1297,62 @@ void NifCompareView::SetOnScreenshotRequested(std::function<void(NifComparePane&
     m_onScreenshotRequested = std::move(handler);
 }
 
+namespace
+{
+    // Pre-order over the host tree, visiting every SplitPanel (both the
+    // horizontal in-row splits and the vertical two-row split). The tree
+    // shape is deterministic for a given pane count, so a captured list
+    // re-applies exactly after a rebuild with the same count and lines up
+    // as a best-effort prefix otherwise.
+    void CaptureRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, std::vector<float>& out)
+    {
+        if (!node)
+            return;
+        if (auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
+            out.push_back(sp->SplitRatio());
+        for (const auto& child : node->ChildrenInOrder())
+            CaptureRatiosRecursive(child, out);
+    }
+
+    void ApplyRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, const std::vector<float>& ratios, std::size_t& idx)
+    {
+        if (!node)
+            return;
+        if (auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
+        {
+            if (idx < ratios.size())
+                sp->SetSplitRatio(ratios[idx]);
+            ++idx;
+        }
+        for (const auto& child : node->ChildrenInOrder())
+            ApplyRatiosRecursive(child, ratios, idx);
+    }
+}
+
+std::vector<float> NifCompareView::CaptureSplitRatios() const
+{
+    std::vector<float> out;
+    CaptureRatiosRecursive(m_hostRoot, out);
+    return out;
+}
+
+void NifCompareView::ApplySplitRatios(const std::vector<float>& ratios)
+{
+    if (ratios.empty())
+        return;
+    std::size_t idx = 0;
+    ApplyRatiosRecursive(m_hostRoot, ratios, idx);
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
 void NifCompareView::RebuildHostTree()
 {
+    // Keep the user's splitter positions across the rebuild (equal-width
+    // ratios are only the DEFAULTS the coordinator bakes in).
+    const std::vector<float> keepRatios = CaptureSplitRatios();
+
     std::vector<std::shared_ptr<FD2D::Wnd>> wnds;
     wnds.reserve(m_panes.size());
     for (auto& p : m_panes)
@@ -1318,8 +1372,10 @@ void NifCompareView::RebuildHostTree()
         RemoveChild(m_hostName);
     if (host)
         m_hostName = host->Name();
+    m_hostRoot = host;
 
     SetFirstChild(host);
+    ApplySplitRatios(keepRatios);
 
     // A new/removed child changes this panel's Measure/Arrange results, not
     // just its pixel content - Invalidate() alone only schedules a repaint

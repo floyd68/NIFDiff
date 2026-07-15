@@ -300,6 +300,24 @@ namespace
         view.SetPaneCount(paths.size());
         for (std::size_t i = 0; i < paths.size() && i < view.PaneCount(); ++i)
             view.Pane(i).Load(paths[i]);
+
+        // Restore the dragged splitter positions saved with the session.
+        const std::wstring ratioStr = settings.GetString(kSectionSession, L"SplitRatios");
+        if (!ratioStr.empty())
+        {
+            std::vector<float> ratios;
+            const wchar_t* p = ratioStr.c_str();
+            wchar_t* end = nullptr;
+            while (*p != L'\0')
+            {
+                const float v = std::wcstof(p, &end);
+                if (end == p)
+                    break;
+                ratios.push_back(v);
+                p = (*end == L',') ? end + 1 : end;
+            }
+            view.ApplySplitRatios(ratios);
+        }
     }
 
     bool ReadWindowPlacement(const AppSettings& settings, RECT& outRect, int& outShowCmd)
@@ -352,6 +370,17 @@ namespace
             }
             AppSettings::SetString(iniPath, kSectionSession, key, path);
         }
+
+        // Dragged splitter positions, comma-joined in the view's pre-order
+        // walk (see NifCompareView::CaptureSplitRatios).
+        std::wstring ratios;
+        for (const float r : view.CaptureSplitRatios())
+        {
+            if (!ratios.empty())
+                ratios += L",";
+            ratios += std::format(L"{:.4f}", r);
+        }
+        AppSettings::SetString(iniPath, kSectionSession, L"SplitRatios", ratios);
     }
 
     // Up to NifCompareView::kMaxPanes positional .nif paths from the command line.
