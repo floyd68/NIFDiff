@@ -40,6 +40,10 @@ NifComparePane::NifComparePane(const std::wstring& name)
     m_pathLabel->SetFont(L"Segoe UI", 13.0f);
     m_pathLabel->SetEllipsisTrimmingEnabled(true); // long paths trim from the right within the pane width
     m_pathLabel->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.78f));
+    // Reveal the full path on hover when the strip is too narrow to show it,
+    // and copy just the path (not the selection suffix) on right-click.
+    m_pathLabel->SetTooltipOnTruncation(true);
+    m_pathLabel->SetCopyTextOnRightClick(true);
 
     // Bottom-right stats readout: total triangle count of the loaded scene,
     // plus the picked sub-mesh's count while one is selected. Full-width
@@ -78,7 +82,8 @@ NifComparePane::NifComparePane(const std::wstring& name)
 
 void NifComparePane::UpdatePathLabel()
 {
-    std::wstring text = m_doc ? m_doc->filePath() : L"(no file)";
+    const std::wstring path = m_doc ? m_doc->filePath() : std::wstring();
+    std::wstring text = m_doc ? path : L"(no file)";
     if (!m_selectedName.empty())
     {
         text += L"    ▸ " + m_selectedName;
@@ -86,6 +91,8 @@ void NifComparePane::UpdatePathLabel()
             text += L"  [" + m_selectedKind + L"]";
     }
     m_pathLabel->SetText(text);
+    // Right-click copies just the .nif path, without the selection suffix.
+    m_pathLabel->SetCopyText(path);
     m_pathLabel->Invalidate();
 }
 

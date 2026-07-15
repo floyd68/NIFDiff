@@ -74,6 +74,10 @@ own copies.
   first, with a "Clear Recent Files" entry), open the containing folder in
   Explorer with the file selected, and save the pane's 3D render as a PNG
   (defaults next to the .nif, auto-numbered).
+- **Path tooltips + copy**: every control that shows a path (a pane's
+  .nif path strip, the Game Data label) reveals the full path in a hover
+  tooltip when the strip is too narrow to show it in full, and copies the
+  path to the clipboard on right-click with a brief confirmation banner.
 - **Drag & drop from Explorer** (FICture2's drag-controller semantics):
   hovering the left 75% of a pane shows a red overlay and the drop
   REPLACES that pane's document; the right 25% shows a green strip and

@@ -238,6 +238,9 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     // pathological paths the compaction can't shrink.
     m_gameDataLabel->SetFixedWidth(330.0f);
     m_gameDataLabel->SetEllipsisTrimmingEnabled(true);
+    // Hover shows the full install path (set in SetGameDataLabel, since the
+    // displayed text is middle-compacted); right-click copies it.
+    m_gameDataLabel->SetCopyTextOnRightClick(true);
     resources->AddChild(m_gameDataLabel);
 
     auto resRow = makeRow(name + L"_ResRow", 8.0f);
@@ -343,6 +346,8 @@ void NifCompareControlPanel::SetGameDataLabel(const std::wstring& text)
     if (text.empty())
     {
         m_gameDataLabel->SetText(L"Game Data: (not set)");
+        m_gameDataLabel->SetTooltipText(L"");
+        m_gameDataLabel->SetCopyText(L"");
         return;
     }
     // A Data path's tail is the informative part ("...\Skyrim Special
@@ -352,11 +357,13 @@ void NifCompareControlPanel::SetGameDataLabel(const std::wstring& text)
     // width at its 13pt font.
     constexpr UINT kMaxPathChars = 44;
     wchar_t compact[512] {};
-    if (text.size() > kMaxPathChars - 1
-        && PathCompactPathExW(compact, text.c_str(), kMaxPathChars, 0) && compact[0] != L'\0')
-        m_gameDataLabel->SetText(L"Game Data: " + std::wstring(compact));
-    else
-        m_gameDataLabel->SetText(L"Game Data: " + text);
+    const bool compacted = text.size() > kMaxPathChars - 1
+        && PathCompactPathExW(compact, text.c_str(), kMaxPathChars, 0) && compact[0] != L'\0';
+    m_gameDataLabel->SetText(L"Game Data: " + std::wstring(compacted ? compact : text.c_str()));
+    // Full path for hover (only when the display was actually shortened) and
+    // for the right-click copy (always).
+    m_gameDataLabel->SetTooltipText(compacted ? text : std::wstring());
+    m_gameDataLabel->SetCopyText(text);
 }
 
 void NifCompareControlPanel::SetOverrideCountLabel(std::size_t count)
