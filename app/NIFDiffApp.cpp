@@ -876,14 +876,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 
         {
             StartupTrace::Phase p("Backplate AddWnd (view attach)");
-            // Root layout: the thumbnail strip docks on the left (zero width
-            // until a folder is browsed), the compare view fills the rest.
-            auto root = std::make_shared<FD2D::DockPanel>(L"Root");
-            root->AddChild(thumbnailStrip);
-            root->SetChildDock(thumbnailStrip, FD2D::Dock::Left);
-            root->AddChild(compareView);
-            root->SetChildDock(compareView, FD2D::Dock::Fill);
-            backplate->AddWnd(root);
+            // The thumbnail strip docks along the bottom of the compare view's
+            // pane area (below the panes, above the control strip) as a
+            // horizontal row - zero height until a folder is browsed.
+            thumbnailStrip->SetOrientation(ThumbnailStrip::Orientation::Horizontal);
+            compareView->SetThumbnailStrip(thumbnailStrip);
+            backplate->AddWnd(compareView);
         }
 
         // Explorer drag&drop -> NifCompareView::OnFileDrag/OnFileDropPaths.
@@ -892,7 +890,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         if (!backplate->EnsureDropTargetRegistered())
             NIFLOG_ERROR("RegisterDragDrop failed - Explorer drag&drop disabled for this run.");
 
-        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow, ipcQueue](HWND hwnd)
+        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, weakStrip, ipcUiWindow, ipcQueue](HWND hwnd)
         {
             // Stop routing IPC opens at a window that is about to die;
             // future requests answer Ignore right away.
@@ -903,6 +901,9 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 SaveSession(iniPath, *view);
             if (auto res = weakResolver.lock())
                 SaveResources(iniPath, *res);
+            // Remember the last-browsed thumbnail folder for next launch.
+            if (auto strip = weakStrip.lock())
+                AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailFolder", strip->Folder());
         });
         backplate->SetOnWindowPlacementChanged([iniPath](HWND hwnd)
         {
@@ -915,6 +916,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 LoadFilesIntoPanes(*compareView, cmdFiles);
             else
                 LoadAndOpenInitialSession(*compareView, settings);
+        }
+
+        // Restore the last-browsed thumbnail folder (skip if it has vanished).
+        {
+            const std::wstring thumbFolder = settings.GetString(kSectionSession, L"ThumbnailFolder");
+            std::error_code ec;
+            if (!thumbFolder.empty() && std::filesystem::is_directory(thumbFolder, ec))
+                thumbnailStrip->SetFolder(thumbFolder);
         }
 
         // UI is fully wired (view attached, initial files loaded) - publish

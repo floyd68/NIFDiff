@@ -17,12 +17,10 @@ namespace nsk
 
 namespace
 {
-    constexpr float kStripWidth = 184.0f;
+    constexpr float kFixedExtent = 196.0f; // strip's fixed dim (width if vertical, height if horizontal)
     constexpr float kPad = 8.0f;
-    constexpr float kThumb = kStripWidth - kPad * 2.0f; // square thumbnail
     constexpr float kLabelH = 20.0f;
-    constexpr float kCardH = kThumb + kLabelH + kPad * 2.0f;
-    constexpr float kHeaderH = 26.0f;
+    constexpr float kHeaderH = 26.0f;      // count header (vertical mode only)
     constexpr UINT kThumbPx = 168;         // offscreen render resolution
     constexpr int kPerFrame = 2;           // thumbnails generated per frame
     constexpr float kFovY = 0.9f;
@@ -31,6 +29,43 @@ namespace
 ThumbnailStrip::ThumbnailStrip(const std::wstring& name)
     : FD2D::Wnd(name)
 {
+}
+
+void ThumbnailStrip::SetOrientation(Orientation o)
+{
+    const bool h = (o == Orientation::Horizontal);
+    if (h == m_horizontal)
+        return;
+    m_horizontal = h;
+    m_scroll = 0.0f;
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
+float ThumbnailStrip::ThumbSide() const
+{
+    // Horizontal leaves room below the square thumbnail for the label row;
+    // vertical uses the full width for the thumbnail (label sits under it).
+    return m_horizontal ? (kFixedExtent - kLabelH - kPad * 3.0f)
+                        : (kFixedExtent - kPad * 2.0f);
+}
+
+float ThumbnailStrip::CardMain() const
+{
+    // Size of one card along the scroll axis.
+    return m_horizontal ? (ThumbSide() + kPad * 2.0f)
+                        : (ThumbSide() + kLabelH + kPad * 2.0f);
+}
+
+float ThumbnailStrip::LeadGutter() const
+{
+    return m_horizontal ? kPad : kHeaderH;
+}
+
+float ThumbnailStrip::ContentExtent() const
+{
+    return LeadGutter() + static_cast<float>(m_entries.size()) * CardMain() + kPad;
 }
 
 void ThumbnailStrip::OnAttached(FD2D::Backplate& backplate)
@@ -44,7 +79,7 @@ void ThumbnailStrip::SetFolder(const std::wstring& folder)
 {
     m_entries.clear();
     m_nextToRender = 0;
-    m_scrollY = 0.0f;
+    m_scroll = 0.0f;
     m_hoverCard = -1;
     m_folder = folder;
     m_thumbCache.Clear();
@@ -81,8 +116,13 @@ void ThumbnailStrip::SetFolder(const std::wstring& folder)
 
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
 {
-    const float w = HasContent() ? kStripWidth : 0.0f;
-    m_desired = { w, available.h };
+    if (!HasContent())
+    {
+        m_desired = { 0.0f, 0.0f };
+        return m_desired;
+    }
+    m_desired = m_horizontal ? FD2D::Size { available.w, kFixedExtent }
+                             : FD2D::Size { kFixedExtent, available.h };
     return m_desired;
 }
 
@@ -233,17 +273,12 @@ void ThumbnailStrip::EnsureTextFormat()
     }
 }
 
-float ThumbnailStrip::ContentHeight() const
-{
-    return kHeaderH + static_cast<float>(m_entries.size()) * kCardH + kPad;
-}
-
 void ThumbnailStrip::ClampScroll()
 {
     const D2D1_RECT_F r = LayoutRect();
-    const float viewH = r.bottom - r.top;
-    const float maxScroll = (std::max)(0.0f, ContentHeight() - viewH);
-    m_scrollY = std::clamp(m_scrollY, 0.0f, maxScroll);
+    const float viewMain = m_horizontal ? (r.right - r.left) : (r.bottom - r.top);
+    const float maxScroll = (std::max)(0.0f, ContentExtent() - viewMain);
+    m_scroll = std::clamp(m_scroll, 0.0f, maxScroll);
 }
 
 void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
@@ -255,16 +290,22 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     const D2D1_RECT_F r = LayoutRect();
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
 
-    // Strip background + right hairline separator.
+    // Strip background + a hairline separator on the edge facing the content
+    // (right when docked left, top when docked bottom).
     if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.12f), &brush)))
         target->FillRectangle(r, brush.Get());
     if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.28f, 0.29f, 0.33f), &brush)))
-        target->FillRectangle(D2D1::RectF(r.right - 1.0f, r.top, r.right, r.bottom), brush.Get());
+    {
+        const D2D1_RECT_F sep = m_horizontal ? D2D1::RectF(r.left, r.top, r.right, r.top + 1.0f)
+                                             : D2D1::RectF(r.right - 1.0f, r.top, r.right, r.bottom);
+        target->FillRectangle(sep, brush.Get());
+    }
 
     target->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_ALIASED);
 
-    // Header: "<count> models".
-    if (m_textFormat && SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.62f, 0.66f, 0.72f), &brush)))
+    // Header count (vertical mode only - the horizontal strip has no room).
+    if (!m_horizontal && m_textFormat &&
+        SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.62f, 0.66f, 0.72f), &brush)))
     {
         const std::wstring hdr = std::to_wstring(m_entries.size()) + L" model" +
                                  (m_entries.size() == 1 ? L"" : L"s");
@@ -273,15 +314,32 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
             brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 
+    const float thumb = ThumbSide();
+    const float cardMain = CardMain();
+    const float lead = LeadGutter();
+
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
         Entry& e = m_entries[i];
-        const float top = r.top + kHeaderH + static_cast<float>(i) * kCardH - m_scrollY;
-        if (top + kCardH < r.top || top > r.bottom)
-            continue; // off-screen
+        const float off = lead + static_cast<float>(i) * cardMain - m_scroll;
 
-        const D2D1_RECT_F card { r.left + 2.0f, top, r.right - 2.0f, top + kCardH };
-        const D2D1_RECT_F thumb { r.left + kPad, top + kPad, r.left + kPad + kThumb, top + kPad + kThumb };
+        D2D1_RECT_F card, thumbRect;
+        if (m_horizontal)
+        {
+            const float left = r.left + off;
+            if (left + cardMain < r.left || left > r.right)
+                continue;
+            card = { left, r.top + 1.0f, left + cardMain, r.bottom };
+            thumbRect = { left + kPad, r.top + kPad, left + kPad + thumb, r.top + kPad + thumb };
+        }
+        else
+        {
+            const float top = r.top + off;
+            if (top + cardMain < r.top || top > r.bottom)
+                continue;
+            card = { r.left + 2.0f, top, r.right - 2.0f, top + cardMain };
+            thumbRect = { r.left + kPad, top + kPad, r.left + kPad + thumb, top + kPad + thumb };
+        }
 
         if (static_cast<int>(i) == m_hoverCard &&
             SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.17f, 0.19f, 0.24f), &brush)))
@@ -290,21 +348,21 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
         EnsureBitmap(e);
         if (e.bitmap)
         {
-            target->DrawBitmap(e.bitmap.Get(), thumb, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            target->DrawBitmap(e.bitmap.Get(), thumbRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         }
         else
         {
-            // Placeholder box: dark for pending, reddish for a failed load.
             const D2D1_COLOR_F c = e.failed ? D2D1::ColorF(0.28f, 0.14f, 0.14f)
                                             : D2D1::ColorF(0.14f, 0.14f, 0.17f);
             if (SUCCEEDED(target->CreateSolidColorBrush(c, &brush)))
-                target->FillRectangle(thumb, brush.Get());
+                target->FillRectangle(thumbRect, brush.Get());
         }
 
         if (m_textFormat &&
             SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.82f, 0.84f, 0.88f), &brush)))
         {
-            const D2D1_RECT_F lbl { thumb.left, thumb.bottom + 2.0f, thumb.right, thumb.bottom + 2.0f + kLabelH };
+            const D2D1_RECT_F lbl { thumbRect.left, thumbRect.bottom + 2.0f,
+                                    thumbRect.right, thumbRect.bottom + 2.0f + kLabelH };
             target->DrawTextW(e.name.c_str(), static_cast<UINT32>(e.name.size()), m_textFormat.Get(),
                 lbl, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
@@ -317,11 +375,19 @@ int ThumbnailStrip::CardAtPoint(const POINT& pt) const
 {
     const D2D1_RECT_F r = LayoutRect();
     const float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
-    if (x < r.left || x > r.right || y < r.top + kHeaderH || y > r.bottom)
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom)
         return -1;
-    const float local = y - (r.top + kHeaderH) + m_scrollY;
+
+    float local;
+    if (m_horizontal)
+        local = (x - r.left) - LeadGutter() + m_scroll;
+    else
+    {
+        if (y < r.top + kHeaderH) return -1; // header row
+        local = (y - r.top) - LeadGutter() + m_scroll;
+    }
     if (local < 0.0f) return -1;
-    const int idx = static_cast<int>(local / kCardH);
+    const int idx = static_cast<int>(local / CardMain());
     return (idx >= 0 && idx < static_cast<int>(m_entries.size())) ? idx : -1;
 }
 
@@ -340,7 +406,8 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
     case InputEventType::MouseWheel:
         if (event.hasPoint && inStrip(event.point))
         {
-            m_scrollY -= static_cast<float>(event.wheelDelta) / 120.0f * kCardH * 0.5f;
+            // Wheel scrolls the strip's main axis (down/away = later items).
+            m_scroll -= static_cast<float>(event.wheelDelta) / 120.0f * CardMain() * 0.5f;
             ClampScroll();
             Invalidate();
             return true;

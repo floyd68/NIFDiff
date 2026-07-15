@@ -24,6 +24,7 @@ NifCompareView::NifCompareView(const std::wstring& name)
     : FD2D::SplitPanel(name, FD2D::SplitterOrientation::Vertical) // outer split divides views (first pane) from the bottom control strip (second pane)
 {
     m_controls = std::make_shared<NifCompareControlPanel>(name + L"_Controls");
+    m_viewsArea = std::make_shared<FD2D::DockPanel>(name + L"_ViewsArea");
 
     CreateInitialPanes();
     RebuildHostTree();
@@ -1389,6 +1390,36 @@ void NifCompareView::ApplySplitRatios(const std::vector<float>& ratios)
     Invalidate();
 }
 
+void NifCompareView::RebuildViewsArea()
+{
+    if (!m_viewsArea)
+        return;
+    // DockPanel arranges in child order and Fill must come last, so add the
+    // bottom-docked strip first, then the Fill host tree. ClearDocks drops the
+    // previous host + its stale dock-order entry (kept alive by m_hostRoot) so
+    // the new tree isn't starved of space by a leftover Fill entry.
+    m_viewsArea->ClearDocks();
+    if (m_thumbnailStrip)
+    {
+        m_viewsArea->AddChild(m_thumbnailStrip);
+        m_viewsArea->SetChildDock(m_thumbnailStrip, FD2D::Dock::Bottom);
+    }
+    if (m_hostRoot)
+    {
+        m_viewsArea->AddChild(m_hostRoot);
+        m_viewsArea->SetChildDock(m_hostRoot, FD2D::Dock::Fill);
+    }
+}
+
+void NifCompareView::SetThumbnailStrip(const std::shared_ptr<FD2D::Wnd>& strip)
+{
+    m_thumbnailStrip = strip;
+    RebuildViewsArea();
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
 void NifCompareView::RebuildHostTree()
 {
     // Every caller of this changes the pane COUNT (add / remove / initial
@@ -1407,21 +1438,15 @@ void NifCompareView::RebuildHostTree()
 
     std::shared_ptr<FD2D::Wnd> host = NifCompareSplitCoordinator::BuildEqualWidthHostTree(wnds);
 
-    // SplitPanel::SetFirstChild only ADDS the new child - it does not remove
-    // the previous one from the Children() collection, and every child in
-    // that collection keeps rendering (Wnd::OnRender walks all children).
-    // Without this removal the superseded host tree lingers with its stale
-    // layout rects, drawing ghost panes (visible as orphaned Open/Close
-    // strips after shrinking the pane count). FICture2 sidesteps the same
-    // FD2D behavior with ClearChildren(), which we can't use here - it would
-    // also drop the control strip and the splitter.
-    if (host && !m_hostName.empty() && host->Name() != m_hostName)
-        RemoveChild(m_hostName);
+    // The host tree lives inside the persistent m_viewsArea DockPanel (which
+    // also holds the thumbnail strip). RebuildViewsArea ClearChildren()s that
+    // DockPanel and re-adds in dock order, so the superseded host tree can't
+    // linger as ghost panes (the old worry when SetFirstChild only ADDED).
+    m_hostRoot = host;
     if (host)
         m_hostName = host->Name();
-    m_hostRoot = host;
-
-    SetFirstChild(host);
+    RebuildViewsArea();
+    SetFirstChild(m_viewsArea);
 
     // A new/removed child changes this panel's Measure/Arrange results, not
     // just its pixel content - Invalidate() alone only schedules a repaint

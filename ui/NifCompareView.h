@@ -19,6 +19,7 @@
 #include "../core/ResourceResolver.h"
 
 #include <SplitPanel.h>
+#include <DockPanel.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <functional>
@@ -177,6 +178,12 @@ public:
     // pane's viewport. Must outlive this view.
     void SetRenderDevice(RenderDevice* device);
 
+    // Docks an accessory strip (the folder thumbnail browser) along the
+    // bottom of the VIEWS area - below the pane grid but above the control
+    // strip - rather than at the very bottom of the window. Zero-size until
+    // it has content, so it takes no space when unused.
+    void SetThumbnailStrip(const std::shared_ptr<FD2D::Wnd>& strip);
+
     void InvalidateTextureCaches();
 
     // Resources panel callbacks (Game Data / overrides), forwarded to the
@@ -193,6 +200,9 @@ private:
     std::shared_ptr<NifComparePane> CreatePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
     void RebuildHostTree();
+    // Rebuilds the views-area DockPanel's children (thumbnail strip docked
+    // Bottom, host tree Fill) in the order DockPanel requires.
+    void RebuildViewsArea();
     // Grays out the "Parallax Height" slider and the three extended-material
     // toggles unless some loaded pane carries material each control affects.
     void RefreshExtendedMaterialControls();
@@ -255,8 +265,13 @@ private:
     NifComparePane* m_activePane = nullptr; // read through ActivePane() - validates + falls back
     NifComparePane* m_dragOverlayPane = nullptr;
     DragOverlayKind m_dragOverlayKind = DragOverlayKind::None;
-    std::wstring m_hostName; // current first-child host tree, removed on rebuild (see RebuildHostTree)
+    std::wstring m_hostName; // current host tree inside m_viewsArea, swapped on rebuild (see RebuildHostTree)
     std::shared_ptr<FD2D::Wnd> m_hostRoot; // same tree, kept for the split-ratio walks
+    // The SplitPanel's first child: a DockPanel holding the pane host tree
+    // (Fill) and, docked at its bottom, the thumbnail strip - so the strip
+    // sits below the panes and above the control strip.
+    std::shared_ptr<FD2D::DockPanel> m_viewsArea;
+    std::shared_ptr<FD2D::Wnd> m_thumbnailStrip;
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
     std::shared_ptr<IpcOpenQueue> m_ipcQueue;

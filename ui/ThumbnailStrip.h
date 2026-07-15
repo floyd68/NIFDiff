@@ -33,7 +33,16 @@ namespace nsk
 class ThumbnailStrip : public FD2D::Wnd
 {
 public:
+    // Vertical = a fixed-width column of stacked cards (docks Left/Right);
+    // Horizontal = a fixed-height row of cards (docks Top/Bottom). The scroll
+    // axis, hit-test and Measure axis all follow this.
+    enum class Orientation { Vertical, Horizontal };
+
     explicit ThumbnailStrip(const std::wstring& name);
+
+    // Layout orientation; the owner must dock the strip on the matching edge.
+    void SetOrientation(Orientation o);
+    Orientation GetOrientation() const { return m_horizontal ? Orientation::Horizontal : Orientation::Vertical; }
 
     // Shared, app-owned; must outlive the strip. Set before attach/use.
     void SetRenderDevice(RenderDevice* device) { m_renderDevice = device; }
@@ -73,7 +82,13 @@ private:
     void EnsureBitmap(Entry& entry);
     void EnsureTextFormat();
     int CardAtPoint(const POINT& pt) const; // -1 when none
-    float ContentHeight() const;
+    // Geometry helpers, orientation-aware. thumb = square thumbnail side;
+    // cardMain = per-card size along the scroll axis; leadGutter = space before
+    // the first card (the header in vertical mode).
+    float ThumbSide() const;
+    float CardMain() const;
+    float LeadGutter() const;
+    float ContentExtent() const; // total size along the scroll axis
     void ClampScroll();
 
     RenderDevice* m_renderDevice = nullptr;
@@ -88,7 +103,8 @@ private:
     std::wstring m_folder;
     std::vector<Entry> m_entries;
     std::size_t m_nextToRender = 0; // index of the next entry to generate
-    float m_scrollY = 0.0f;
+    bool m_horizontal = false;
+    float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)
     int m_hoverCard = -1;
 
     std::function<void(const std::wstring&)> m_onActivated;
