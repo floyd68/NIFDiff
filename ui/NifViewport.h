@@ -53,6 +53,13 @@ public:
     // scene - the async load worker needs it to build the same mesh set.
     bool ShowHiddenNodes() const { return m_showHiddenNodes; }
 
+    // Draw a centered "Loading..." overlay while the pane's model is being
+    // parsed/built on the pool (the viewport otherwise shows just its grid).
+    void SetLoading(bool loading)
+    {
+        if (m_loading != loading) { m_loading = loading; Invalidate(); }
+    }
+
     // Shared Game Data / override / BSA resolver. Must outlive this viewport.
     void SetResourceResolver(ResourceResolver* resolver);
 
@@ -197,6 +204,8 @@ private:
     bool m_frontalLight = false;
     bool m_showHiddenNodes = false;
     bool m_msaaEnabled = true;
+    bool m_loading = false; // draw the "Loading..." overlay
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_loadingFormat;
 
     // Shared render core (device-level resources) + this view's own
     // framebuffer and geometry cache (see the render/ headers).

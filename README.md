@@ -149,12 +149,19 @@ own copies.
   Only the cheap "which file/archive entry is this" lookup stays on the UI
   thread; the expensive BSA byte-extraction happens on a worker.
 - Opening a file is asynchronous end to end: the NIF parse and scene build
-  run on the load pool too, so a pane switches to a placeholder immediately
-  and the model appears when it's ready, and the UI thread only does the
-  final hand-off. A burst of opens (session restore, multi-file drag&drop,
-  single-instance forwarding) fills every pane at once and each model
-  streams in independently; re-pointing or closing a pane mid-load drops the
-  superseded load instead of letting a stale result land in the wrong pane.
+  run on the load pool too, so a pane switches to a placeholder (its grid with
+  a "Loading…" overlay) immediately and the model appears when it's ready, and
+  the UI thread only does the final hand-off. At launch the window opens with
+  every pane already present and labelled with its file name (the last
+  session's pane count, restored first) while the models load in behind them.
+  Every pane's model NIF is loaded ahead of the (lower-priority) folder
+  thumbnails - the shared queue always drains the main models first - so
+  opening several panes fills them all with models before the thumbnail strips
+  populate. A burst of opens
+  (session restore, multi-file drag&drop, single-instance forwarding) fills
+  every pane at once and each model streams in independently; re-pointing or
+  closing a pane mid-load drops the superseded load instead of letting a
+  stale result land in the wrong pane.
 - Session persistence (open files, splitter ratios, recent-files list,
   Game Data path, override folders),
   `.nif` file association, and single-instance forwarding: opening a

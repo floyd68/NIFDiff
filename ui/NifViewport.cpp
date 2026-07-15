@@ -1,6 +1,7 @@
 #include "NifViewport.h"
 #include "../core/StartupTrace.h"
 #include <Backplate.h>
+#include <Core.h> // FD2D::Core::DWriteFactory (Loading overlay text)
 #include <Util.h>
 #include <cmath>
 #include <cstdlib>
@@ -350,11 +351,36 @@ void NifViewport::OnRender(ID2D1RenderTarget* target)
     if (!target)
         return;
     EnsureD2DTarget();
-    if (!m_d2dBitmap)
-        return;
 
-    D2D1_RECT_F destRect = LayoutRect();
-    target->DrawBitmap(m_d2dBitmap.Get(), destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    const D2D1_RECT_F destRect = LayoutRect();
+    if (m_d2dBitmap)
+        target->DrawBitmap(m_d2dBitmap.Get(), destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+    // Centered "Loading..." overlay while the model is still parsing/building
+    // on the pool (the scene bitmap under it is just the placeholder grid).
+    if (m_loading)
+    {
+        if (!m_loadingFormat)
+        {
+            if (IDWriteFactory* dw = FD2D::Core::DWriteFactory())
+            {
+                if (SUCCEEDED(dw->CreateTextFormat(L"Segoe UI", nullptr,
+                        DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL, 20.0f, L"", &m_loadingFormat)))
+                {
+                    m_loadingFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    m_loadingFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                }
+            }
+        }
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+        if (m_loadingFormat &&
+            SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.78f, 0.82f, 0.90f), &brush)))
+        {
+            const wchar_t* text = L"Loading…";
+            target->DrawTextW(text, 8u, m_loadingFormat.Get(), destRect, brush.Get());
+        }
+    }
 }
 
 bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)

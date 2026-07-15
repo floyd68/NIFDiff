@@ -259,8 +259,8 @@ std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
                 EvictNif();
             }
             promise.set_value(doc); // release any joiners
-            NIFLOG_INFO("[NIFCACHE] parse {} ({:.1f} ms, io={}){}", name, ms, io,
-                        doc ? "" : " FAILED");
+            NIFLOG_INFO("[NIFCACHE] parse P{} {} ({:.1f} ms, io={}){}",
+                        static_cast<int>(prio), name, ms, io, doc ? "" : " FAILED");
             return doc;
         }
     }

@@ -167,15 +167,24 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
 
     // Async: enter Loading immediately (the viewport shows its placeholder grid
     // and the path label reads "Loading"), then parse+build on the shared pool.
-    // Bumping our generation drops any previous in-flight load (retarget).
-    m_loadGen = m_resourceManager->BumpGeneration(this);
     m_pendingPath = path;
     m_state = LoadState::Loading;
     m_viewport->SetDocument(nullptr);
+    m_viewport->SetLoading(true);
     UpdatePathLabel();
     UpdateStatsLabel();
-    m_thumbStrip->ShowForFile(path); // the strip can list the folder right away
+    SubmitParseJob(path);
+    return true;
+}
 
+void NifComparePane::SubmitParseJob(const std::wstring& path)
+{
+    // Queue the parse+build on the shared pool (ActivePane priority). Bumping
+    // our generation drops any previous in-flight load (retarget). Kept minimal
+    // and free of UI churn so the startup batch (StartPendingLoad) can queue
+    // every pane's main job before any completion - and thus any lower-priority
+    // thumbnail - runs.
+    m_loadGen = m_resourceManager->BumpGeneration(this);
     ResourceManager* const mgr = m_resourceManager;
     NifComparePane* const self = this;
     const std::uint64_t gen = m_loadGen;
@@ -195,13 +204,24 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
                 [self, path, doc, meshes = std::move(meshes)]() mutable
                 { self->AcceptLoaded(path, std::move(doc), std::move(meshes)); });
         });
-    return true;
+}
+
+void NifComparePane::StartPendingLoad()
+{
+    // The pane is already named + placeholdered (ShowPendingFile); just queue
+    // the parse job. No SetDocument/SetLoading/label work here, so a batch of
+    // these can't trigger a synchronous render (which would run a completion
+    // and submit thumbnails) before every main is queued.
+    if (m_state != LoadState::Loading || m_pendingPath.empty() || !m_resourceManager)
+        return;
+    SubmitParseJob(m_pendingPath);
 }
 
 void NifComparePane::AcceptLoaded(const std::wstring& path,
                                   std::shared_ptr<const NifDocument> doc,
                                   std::vector<RenderMesh> meshes)
 {
+    m_viewport->SetLoading(false); // load finished (success or failure)
     if (!doc)
     {
         // Parse or build failed: leave the placeholder, mark the pane Failed.
@@ -229,6 +249,25 @@ void NifComparePane::AcceptLoaded(const std::wstring& path,
         m_onFileOpened(path);
 }
 
+void NifComparePane::ShowPendingFile(const std::wstring& path)
+{
+    if (path.empty())
+    {
+        Clear();
+        return;
+    }
+    // Named placeholder, no load yet: the pane appears with its file name (and
+    // the viewport's placeholder grid) immediately; Load() follows once the
+    // archive scan is ready. CurrentPath() returns this pending path, so pane
+    // placement and the session save already treat the pane as occupied.
+    m_pendingPath = path;
+    m_state = LoadState::Loading;
+    m_viewport->SetDocument(nullptr);
+    m_viewport->SetLoading(true);
+    UpdatePathLabel();
+    UpdateStatsLabel();
+}
+
 void NifComparePane::Clear()
 {
     // Drop any in-flight load so its late completion doesn't repopulate us.
@@ -238,6 +277,7 @@ void NifComparePane::Clear()
     m_pendingPath.clear();
     m_doc.reset();
     m_viewport->SetDocument(nullptr);
+    m_viewport->SetLoading(false);
     UpdatePathLabel();
     UpdateStatsLabel();
     m_thumbStrip->ShowForFile(std::wstring()); // nothing loaded -> empty strip

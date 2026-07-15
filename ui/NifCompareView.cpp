@@ -379,25 +379,84 @@ void NifCompareView::SetPaneCount(std::size_t count)
     RebuildHostTree();
 }
 
-bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
+NifComparePane* NifCompareView::AllocatePaneFor()
 {
-    if (path.empty())
-        return false;
-
-    NifComparePane* target = nullptr;
     for (auto& pane : m_panes)
     {
         // A still-loading pane reads as occupied (CurrentPath() is its pending
         // path), so a burst of opens doesn't stack onto one not-yet-filled pane.
         if (pane && pane->CurrentPath().empty())
+            return pane.get();
+    }
+    return AddPane(); // nullptr when already at kMaxPanes
+}
+
+void NifCompareView::PlaceQueuedIpcPanesNamesOnly()
+{
+    // Startup archive-scan window: create a named placeholder pane for each
+    // queued IPC path WITHOUT loading (the load would block on the scan). Panes
+    // appear immediately as the forwards arrive; LoadAllPendingPanes starts the
+    // actual loads once the scan is ready. TryEnqueue already capped the queue
+    // to the pane budget, so AllocatePaneFor is expected to succeed.
+    if (!m_ipcQueue)
+        return;
+    bool placedAny = false;
+    for (;;)
+    {
+        std::wstring path;
         {
-            target = pane.get();
+            std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
+            if (m_ipcQueue->pending.empty())
+                break;
+            path = std::move(m_ipcQueue->pending.front());
+            m_ipcQueue->pending.pop_front();
+        }
+        NifComparePane* target = AllocatePaneFor();
+        if (!target)
+        {
+            // At capacity (a race past the enqueue cap): put it back for the
+            // post-scan normal drain, which has the spawn-a-new-instance path.
+            std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
+            m_ipcQueue->pending.push_front(std::move(path));
             break;
         }
+        target->ShowPendingFile(path);
+        placedAny = true;
     }
-    if (!target)
-        target = AddPane(); // nullptr when already at kMaxPanes
+    if (placedAny)
+    {
+        UpdateIpcOpenSnapshot(); // the new panes now "hold" their names for the gate
+        Invalidate();
+    }
+}
 
+void NifCompareView::LoadAllPendingPanes()
+{
+    // Second phase of startup: kick off the async load for every pane that is
+    // named but not yet loaded - both the initial session/command-line panes
+    // and any IPC panes placed names-only during the scan wait. StartPendingLoad
+    // only queues the parse job (no per-pane UI work), so ALL main loads are
+    // enqueued before any completion runs - keeping every pane's main NIF ahead
+    // of the (lower-priority) folder thumbnails in the shared queue.
+    for (auto& pane : m_panes)
+        if (pane)
+            pane->StartPendingLoad();
+
+    // Every main is now queued (P0). Show the thumbnail strips (folder listing +
+    // P3 thumbnails) so they take their proper height right away instead of
+    // popping in as each model finishes; the mains still parse first (higher
+    // priority), and each strip's thumbnails trail them.
+    for (auto& pane : m_panes)
+        if (pane)
+            pane->ShowThumbnailFolder();
+}
+
+bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+
+    NifComparePane* target = AllocatePaneFor();
     if (!target)
         return false;
 
@@ -412,6 +471,15 @@ bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
 void NifCompareView::SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue)
 {
     m_ipcQueue = std::move(queue);
+    // Deliberately NOT snapshotting here: at this point no pane is named yet,
+    // so it would wipe the SeedExpected seed to empty and make forwards that
+    // arrive during startup match nothing. The snapshot is (re)built once panes
+    // are named (RefreshIpcOpenSnapshot after CreateNamedPanes) and on every
+    // document change.
+}
+
+void NifCompareView::RefreshIpcOpenSnapshot()
+{
     UpdateIpcOpenSnapshot();
 }
 
@@ -420,13 +488,19 @@ void NifCompareView::UpdateIpcOpenSnapshot()
     if (!m_ipcQueue)
         return;
 
+    // Use each pane's CURRENT path (the loaded document's, or the pending path
+    // while it is still loading), not just loaded documents: a pane that is
+    // async-loading file X already "holds" X's name for the same-name IPC gate,
+    // so a sibling forward of X lands in a new pane instead of being declined.
     std::vector<std::wstring> names;
     for (const auto& pane : m_panes)
     {
-        const NifDocument* doc = pane ? pane->Document() : nullptr;
-        if (doc == nullptr)
+        if (!pane)
             continue;
-        std::wstring name = IpcOpenQueue::FileNameLower(doc->filePath());
+        const std::wstring path = pane->CurrentPath();
+        if (path.empty())
+            continue;
+        std::wstring name = IpcOpenQueue::FileNameLower(path);
         if (!name.empty())
             names.push_back(std::move(name));
     }

@@ -414,29 +414,14 @@ namespace
         resolver.SetGameData(gameData); // triggers ReloadArchives
     }
 
-    // Command-line launch (including the Explorer file-association case):
-    // size the view to exactly the given files - a single double-clicked
-    // .nif gets a single pane, not the constructor's two-pane default with
-    // an empty right pane. Safe here: this runs at startup before any load
-    // (see SetPaneCount's comment about synchronous removal).
-    void LoadFilesIntoPanes(NifCompareView& view, const std::vector<std::wstring>& paths)
+    // The .nif paths the initial view should hold: the command-line/association
+    // files if any, else the last session's still-existing files. Empty means a
+    // single blank pane (first run, or every remembered file has vanished).
+    std::vector<std::wstring> GatherInitialPaths(const AppSettings& settings,
+                                                 const std::vector<std::wstring>& cmdFiles)
     {
-        if (paths.empty())
-            return;
-        view.SetPaneCount(paths.size());
-        for (std::size_t i = 0; i < paths.size() && i < view.PaneCount(); ++i)
-        {
-            if (!paths[i].empty())
-                view.Pane(i).Load(paths[i]);
-        }
-    }
-
-    // Parameterless launch: restore the last-opened session, with the pane
-    // count sized to exactly the files that still exist. First run (no
-    // session keys yet) or every remembered file having since vanished both
-    // degrade to a single empty pane rather than the two-pane default.
-    void LoadAndOpenInitialSession(NifCompareView& view, const AppSettings& settings)
-    {
+        if (!cmdFiles.empty())
+            return cmdFiles;
         std::vector<std::wstring> paths;
         for (std::size_t i = 0; i < NifCompareView::kMaxPanes; ++i)
         {
@@ -445,18 +430,30 @@ namespace
             if (!path.empty() && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
                 paths.push_back(std::move(path));
         }
+        return paths;
+    }
 
+    // Phase 1 (before the window shows / the archive scan finishes): create the
+    // panes and show each one's file NAME right away, so the window appears with
+    // the right pane count and labels instead of the constructor's blank
+    // two-pane default. The models load later (SubmitInitialLoads). Safe at
+    // startup before any load (see SetPaneCount's synchronous-removal comment).
+    void CreateNamedPanes(NifCompareView& view, const AppSettings& settings,
+                          const std::vector<std::wstring>& paths, bool restoreSplit)
+    {
         if (paths.empty())
         {
             view.SetPaneCount(1);
             return;
         }
-
         view.SetPaneCount(paths.size());
         for (std::size_t i = 0; i < paths.size() && i < view.PaneCount(); ++i)
-            view.Pane(i).Load(paths[i]);
+            view.Pane(i).ShowPendingFile(paths[i]); // named placeholder, no load yet
 
-        // Restore the dragged splitter positions saved with the session.
+        // Restore the dragged splitter positions saved with the session (only
+        // meaningful for a session restore, not command-line files).
+        if (!restoreSplit)
+            return;
         const std::wstring ratioStr = settings.GetString(kSectionSession, L"SplitRatios");
         if (!ratioStr.empty())
         {
@@ -474,6 +471,7 @@ namespace
             view.ApplySplitRatios(ratios);
         }
     }
+
 
     bool ReadWindowPlacement(const AppSettings& settings, RECT& outRect, int& outShowCmd)
     {
@@ -959,11 +957,35 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             SaveWindowPlacement(iniPath, hwnd);
         });
 
+        // Create every pane and show its file NAME before the window appears,
+        // so it opens with the right pane count and labels immediately (pane
+        // creation is the highest-priority step) instead of the constructor's
+        // blank two-pane default. The models load later, after the scan.
+        const std::vector<std::wstring> initialPaths = GatherInitialPaths(settings, cmdFiles);
+        {
+            StartupTrace::Phase p("Create named panes");
+            CreateNamedPanes(*compareView, settings, initialPaths, /*restoreSplit=*/cmdFiles.empty());
+            // The panes now carry their (pending) file names; refresh the IPC
+            // same-name snapshot so forwards arriving during the scan wait match
+            // them (SeedExpected covered the window before the panes existed).
+            compareView->RefreshIpcOpenSnapshot();
+
+            // Size the thumbnail strips NOW (before any load), so the strip
+            // height is right from the first paint instead of jumping once the
+            // thumbnails finish. On/off + card size are global settings.
+            const bool stripOn =
+                settings.GetString(kSectionSession, L"ThumbnailStripEnabled") != L"0";
+            compareView->SetThumbnailStripEnabled(stripOn, /*notify=*/false);
+            const int savedSize = settings.GetInt(kSectionSession, L"ThumbnailSize",
+                                                  static_cast<int>(ThumbnailStrip::kSizeMedium));
+            compareView->SetThumbnailStripSize(static_cast<float>(savedSize));
+        }
+
         // Show the window BEFORE the several-second initial load so it appears
         // right away instead of only after every pane + its BSA textures are
         // ready. The load stalls on the background archive scan, so keep the
-        // (empty) window painting/responsive until the scan lands - then the
-        // pane loads below resolve textures without a long freeze.
+        // (named-placeholder) window painting/responsive until the scan lands -
+        // then the pane loads below resolve textures without a long freeze.
         const int effectiveShowCmd = hasSavedPlacement ? savedShowCmd : nCmdShow;
         {
             StartupTrace::Phase p("Backplate Show");
@@ -982,6 +1004,11 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                     DispatchMessageW(&msg);
                 }
                 if (!IsWindow(hwnd)) { windowAlive = false; break; } // closed while waiting
+                // IPC forwards that arrive while we wait (Vortex/Explorer opening
+                // several files at once): create their named panes RIGHT NOW so
+                // they show up beside the first one, without waiting for the scan
+                // or the first load. The actual loads run below, once ready.
+                compareView->PlaceQueuedIpcPanesNamesOnly();
                 if (resolver && !resolver->IsArchiveScanReady())
                     Sleep(6); // brief; keeps CPU free for the scan
             }
@@ -990,31 +1017,15 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         if (windowAlive)
         {
             {
+                // Panes + names are already up (CreateNamedPanes, plus any IPC
+                // panes placed names-only during the wait). Place any last IPC
+                // arrival, then kick off the async load for EVERY named pane
+                // (scan is ready, so texture resolve won't block).
                 StartupTrace::Phase p("Initial NIF load (panes)");
-                if (!cmdFiles.empty())
-                    LoadFilesIntoPanes(*compareView, cmdFiles);
-                else
-                    LoadAndOpenInitialSession(*compareView, settings);
+                compareView->PlaceQueuedIpcPanesNamesOnly();
+                compareView->LoadAllPendingPanes();
             }
             initialLoadDone->store(true); // the session is now safe to persist
-
-            // Restore the global thumbnail-strip on/off. Each pane's strip
-            // follows its own .nif folder, which the initial load above already
-            // pointed it at; nothing folder-specific is persisted. Default: on.
-            {
-                // Enabled unless explicitly turned off last session. Reflect it
-                // in the VIEW-group checkbox and apply to every pane without
-                // notifying (avoids a redundant INI write).
-                const bool stripOn =
-                    settings.GetString(kSectionSession, L"ThumbnailStripEnabled") != L"0";
-                compareView->SetThumbnailStripEnabled(stripOn, /*notify=*/false);
-
-                // Card size (default Medium); any saved value is accepted - the
-                // strip clamps it to its valid resize range.
-                const int savedSize = settings.GetInt(kSectionSession, L"ThumbnailSize",
-                                                      static_cast<int>(ThumbnailStrip::kSizeMedium));
-                compareView->SetThumbnailStripSize(static_cast<float>(savedSize));
-            }
 
             // UI is fully wired (view attached, initial files loaded) - publish
             // the window so IPC accepts can post their drain broadcast at it,

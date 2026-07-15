@@ -56,6 +56,23 @@ public:
     bool Load(const std::wstring& path, std::string* error = nullptr);
     void Clear();
 
+    // Show a target file name immediately (Loading placeholder) WITHOUT
+    // starting the load. Used at startup so every pane appears named before the
+    // archive scan finishes; a later StartPendingLoad() does the actual load.
+    void ShowPendingFile(const std::wstring& path);
+
+    // Queue the parse job for a pane already named via ShowPendingFile, with no
+    // UI churn - so the startup batch can queue every pane's main load before
+    // any completion (and thus any lower-priority thumbnail) runs. No-op unless
+    // the pane is in the Loading placeholder state.
+    void StartPendingLoad();
+
+    // Show this pane's thumbnail strip for its current/pending folder now, so
+    // the strip is present at its proper height before the model finishes
+    // loading (called after the startup batch queues every main, so its
+    // lower-priority thumbnails still trail the mains in the shared queue).
+    void ShowThumbnailFolder() { m_thumbStrip->ShowForFile(CurrentPath()); }
+
     void SetResourceResolver(ResourceResolver* resolver);
     void SetTextureRepository(TextureRepository* repository);
     void SetRenderDevice(RenderDevice* device);
@@ -104,6 +121,8 @@ public:
 private:
     void UpdatePathLabel();
     void UpdateStatsLabel();
+    // Queue the ActivePane-priority parse+build job for `path` (no UI work).
+    void SubmitParseJob(const std::wstring& path);
     // UI-thread completion of an async Load (already generation-checked by the
     // manager). `doc` null => the parse/build failed.
     void AcceptLoaded(const std::wstring& path, std::shared_ptr<const NifDocument> doc,

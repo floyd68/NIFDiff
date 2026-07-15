@@ -80,6 +80,21 @@ public:
     // UI thread too.
     bool OpenIntoBestPane(const std::wstring& path);
 
+    // Startup two-phase pane creation (so panes appear before the archive scan
+    // finishes and before any file loads):
+    //  - PlaceQueuedIpcPanesNamesOnly: during the scan wait, create a named
+    //    placeholder pane for each queued IPC forward WITHOUT loading (the load
+    //    would block on the scan). Poll it from the wait loop.
+    //  - LoadAllPendingPanes: once the scan is ready, start the async load for
+    //    every named-but-unloaded pane (initial session + IPC-placed alike).
+    void PlaceQueuedIpcPanesNamesOnly();
+    void LoadAllPendingPanes();
+
+    // Rebuild the IPC same-name snapshot from the panes' current (loaded OR
+    // pending) files. Call once after the initial panes are named, so forwards
+    // arriving during startup match them.
+    void RefreshIpcOpenSnapshot();
+
     // Single-instance IPC wiring (see ui/IpcOpenRequest.h for the gate
     // semantics and threading): the IPC worker threads decide + enqueue
     // against `queue`'s snapshot; this view keeps that snapshot current
@@ -215,6 +230,8 @@ public:
     void SetOverrideCountLabel(std::size_t count);
 
 private:
+    // Reuse a free (empty) pane, else add one; null at kMaxPanes.
+    NifComparePane* AllocatePaneFor();
     void CreateInitialPanes();
     std::shared_ptr<NifComparePane> CreatePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
