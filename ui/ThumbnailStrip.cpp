@@ -43,6 +43,19 @@ void ThumbnailStrip::SetOrientation(Orientation o)
     Invalidate();
 }
 
+void ThumbnailStrip::SetEnabled(bool enabled)
+{
+    if (enabled == m_enabled)
+        return;
+    m_enabled = enabled;
+    m_hoverCard = -1;
+    // Toggling presence changes our measured extent (0 when off), so relayout;
+    // re-enabling resumes generation from where it left off (m_nextToRender).
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
 float ThumbnailStrip::ThumbSide() const
 {
     // Horizontal leaves room below the square thumbnail for the label row;
@@ -75,14 +88,44 @@ void ThumbnailStrip::OnAttached(FD2D::Backplate& backplate)
     m_context = backplate.D3DContext();
 }
 
-void ThumbnailStrip::SetFolder(const std::wstring& folder)
+void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
+{
+    if (nifPath.empty())
+    {
+        // The active pane has nothing loaded: clear the strip.
+        if (!m_folder.empty() || !m_entries.empty())
+            NavigateTo(std::wstring(), std::wstring());
+        return;
+    }
+    std::filesystem::path p(nifPath);
+    const std::wstring dir = p.has_parent_path() ? p.parent_path().wstring() : std::wstring();
+    if (dir == m_folder && !m_entries.empty())
+    {
+        // Same folder already listed - just move the highlight, no re-list.
+        if (m_currentFile != nifPath)
+        {
+            m_currentFile = nifPath;
+            Invalidate();
+        }
+        return;
+    }
+    NavigateTo(dir, nifPath);
+}
+
+void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 {
     m_entries.clear();
     m_nextToRender = 0;
     m_scroll = 0.0f;
     m_hoverCard = -1;
     m_folder = folder;
+    m_currentFile = selectPath;
     m_thumbCache.Clear();
+
+    auto lessNoCase = [](const Entry& a, const Entry& b)
+    {
+        return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+    };
 
     if (!folder.empty())
     {
@@ -90,25 +133,55 @@ void ThumbnailStrip::SetFolder(const std::wstring& folder)
         std::filesystem::path dir(folder);
         if (std::filesystem::is_directory(dir, ec))
         {
+            // ".." to the parent (unless this is a filesystem root).
+            const std::filesystem::path parent = dir.parent_path();
+            if (!parent.empty() && parent != dir)
+            {
+                Entry up;
+                up.kind = EntryKind::Up;
+                up.path = parent.wstring();
+                up.name = L"..";
+                up.rendered = true;
+                m_entries.push_back(std::move(up));
+            }
+
+            std::vector<Entry> folders, files;
             for (const auto& de : std::filesystem::directory_iterator(dir, ec))
             {
                 if (ec) break;
-                if (!de.is_regular_file(ec)) continue;
-                std::wstring ext = de.path().extension().wstring();
-                std::transform(ext.begin(), ext.end(), ext.begin(),
-                               [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-                if (ext != L".nif") continue;
-                Entry e;
-                e.path = de.path().wstring();
-                e.name = de.path().filename().wstring();
-                m_entries.push_back(std::move(e));
+                std::error_code ec2;
+                if (de.is_directory(ec2))
+                {
+                    Entry f;
+                    f.kind = EntryKind::Folder;
+                    f.path = de.path().wstring();
+                    f.name = de.path().filename().wstring();
+                    f.rendered = true;
+                    folders.push_back(std::move(f));
+                }
+                else if (de.is_regular_file(ec2))
+                {
+                    std::wstring ext = de.path().extension().wstring();
+                    std::transform(ext.begin(), ext.end(), ext.begin(),
+                                   [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+                    if (ext != L".nif") continue;
+                    Entry e;
+                    e.kind = EntryKind::File;
+                    e.path = de.path().wstring();
+                    e.name = de.path().filename().wstring();
+                    files.push_back(std::move(e));
+                }
             }
+            std::sort(folders.begin(), folders.end(), lessNoCase);
+            std::sort(files.begin(), files.end(), lessNoCase);
+            m_entries.insert(m_entries.end(), std::make_move_iterator(folders.begin()),
+                             std::make_move_iterator(folders.end()));
+            m_entries.insert(m_entries.end(), std::make_move_iterator(files.begin()),
+                             std::make_move_iterator(files.end()));
         }
-        std::sort(m_entries.begin(), m_entries.end(),
-                  [](const Entry& a, const Entry& b) { return a.name < b.name; });
     }
 
-    // Width changes (0 <-> kStripWidth) with content presence, so relayout.
+    // Presence (and thus our measured extent) may have changed, so relayout.
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
@@ -116,7 +189,7 @@ void ThumbnailStrip::SetFolder(const std::wstring& folder)
 
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
 {
-    if (!HasContent())
+    if (!HasContent() || !m_enabled)
     {
         m_desired = { 0.0f, 0.0f };
         return m_desired;
@@ -128,6 +201,11 @@ FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
 
 bool ThumbnailStrip::RenderNextThumbnail()
 {
+    // Folder/Up tiles need no 3D render - skip past them (they sort before the
+    // .nif files, so this just advances the cursor to the first file once).
+    while (m_nextToRender < m_entries.size() &&
+           m_entries[m_nextToRender].kind != EntryKind::File)
+        ++m_nextToRender;
     if (m_nextToRender >= m_entries.size())
         return false;
     if (!m_renderDevice || !m_renderDevice->IsInitialized() || !m_device ||
@@ -225,6 +303,12 @@ bool ThumbnailStrip::RenderNextThumbnail()
 
 void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
 {
+    // Off: the loader idles - no parsing/building/rendering happens.
+    if (!m_enabled)
+    {
+        FD2D::Wnd::OnRenderD3D(context);
+        return;
+    }
     // Generate a few thumbnails per frame in the D3D pass (RenderScene binds
     // its own targets), then keep painting until the whole folder is done.
     for (int i = 0; i < kPerFrame; ++i)
@@ -297,9 +381,42 @@ void ThumbnailStrip::ClampScroll()
     m_scroll = std::clamp(m_scroll, 0.0f, maxScroll);
 }
 
+void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const
+{
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.16f, 0.19f), &brush)))
+        target->FillRectangle(rc, brush.Get());
+
+    const float w = rc.right - rc.left, h = rc.bottom - rc.top;
+    const float cx = (rc.left + rc.right) * 0.5f, cy = (rc.top + rc.bottom) * 0.5f;
+    if (up)
+    {
+        // Up chevron for the ".." tile.
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.72f, 0.76f, 0.82f), &brush)))
+        {
+            const float s = (std::min)(w, h) * 0.26f;
+            target->DrawLine({ cx - s, cy + s * 0.55f }, { cx, cy - s * 0.75f }, brush.Get(), 3.5f);
+            target->DrawLine({ cx, cy - s * 0.75f }, { cx + s, cy + s * 0.55f }, brush.Get(), 3.5f);
+        }
+    }
+    else
+    {
+        // Folder glyph: a body rect with a small tab on top-left.
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.83f, 0.70f, 0.36f), &brush)))
+        {
+            const float fw = w * 0.52f, fh = h * 0.36f;
+            const float l = cx - fw * 0.5f, t = cy - fh * 0.42f;
+            const D2D1_RECT_F tab { l, t - fh * 0.28f, l + fw * 0.42f, t + 1.0f };
+            const D2D1_RECT_F body { l, t, l + fw, t + fh };
+            target->FillRectangle(tab, brush.Get());
+            target->FillRectangle(body, brush.Get());
+        }
+    }
+}
+
 void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 {
-    if (!target || !HasContent())
+    if (!target || !HasContent() || !m_enabled)
         return;
     EnsureTextFormat();
 
@@ -322,11 +439,11 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     // Header count (vertical mode only - the horizontal strip has no room).
     if (m_textFormat)
         m_textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    if (!m_horizontal && m_textFormat &&
+    if (!m_horizontal && m_textFormat && !m_folder.empty() &&
         SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.62f, 0.66f, 0.72f), &brush)))
     {
-        const std::wstring hdr = std::to_wstring(m_entries.size()) + L" model" +
-                                 (m_entries.size() == 1 ? L"" : L"s");
+        // Current folder name, so the strip reads as "the active pane's folder".
+        const std::wstring hdr = std::filesystem::path(m_folder).filename().wstring();
         target->DrawTextW(hdr.c_str(), static_cast<UINT32>(hdr.size()), m_textFormat.Get(),
             D2D1::RectF(r.left + kPad, r.top + 6.0f, r.right - kPad, r.top + kHeaderH),
             brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -368,17 +485,33 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
             SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.17f, 0.19f, 0.24f), &brush)))
             target->FillRectangle(card, brush.Get());
 
-        EnsureBitmap(e);
-        if (e.bitmap)
+        if (e.kind != EntryKind::File)
         {
-            target->DrawBitmap(e.bitmap.Get(), thumbRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            // Folder / ".." navigation tile.
+            DrawFolderIcon(target, thumbRect, e.kind == EntryKind::Up);
         }
         else
         {
-            const D2D1_COLOR_F c = e.failed ? D2D1::ColorF(0.28f, 0.14f, 0.14f)
-                                            : D2D1::ColorF(0.14f, 0.14f, 0.17f);
-            if (SUCCEEDED(target->CreateSolidColorBrush(c, &brush)))
-                target->FillRectangle(thumbRect, brush.Get());
+            EnsureBitmap(e);
+            if (e.bitmap)
+            {
+                target->DrawBitmap(e.bitmap.Get(), thumbRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            }
+            else
+            {
+                const D2D1_COLOR_F c = e.failed ? D2D1::ColorF(0.28f, 0.14f, 0.14f)
+                                                : D2D1::ColorF(0.14f, 0.14f, 0.17f);
+                if (SUCCEEDED(target->CreateSolidColorBrush(c, &brush)))
+                    target->FillRectangle(thumbRect, brush.Get());
+            }
+            // Accent border on the active pane's current file.
+            if (!m_currentFile.empty() && e.path == m_currentFile &&
+                SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.36f, 0.62f, 0.96f), &brush)))
+            {
+                const D2D1_RECT_F b { thumbRect.left - 1.5f, thumbRect.top - 1.5f,
+                                      thumbRect.right + 1.5f, thumbRect.bottom + 1.5f };
+                target->DrawRectangle(b, brush.Get(), 2.5f);
+            }
         }
 
         if (m_textFormat &&
@@ -421,7 +554,7 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
 
     const D2D1_RECT_F r = LayoutRect();
     auto inStrip = [&](const POINT& p) {
-        return HasContent() && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+        return HasContent() && m_enabled && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
     };
 
     switch (event.type)
@@ -456,8 +589,19 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
             if (hit >= 0)
             {
                 RequestFocus();
-                if (m_onActivated)
-                    m_onActivated(m_entries[static_cast<std::size_t>(hit)].path);
+                const Entry& e = m_entries[static_cast<std::size_t>(hit)];
+                if (e.kind == EntryKind::File)
+                {
+                    // Load the sibling into the active pane (owner's handler).
+                    if (m_onActivated)
+                        m_onActivated(e.path);
+                }
+                else
+                {
+                    // Folder / ".." tile: navigate the strip in place, keeping
+                    // the current-file highlight (matches only if it reappears).
+                    NavigateTo(e.path, m_currentFile);
+                }
                 return true;
             }
         }

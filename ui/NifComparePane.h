@@ -9,6 +9,7 @@
 #pragma once
 
 #include "NifViewport.h"
+#include "ThumbnailStrip.h"
 #include "../core/NifDocument.h"
 #include "../core/ResourceResolver.h"
 
@@ -28,6 +29,9 @@ public:
 
     NifViewport& Viewport() { return *m_viewport; }
     const NifDocument* Document() const { return m_doc.get(); }
+    // Full path of the .nif currently loaded here, empty when the pane is
+    // cleared - the thumbnail strip follows this to list the pane's folder.
+    std::wstring CurrentPath() const { return m_doc ? m_doc->filePath() : std::wstring(); }
 
     bool Load(const std::wstring& path, std::string* error = nullptr);
     void Clear();
@@ -36,6 +40,11 @@ public:
     void SetTextureRepository(TextureRepository* repository);
     void SetRenderDevice(RenderDevice* device);
     void InvalidateTextureCache();
+
+    // This pane's own thumbnail strip (FICture2's ThumbnailPane, one per pane):
+    // it lists the folder of THIS pane's open .nif. Master on/off is a global
+    // UI toggle applied to every pane.
+    void SetThumbnailStripEnabled(bool enabled);
 
     // Fires after Load/Clear changed this pane's document - NifCompareView
     // uses it to refresh document-dependent control state (e.g. whether the
@@ -53,6 +62,7 @@ private:
     void UpdateStatsLabel();
 
     std::shared_ptr<NifViewport> m_viewport;
+    std::shared_ptr<ThumbnailStrip> m_thumbStrip; // bottom strip: this pane's folder browser
     std::shared_ptr<FD2D::Text> m_pathLabel;  // top strip: full path of the loaded .nif + picked sub-mesh name
     std::shared_ptr<FD2D::Text> m_statsLabel; // bottom strip, right-aligned: total (and selected sub-mesh) triangle counts
     std::wstring m_selectedName;              // name of the viewport's picked sub-mesh, empty when none

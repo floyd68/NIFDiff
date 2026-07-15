@@ -79,6 +79,13 @@ NifCompareView::NifCompareView(const std::wstring& name)
         m_msaaEnabled = on;
         for (auto& p : m_panes) p->Viewport().SetMsaaEnabled(on);
     });
+    // Global on/off for every pane's own thumbnail strip. The user click
+    // applies it to all panes and reports it to the owner (for persistence).
+    m_controls->SetOnThumbnailStripChanged([this](bool on)
+    {
+        ApplyThumbStripEnabled(on);
+        if (m_onThumbStripEnabledChanged) m_onThumbStripEnabledChanged(on);
+    });
 
     // Lighting sliders are shared UI (not per-pane manipulable like camera
     // drag), so "Sync Lighting" here means "apply to every pane" (on) vs.
@@ -200,6 +207,7 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetEnableSpecular(m_enableSpecular);
     pane->Viewport().SetEnableGlow(m_enableGlow);
     pane->Viewport().SetEnableLighting(m_enableLighting);
+    pane->SetThumbnailStripEnabled(m_thumbStripEnabled); // new panes inherit the global toggle
     WirePaneCallbacks(pane);
     return pane;
 }
@@ -232,6 +240,7 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     {
         if (m_onFileOpened)
             m_onFileOpened(path);
+        // The pane refreshes its own thumbnail strip in Load().
     });
 }
 
@@ -415,6 +424,16 @@ void NifCompareView::SetActivePane(NifComparePane* pane)
     if (m_activePane == pane)
         return;
     m_activePane = pane;
+    Invalidate();
+}
+
+void NifCompareView::ApplyThumbStripEnabled(bool on)
+{
+    m_thumbStripEnabled = on;
+    for (auto& p : m_panes)
+        p->SetThumbnailStripEnabled(on);
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
     Invalidate();
 }
 
@@ -1394,16 +1413,11 @@ void NifCompareView::RebuildViewsArea()
 {
     if (!m_viewsArea)
         return;
-    // DockPanel arranges in child order and Fill must come last, so add the
-    // bottom-docked strip first, then the Fill host tree. ClearDocks drops the
-    // previous host + its stale dock-order entry (kept alive by m_hostRoot) so
-    // the new tree isn't starved of space by a leftover Fill entry.
+    // The pane grid fills the whole views area (each pane hosts its own
+    // thumbnail strip now). ClearDocks drops the previous host + its stale
+    // dock-order entry (kept alive by m_hostRoot) so the new tree isn't
+    // starved of space by a leftover Fill entry.
     m_viewsArea->ClearDocks();
-    if (m_thumbnailStrip)
-    {
-        m_viewsArea->AddChild(m_thumbnailStrip);
-        m_viewsArea->SetChildDock(m_thumbnailStrip, m_thumbnailStripDock);
-    }
     if (m_hostRoot)
     {
         m_viewsArea->AddChild(m_hostRoot);
@@ -1411,24 +1425,30 @@ void NifCompareView::RebuildViewsArea()
     }
 }
 
-void NifCompareView::SetThumbnailStrip(const std::shared_ptr<FD2D::Wnd>& strip)
+void NifCompareView::SetOnThumbnailStripEnabledChanged(std::function<void(bool)> handler)
 {
-    m_thumbnailStrip = strip;
-    RebuildViewsArea();
-    if (FD2D::Backplate* bp = BackplateRef())
-        bp->RequestLayout();
-    Invalidate();
+    m_onThumbStripEnabledChanged = std::move(handler);
 }
 
-void NifCompareView::SetThumbnailStripDock(FD2D::Dock dock)
+void NifCompareView::SetThumbnailStripEnabled(bool enabled, bool notify)
 {
-    if (m_thumbnailStripDock == dock)
-        return;
-    m_thumbnailStripDock = dock;
-    RebuildViewsArea();
-    if (FD2D::Backplate* bp = BackplateRef())
-        bp->RequestLayout();
-    Invalidate();
+    // Reflect in the checkbox without re-firing its handler, then apply to
+    // every pane; report to the owner only when asked (restore passes false).
+    m_controls->SetThumbnailStripChecked(enabled, /*notify=*/false);
+    ApplyThumbStripEnabled(enabled);
+    if (notify && m_onThumbStripEnabledChanged)
+        m_onThumbStripEnabledChanged(enabled);
+}
+
+bool NifCompareView::IsThumbnailStripEnabled() const
+{
+    return m_controls->ThumbnailStripChecked();
+}
+
+void NifCompareView::ToggleThumbnailStrip()
+{
+    // Flips the checkbox WITH notify -> the wired handler broadcasts + persists.
+    m_controls->ToggleThumbnailStrip();
 }
 
 void NifCompareView::RebuildHostTree()

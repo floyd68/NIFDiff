@@ -53,12 +53,26 @@ NifComparePane::NifComparePane(const std::wstring& name)
     m_statsLabel->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.78f));
     m_statsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
 
-    // DockPanel's Fill dock stops any further docking, so the Top-docked
-    // path strip and Bottom-docked stats strip must be added before the
-    // Fill-docked viewport (see DockPanel::Arrange / NifViewport.h's
-    // comment on the same pattern).
+    // This pane's own thumbnail strip (one per pane, not shared): follows THIS
+    // pane's open .nif folder. Clicking a sibling loads it into this pane.
+    m_thumbStrip = std::make_shared<ThumbnailStrip>(name + L"_Thumbs");
+    m_thumbStrip->SetOrientation(ThumbnailStrip::Orientation::Horizontal);
+    m_thumbStrip->SetOnActivated([this](const std::wstring& path)
+    {
+        std::string err;
+        Load(path, &err);
+        Invalidate();
+    });
+
+    // DockPanel's Fill dock stops any further docking, so the Top-docked path
+    // strip and the Bottom-docked strips must be added before the Fill-docked
+    // viewport. Bottom order = outermost first: the thumbnail strip sits at the
+    // very bottom edge, the stats readout just above it (see DockPanel::Arrange
+    // / NifViewport.h's comment on the same pattern).
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
+    AddChild(m_thumbStrip);
+    SetChildDock(m_thumbStrip, FD2D::Dock::Bottom);
     AddChild(m_statsLabel);
     SetChildDock(m_statsLabel, FD2D::Dock::Bottom);
     AddChild(m_viewport);
@@ -133,6 +147,8 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     }
     UpdatePathLabel();
     UpdateStatsLabel();
+    // This pane's strip lists the just-loaded file's folder, highlighting it.
+    m_thumbStrip->ShowForFile(path);
     if (m_onDocumentChanged)
         m_onDocumentChanged();
     if (m_onFileOpened)
@@ -146,6 +162,7 @@ void NifComparePane::Clear()
     m_viewport->SetDocument(nullptr);
     UpdatePathLabel();
     UpdateStatsLabel();
+    m_thumbStrip->ShowForFile(std::wstring()); // nothing loaded -> empty strip
     if (m_onDocumentChanged)
         m_onDocumentChanged();
 }
@@ -153,16 +170,24 @@ void NifComparePane::Clear()
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)
 {
     m_viewport->SetResourceResolver(resolver);
+    m_thumbStrip->SetResourceResolver(resolver);
 }
 
 void NifComparePane::SetTextureRepository(TextureRepository* repository)
 {
     m_viewport->SetTextureRepository(repository);
+    m_thumbStrip->SetTextureRepository(repository);
 }
 
 void NifComparePane::SetRenderDevice(RenderDevice* device)
 {
     m_viewport->SetRenderDevice(device);
+    m_thumbStrip->SetRenderDevice(device);
+}
+
+void NifComparePane::SetThumbnailStripEnabled(bool enabled)
+{
+    m_thumbStrip->SetEnabled(enabled);
 }
 
 void NifComparePane::InvalidateTextureCache()

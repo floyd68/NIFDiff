@@ -83,17 +83,21 @@ own copies.
   .nif path strip, the Game Data label) reveals the full path in a hover
   tooltip when the strip is too narrow to show it in full, and copies the
   path to the clipboard on right-click with a brief confirmation banner.
-- **Folder thumbnail browser** (FICture2's ThumbnailPane equivalent): the
-  context menu's "Open Folder as Thumbnails..." lists every .nif in a folder
-  as a scrollable strip of 3D thumbnails docked along the bottom of the pane
-  area (below the panes, above the control strip), each rendered headlessly
-  through the shared render core (no extra device/shaders). Thumbnails
-  generate a few per frame so a large folder never blocks the UI; clicking
-  one loads it into the active pane; each card's file name is centered and
-  ellipsized under its thumbnail, and hovering a card shows its full path as
-  a tooltip. The context menu can move the strip between the bottom
-  (horizontal) and the left side (vertical); the placement and the
-  last-browsed folder are remembered across sessions.
+- **Per-pane folder thumbnail strips** (FICture2's ThumbnailPane equivalent):
+  every pane hosts its own scrollable strip along its bottom edge that lists
+  the folder of THAT pane's currently-open .nif - so when comparing files from
+  different folders, each pane browses its own. Sibling .nif files appear as
+  3D thumbnails (rendered headlessly through the shared render core, a few per
+  frame so a large folder never blocks the UI), subfolders and an ".." tile
+  appear as folder icons, and the pane's current file is drawn with a blue
+  highlight. Clicking a sibling loads it into that pane (the highlight
+  follows); clicking a folder or ".." navigates that pane's strip in place.
+  Each card's file name is centered and ellipsized under its thumbnail, and
+  hovering shows the full path as a tooltip. The VIEW group's "Thumbnails"
+  checkbox (mirrored by a "Hide/Show Thumbnail Strips" context-menu item)
+  turns every pane's strip off at once - they collapse and their loaders idle
+  so no thumbnails are generated. The on/off state is remembered across
+  sessions.
 - **Drag & drop from Explorer** (FICture2's drag-controller semantics):
   hovering the left 75% of a pane shows a red overlay and the drop
   REPLACES that pane's document; the right 25% shows a green strip and

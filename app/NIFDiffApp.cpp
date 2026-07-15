@@ -55,8 +55,7 @@ namespace
     constexpr UINT kMenuIdOpenFolder = 6;
     constexpr UINT kMenuIdSaveScreenshot = 7;
     constexpr UINT kMenuIdClearRecent = 8;
-    constexpr UINT kMenuIdBrowseThumbnails = 9;
-    constexpr UINT kMenuIdToggleThumbnailDock = 10;
+    constexpr UINT kMenuIdToggleThumbnailStrip = 11;
     // Recent-files (MRU) submenu entries occupy a reserved id range above
     // the fixed items: entry i uses kMenuIdRecentBase + i.
     constexpr UINT kMenuIdRecentBase = 100;
@@ -136,9 +135,8 @@ namespace
     // be a per-pane button row act on exactly that pane.
     void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
                             NifCompareView* view, NifComparePane* pane,
-                            const std::function<void()>& onBrowseThumbnails = {},
-                            const std::function<void()>& onToggleThumbnailDock = {},
-                            bool thumbnailsOnBottom = true)
+                            const std::function<void()>& onToggleThumbnailStrip = {},
+                            bool thumbnailStripEnabled = true)
     {
         POINT screenPt = clientPt;
         ClientToScreen(hwnd, &screenPt);
@@ -187,13 +185,11 @@ namespace
             AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
-        if (onBrowseThumbnails)
+        if (onToggleThumbnailStrip)
         {
-            AppendMenuW(menu, MF_STRING, kMenuIdBrowseThumbnails, L"Open Folder as &Thumbnails...");
-            if (onToggleThumbnailDock)
-                AppendMenuW(menu, MF_STRING, kMenuIdToggleThumbnailDock,
-                            thumbnailsOnBottom ? L"Move Thumbnails to &Left Side"
-                                               : L"Move Thumbnails to &Bottom");
+            AppendMenuW(menu, MF_STRING, kMenuIdToggleThumbnailStrip,
+                        thumbnailStripEnabled ? L"&Hide Thumbnail Strips"
+                                              : L"&Show Thumbnail Strips");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
@@ -252,14 +248,9 @@ namespace
             ClearRecentFiles(iniPath);
             break;
 
-        case kMenuIdBrowseThumbnails:
-            if (onBrowseThumbnails)
-                onBrowseThumbnails();
-            break;
-
-        case kMenuIdToggleThumbnailDock:
-            if (onToggleThumbnailDock)
-                onToggleThumbnailDock();
+        case kMenuIdToggleThumbnailStrip:
+            if (onToggleThumbnailStrip)
+                onToggleThumbnailStrip();
             break;
 
         case kMenuIdAbout:
@@ -746,72 +737,39 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
         std::weak_ptr<ResourceResolver> weakResolver = resolver;
 
-        // Folder thumbnail browser (left strip). Shares the app-wide render
-        // core + texture pool + resolver; clicking a thumbnail loads it into
-        // the active pane. Populated on demand via the context menu.
-        auto thumbnailStrip = std::make_shared<ThumbnailStrip>(L"ThumbStrip");
-        thumbnailStrip->SetRenderDevice(renderDevice.get());
-        thumbnailStrip->SetResourceResolver(resolver.get());
-        thumbnailStrip->SetTextureRepository(textureRepository.get());
-        std::weak_ptr<ThumbnailStrip> weakStrip = thumbnailStrip;
-        thumbnailStrip->SetOnActivated([weakView, weakBackplate](const std::wstring& path)
+        // Per-pane folder thumbnail strips (FICture2's ThumbnailPane model, one
+        // per pane): each NifComparePane owns a strip along its bottom that
+        // lists ITS open .nif's folder - sibling .nif thumbnails + subfolders +
+        // an ".." tile, current file highlighted. Clicking a sibling loads it
+        // into that pane; folder/".." tiles navigate that pane's strip. The
+        // panes create and drive their own strips; the app only persists the
+        // global on/off toggle here.
+        compareView->SetOnThumbnailStripEnabledChanged([iniPath](bool on)
         {
-            auto view = weakView.lock();
-            auto bp = weakBackplate.lock();
-            if (!view || !bp) return;
-            if (NifComparePane* pane = view->ActivePane())
-            {
-                std::string error;
-                pane->Load(path, &error);
-                bp->Render();
-            }
+            AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailStripEnabled",
+                                   on ? L"1" : L"0");
         });
 
         compareView->SetOnContextMenuRequested(
-            [weakView, weakBackplate, weakStrip, iniPath](POINT clientPt, NifComparePane* pane)
+            [weakView, weakBackplate, iniPath](POINT clientPt, NifComparePane* pane)
         {
             auto view = weakView.lock();
             auto bp = weakBackplate.lock();
             if (!view || !bp || bp->Window() == nullptr)
                 return;
-            // "Open Folder as Thumbnails...": pick a folder for the strip.
-            auto onBrowseThumbnails = [weakStrip, weakBackplate]()
+            // Global show/hide for every pane's thumbnail strip (flips the same
+            // VIEW-group checkbox, which broadcasts + persists).
+            const bool stripEnabled = view->IsThumbnailStripEnabled();
+            std::function<void()> onToggleStrip = [weakView, weakBackplate]()
             {
-                auto strip = weakStrip.lock();
+                auto v = weakView.lock();
                 auto bp2 = weakBackplate.lock();
-                if (!strip || !bp2) return;
-                std::wstring folder;
-                if (ShowPickFolderDialog(bp2->Window(), L"Open Folder as Thumbnails", folder))
-                {
-                    strip->SetFolder(folder);
-                    bp2->Render();
-                }
+                if (!v || !bp2) return;
+                v->ToggleThumbnailStrip();
+                bp2->Render();
             };
-            // Toggle strip placement between the bottom (horizontal) and the
-            // left side (vertical); offered only once a folder is loaded.
-            std::function<void()> onToggleDock;
-            bool onBottom = true;
-            if (auto strip = weakStrip.lock(); strip && strip->HasContent())
-            {
-                onBottom = (strip->GetOrientation() == ThumbnailStrip::Orientation::Horizontal);
-                onToggleDock = [weakStrip, weakView, weakBackplate, iniPath]()
-                {
-                    auto strip = weakStrip.lock();
-                    auto v = weakView.lock();
-                    auto bp2 = weakBackplate.lock();
-                    if (!strip || !v || !bp2) return;
-                    const bool toBottom =
-                        (strip->GetOrientation() == ThumbnailStrip::Orientation::Vertical);
-                    strip->SetOrientation(toBottom ? ThumbnailStrip::Orientation::Horizontal
-                                                   : ThumbnailStrip::Orientation::Vertical);
-                    v->SetThumbnailStripDock(toBottom ? FD2D::Dock::Bottom : FD2D::Dock::Left);
-                    AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailDock",
-                                           toBottom ? L"bottom" : L"left");
-                    bp2->Render();
-                };
-            }
             ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane,
-                               onBrowseThumbnails, onToggleDock, onBottom);
+                               onToggleStrip, stripEnabled);
             bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
@@ -912,11 +870,6 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 
         {
             StartupTrace::Phase p("Backplate AddWnd (view attach)");
-            // The thumbnail strip docks along the bottom of the compare view's
-            // pane area (below the panes, above the control strip) as a
-            // horizontal row - zero height until a folder is browsed.
-            thumbnailStrip->SetOrientation(ThumbnailStrip::Orientation::Horizontal);
-            compareView->SetThumbnailStrip(thumbnailStrip);
             backplate->AddWnd(compareView);
         }
 
@@ -926,7 +879,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         if (!backplate->EnsureDropTargetRegistered())
             NIFLOG_ERROR("RegisterDragDrop failed - Explorer drag&drop disabled for this run.");
 
-        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, weakStrip, ipcUiWindow, ipcQueue](HWND hwnd)
+        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow, ipcQueue](HWND hwnd)
         {
             // Stop routing IPC opens at a window that is about to die;
             // future requests answer Ignore right away.
@@ -937,9 +890,6 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 SaveSession(iniPath, *view);
             if (auto res = weakResolver.lock())
                 SaveResources(iniPath, *res);
-            // Remember the last-browsed thumbnail folder for next launch.
-            if (auto strip = weakStrip.lock())
-                AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailFolder", strip->Folder());
         });
         backplate->SetOnWindowPlacementChanged([iniPath](HWND hwnd)
         {
@@ -954,18 +904,16 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 LoadAndOpenInitialSession(*compareView, settings);
         }
 
-        // Restore the thumbnail strip placement + last-browsed folder (skip a
-        // folder that has since vanished). Default is bottom/horizontal.
+        // Restore the global thumbnail-strip on/off. Each pane's strip follows
+        // its own .nif folder, which the initial load above already pointed it
+        // at; nothing folder-specific is persisted. Default: enabled.
         {
-            if (settings.GetString(kSectionSession, L"ThumbnailDock") == L"left")
-            {
-                thumbnailStrip->SetOrientation(ThumbnailStrip::Orientation::Vertical);
-                compareView->SetThumbnailStripDock(FD2D::Dock::Left);
-            }
-            const std::wstring thumbFolder = settings.GetString(kSectionSession, L"ThumbnailFolder");
-            std::error_code ec;
-            if (!thumbFolder.empty() && std::filesystem::is_directory(thumbFolder, ec))
-                thumbnailStrip->SetFolder(thumbFolder);
+            // Enabled unless explicitly turned off last session. Reflect it in
+            // the VIEW-group checkbox and apply to every pane without notifying
+            // (avoids a redundant INI write).
+            const bool stripOn =
+                settings.GetString(kSectionSession, L"ThumbnailStripEnabled") != L"0";
+            compareView->SetThumbnailStripEnabled(stripOn, /*notify=*/false);
         }
 
         // UI is fully wired (view attached, initial files loaded) - publish

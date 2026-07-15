@@ -178,13 +178,15 @@ public:
     // pane's viewport. Must outlive this view.
     void SetRenderDevice(RenderDevice* device);
 
-    // Docks an accessory strip (the folder thumbnail browser) along an edge
-    // of the VIEWS area - below the pane grid or beside it, but inside the
-    // views region above the control strip - rather than at the very bottom
-    // of the window. Zero-size until it has content, so it takes no space
-    // when unused. SetThumbnailStripDock chooses the edge (Bottom or Left).
-    void SetThumbnailStrip(const std::shared_ptr<FD2D::Wnd>& strip);
-    void SetThumbnailStripDock(FD2D::Dock dock);
+    // Per-pane thumbnail strip master on/off (every pane owns its own strip;
+    // this toggle applies to all of them at once), mirrored by the VIEW-group
+    // "Thumbnails" checkbox. The owner persists the choice via
+    // SetOnThumbnailStripEnabledChanged; the context-menu item flips the same
+    // checkbox through ToggleThumbnailStrip.
+    void SetOnThumbnailStripEnabledChanged(std::function<void(bool)> handler);
+    void SetThumbnailStripEnabled(bool enabled, bool notify = false);
+    bool IsThumbnailStripEnabled() const;
+    void ToggleThumbnailStrip();
 
     void InvalidateTextureCaches();
 
@@ -273,8 +275,10 @@ private:
     // (Fill) and, docked at its bottom, the thumbnail strip - so the strip
     // sits below the panes and above the control strip.
     std::shared_ptr<FD2D::DockPanel> m_viewsArea;
-    std::shared_ptr<FD2D::Wnd> m_thumbnailStrip;
-    FD2D::Dock m_thumbnailStripDock = FD2D::Dock::Bottom;
+    // Global on/off for every pane's thumbnail strip (new panes inherit it).
+    bool m_thumbStripEnabled = true;
+    std::function<void(bool)> m_onThumbStripEnabledChanged;
+    void ApplyThumbStripEnabled(bool on); // broadcast to all panes + relayout
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
     std::shared_ptr<IpcOpenQueue> m_ipcQueue;

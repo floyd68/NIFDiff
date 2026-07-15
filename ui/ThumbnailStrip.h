@@ -49,11 +49,21 @@ public:
     void SetResourceResolver(ResourceResolver* resolver) { m_resolver = resolver; }
     void SetTextureRepository(TextureRepository* repository) { m_textureRepository = repository; }
 
-    // Point the strip at a folder: enumerates *.nif (non-recursive, sorted)
-    // and queues each for thumbnail generation. Empty string clears the strip.
-    void SetFolder(const std::wstring& folder);
+    // Follow a pane's open .nif: list its folder (FICture2's ThumbnailPane
+    // model) - sibling .nif files as thumbnails, subfolders and an "Up" tile
+    // as navigable icons - with nifPath's card highlighted as the current
+    // file. Empty path clears the strip (the active pane has nothing loaded).
+    // Re-lists only when the folder actually changed; otherwise just moves the
+    // highlight. Folder/Up tiles navigate the strip in place (no pane load).
+    void ShowForFile(const std::wstring& nifPath);
     const std::wstring& Folder() const { return m_folder; }
     bool HasContent() const { return !m_entries.empty(); }
+
+    // Master on/off: when disabled the strip collapses (Measure 0, no paint)
+    // and thumbnail generation stops (the per-frame loader idles), while the
+    // folder + any thumbnails already rendered are kept for a later re-enable.
+    void SetEnabled(bool enabled);
+    bool IsEnabled() const { return m_enabled; }
 
     // Fires when a thumbnail is clicked, with its full .nif path.
     void SetOnActivated(std::function<void(const std::wstring&)> handler) { m_onActivated = std::move(handler); }
@@ -69,18 +79,32 @@ public:
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
 private:
+    // File = a .nif rendered to a 3D thumbnail; Folder = a subfolder icon that
+    // navigates the strip into it; Up = the ".." tile to the parent folder.
+    enum class EntryKind { File, Folder, Up };
+
     struct Entry
     {
-        std::wstring path;
-        std::wstring name;      // file name only, for the label
-        bool rendered = false;  // 3D pass produced a texture
+        EntryKind kind = EntryKind::File;
+        std::wstring path;      // File: .nif path; Folder/Up: target directory
+        std::wstring name;      // label (file/folder name, or "..")
+        bool rendered = false;  // 3D pass produced a texture (File only)
         bool failed = false;    // parse/build failed - show a placeholder
         Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;   // persistent copy of the render
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;   // D2D view of tex (built lazily in the D2D pass)
     };
 
-    // Renders one queued entry's model into m_thumbTarget and copies it into a
-    // persistent per-entry texture. Returns false when nothing was pending.
+    // Re-list a directory: Up tile (if any parent) + subfolders + *.nif files,
+    // with selectPath's file card highlighted. Resets thumbnail generation.
+    // Args are taken BY VALUE: the first thing this does is clear m_entries, so
+    // a caller passing an entry's own path/name (a folder/Up tile) would be
+    // handing us a reference into the vector we are about to free.
+    void NavigateTo(std::wstring folder, std::wstring selectPath);
+    // Draws a folder / up-arrow glyph inside rc for Folder/Up tiles.
+    void DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const;
+
+    // Renders one queued File entry's model into m_thumbTarget and copies it
+    // into a persistent per-entry texture. Returns false when none pending.
     bool RenderNextThumbnail();
     // Builds the D2D bitmap for an entry whose texture exists but bitmap doesn't.
     void EnsureBitmap(Entry& entry);
@@ -104,9 +128,11 @@ private:
     RenderTarget m_thumbTarget;   // reused for every thumbnail render
     RenderMeshCache m_thumbCache; // cleared per model
 
-    std::wstring m_folder;
+    std::wstring m_folder;       // directory currently listed
+    std::wstring m_currentFile;  // active pane's .nif, highlighted when present
     std::vector<Entry> m_entries;
     std::size_t m_nextToRender = 0; // index of the next entry to generate
+    bool m_enabled = true;          // master on/off (see SetEnabled)
     bool m_horizontal = false;
     float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)
     int m_hoverCard = -1;
