@@ -73,6 +73,11 @@ NifCompareView::NifCompareView(const std::wstring& name)
         m_showTangents = on;
         for (auto& p : m_panes) p->Viewport().SetShowTangents(on);
     });
+    m_controls->SetOnMsaaChanged([this](bool on)
+    {
+        m_msaaEnabled = on;
+        for (auto& p : m_panes) p->Viewport().SetMsaaEnabled(on);
+    });
 
     // Lighting sliders are shared UI (not per-pane manipulable like camera
     // drag), so "Sync Lighting" here means "apply to every pane" (on) vs.
@@ -188,6 +193,7 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetShowHiddenNodes(m_showHiddenNodes);
     pane->Viewport().SetShowNormals(m_showNormals);
     pane->Viewport().SetShowTangents(m_showTangents);
+    pane->Viewport().SetMsaaEnabled(m_msaaEnabled);
     pane->Viewport().SetEnableTextures(m_enableTextures);
     pane->Viewport().SetEnableVertexColors(m_enableVertexColors);
     pane->Viewport().SetEnableSpecular(m_enableSpecular);
@@ -1232,6 +1238,8 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         else
             m_controls->ToggleShowNormals();
         return true;
+
+    case 'M': m_controls->ToggleMsaa(); return true; // 4x MSAA on/off
 
     case 'W':
         if (!ctrl)

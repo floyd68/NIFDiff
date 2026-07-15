@@ -52,6 +52,11 @@ own copies.
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a
   frontal-light mode.
+- **4x MSAA** (toggle, on by default): each pane renders into a multisampled
+  offscreen target and resolves to the composited image, antialiasing model
+  silhouettes, the grid/axes, and the wireframe/normal overlays (clamped to
+  what the GPU supports; NifSkope's DoMultisampling equivalent). Toggle with
+  the DISPLAY "MSAA 4x" checkbox or the `M` key.
 - **Vertex normal/tangent overlays** (NifSkope's gltools line-drawing
   equivalent): cyan normal / magenta tangent line segments per vertex,
   for debugging normal-map/tangent-space issues. Drawn for the selected
@@ -61,7 +66,7 @@ own copies.
   a pane makes it active, drawn with an accent border while several
   panes are open; pane-context shortcuts target it.
 - **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
-  `W` wireframe, `H` hidden, `N` normals, `Shift+N` tangents,
+  `W` wireframe, `H` hidden, `N` normals, `Shift+N` tangents, `M` MSAA,
   `PgUp`/`PgDn` cycle the camera preset;
   pane-context keys acting on the active pane: `1`-`8` / `Tab` /
   `Shift+Tab` select it, `R` resets its camera, `C` focuses its

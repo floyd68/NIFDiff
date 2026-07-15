@@ -107,6 +107,9 @@ public:
     // picked, all meshes otherwise) - see RenderSettings.
     void SetShowNormals(bool show) { m_settings.showNormals = show; Invalidate(); }
     void SetShowTangents(bool show) { m_settings.showTangents = show; Invalidate(); }
+    // 4x MSAA on this pane's offscreen target (off = single-sample). Takes
+    // effect on the next render (RenderTarget resizes to the new sample count).
+    void SetMsaaEnabled(bool on) { m_msaaEnabled = on; Invalidate(); }
     void SetWireframe(bool wire) { m_settings.wireframe = wire; Invalidate(); }
     void SetParallaxHeightScale(float v) { m_settings.parallaxHeightScale = v; Invalidate(); }
     void SetEnableParallax(bool on) { m_settings.enableParallax = on; Invalidate(); }
@@ -180,6 +183,7 @@ private:
     float m_lightPlanarAngleDeg = 45.0f;
     bool m_frontalLight = false;
     bool m_showHiddenNodes = false;
+    bool m_msaaEnabled = true;
 
     // Shared render core (device-level resources) + this view's own
     // framebuffer and geometry cache (see the render/ headers).
@@ -196,6 +200,11 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> m_d2dBitmap;
     UINT m_d2dBitmapWidth = 0;
     UINT m_d2dBitmapHeight = 0;
+    // The color texture the current bitmap wraps. The RenderTarget can swap
+    // this texture out at the same pixel size (e.g. toggling MSAA changes the
+    // sample count), so the bitmap must be rebuilt whenever it changes, not
+    // just on a resize.
+    ID3D11Texture2D* m_d2dBitmapTex = nullptr;
 
     bool m_dragging = false;
     bool m_dragMoved = false; // left drag actually orbited (a still click picks a mesh instead)

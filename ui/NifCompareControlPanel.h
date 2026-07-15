@@ -46,6 +46,8 @@ public:
     // NifSkope's vertex normal/tangent line overlays (gltools drawNormals).
     void SetOnShowNormalsChanged(std::function<void(bool)> handler);
     void SetOnShowTangentsChanged(std::function<void(bool)> handler);
+    // 4x MSAA on/off (NifSkope's DoMultisampling).
+    void SetOnMsaaChanged(std::function<void(bool)> handler);
 
     // Keyboard-shortcut hooks (see NifCompareView's key handling): flip a
     // display checkbox exactly as a click would (the wired handler runs),
@@ -56,6 +58,7 @@ public:
     void ToggleShowHidden();
     void ToggleShowNormals();
     void ToggleShowTangents();
+    void ToggleMsaa();
     void CycleOrientation(int delta);
 
     void SetOnBrightnessChanged(std::function<void(float)> handler);
@@ -118,6 +121,7 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_showHiddenChk;
     std::shared_ptr<FD2D::CheckBox> m_showNormalsChk;
     std::shared_ptr<FD2D::CheckBox> m_showTangentsChk;
+    std::shared_ptr<FD2D::CheckBox> m_msaaChk;
     std::shared_ptr<FD2D::Slider> m_brightnessSlider;
     std::shared_ptr<FD2D::Slider> m_ambientSlider;
     std::shared_ptr<FD2D::Slider> m_declinationSlider;

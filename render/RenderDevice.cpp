@@ -399,6 +399,10 @@ bool RenderDevice::CreateStateObjects()
         // NIF's outward-facing triangles rasterize clockwise.
         .FrontCounterClockwise = FALSE,
         .DepthClipEnable = TRUE,
+        // Use multisample coverage for polygon (and line) edges when the
+        // bound target is MSAA; a no-op on single-sample targets. Every other
+        // rasterizer state below copies this one, so they all inherit it.
+        .MultisampleEnable = TRUE,
     };
     m_device->CreateRasterizerState(&rasterSolid, &m_rasterSolid);
 
@@ -1153,6 +1157,10 @@ void RenderDevice::RenderScene(RenderTarget& target, RenderMeshCache& cache,
             }
         }
     }
+
+    // Resolve MSAA -> the single-sample color D2D wraps (no-op when the
+    // target isn't multisampled). Must precede the unbind below.
+    target.Resolve(m_context.Get());
 
     // Leave the shared FD2D device context clean: our offscreen color RT
     // must not stay bound when Backplate hands the context to D2D.

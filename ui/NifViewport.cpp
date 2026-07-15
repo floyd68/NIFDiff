@@ -237,7 +237,11 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
     D2D1_RECT_F rect = LayoutRect();
     UINT w = static_cast<UINT>((std::max)(1.0f, rect.right - rect.left));
     UINT h = static_cast<UINT>((std::max)(1.0f, rect.bottom - rect.top));
-    if (!m_target.Resize(m_device, w, h))
+    // 4x MSAA for the on-screen panes when enabled (clamped to device support
+    // inside RenderTarget). Antialiases model silhouettes, the grid/axes, and
+    // the wireframe/normal overlays; resolved to a single-sample texture for
+    // D2D. Off = single-sample.
+    if (!m_target.Resize(m_device, w, h, m_msaaEnabled ? 4u : 1u))
         return;
 
     if (m_frontalLight)
@@ -252,10 +256,15 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
     // inspection - and the far plane always covers the scene plus the
     // fixed 200-unit grid.
     const float sceneR = (std::max)(m_sceneRadius, 1.0f);
-    const float dist = m_camera.distance();
-    const float nearZ = std::clamp((dist - sceneR) * 0.2f,
-                                   (std::max)(sceneR, dist) * 1e-4f,
-                                   dist * 0.25f);
+    const float dist = (std::max)(m_camera.distance(), 1e-4f);
+    // Near plane: just ahead of the scene sphere when the eye is well outside
+    // it (empty space in front then wastes no depth range), else a small
+    // fraction of the eye distance for close-ups. Written as nested max so the
+    // result is always positive and never needs a two-sided std::clamp whose
+    // bounds could invert - the old clamp(lo, hi) asserted when zooming a large
+    // scene in close (lo grew past hi as dist shrank).
+    float nearZ = (std::max)((dist - sceneR) * 0.2f, dist * 0.02f);
+    nearZ = (std::max)(nearZ, 1e-4f);
     const float farZ = (std::max)(dist + (std::max)(sceneR * 4.0f, 600.0f), nearZ * 100.0f);
     m_settings.proj = Camera::projectionMatrix(kFovY, aspect, nearZ, farZ);
     m_settings.eyePos = m_camera.eyePosition();
@@ -282,7 +291,8 @@ void NifViewport::EnsureD2DTarget()
         return;
     UINT w = m_target.Width();
     UINT h = m_target.Height();
-    if (m_d2dBitmap && w == m_d2dBitmapWidth && h == m_d2dBitmapHeight)
+    if (m_d2dBitmap && w == m_d2dBitmapWidth && h == m_d2dBitmapHeight &&
+        m_target.ColorTexture() == m_d2dBitmapTex)
         return;
 
     ID2D1RenderTarget* rt = m_backplate->RenderTarget();
@@ -306,6 +316,7 @@ void NifViewport::EnsureD2DTarget()
     {
         m_d2dBitmapWidth = w;
         m_d2dBitmapHeight = h;
+        m_d2dBitmapTex = m_target.ColorTexture();
     }
 }
 
@@ -370,6 +381,14 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
     case InputEventType::MouseMove:
     {
         if (!event.hasPoint) break;
+        // Self-heal a lost button-up: if the drag/pan's button is no longer
+        // held (the release landed on another control that consumed it - e.g.
+        // dragging out of the viewport onto a checkbox), stop tracking so the
+        // view doesn't keep orbiting/panning with no button down.
+        if (m_dragging && !event.modifiers.leftButton)
+            m_dragging = false;
+        if (m_panning && !event.modifiers.middleButton && !event.modifiers.rightButton)
+            m_panning = false;
         float dx = static_cast<float>(event.point.x - m_lastMousePt.x);
         float dy = static_cast<float>(event.point.y - m_lastMousePt.y);
         if (m_dragging)
@@ -413,11 +432,15 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // Zoom toward the cursor, not the orbit target: the world point
         // under the cursor (at target depth) stays put while the distance
         // scales, so content sitting off the bbox center can be zoomed at
-        // directly instead of sliding out of view. Exponential steps give
-        // the same per-notch feel as the old linear dolly at distance.
+        // directly instead of sliding out of view. Exponential steps keep the
+        // feel consistent at any scale (a fixed 20% of the eye distance per
+        // notch: fast to traverse a large scene, still fine near the target
+        // since 20% of a small distance is small). Shift = 4x finer per notch
+        // for precise framing.
+        const float perNotch = event.modifiers.shift ? 0.95f : 0.8f;
         const float delta = static_cast<float>(event.wheelDelta) / 120.0f;
         const float d = m_camera.distance();
-        const float dNew = (std::max)(d * std::pow(0.9f, delta), 0.01f);
+        const float dNew = (std::max)(d * std::pow(perNotch, delta), 0.001f);
 
         Vector3 origin, dir;
         if (event.hasPoint && RayThroughPoint(event.point, origin, dir))

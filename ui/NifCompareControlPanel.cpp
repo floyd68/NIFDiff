@@ -104,6 +104,12 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_showTangentsChk->SetLabel(L"Tangents");
     display->AddChild(m_showTangentsChk);
 
+    // 4x multisample antialiasing (NifSkope's DoMultisampling), on by default.
+    m_msaaChk = std::make_shared<FD2D::CheckBox>(L"MSAA");
+    m_msaaChk->SetLabel(L"MSAA 4x");
+    m_msaaChk->SetChecked(true);
+    display->AddChild(m_msaaChk);
+
     // NifSkope's "Show Hidden": NiAVObject-hidden subtrees (furniture
     // marker rigs, editor markers) are culled by default; this opts them
     // back in for inspection.
@@ -302,6 +308,7 @@ void NifCompareControlPanel::SetOnWireframeChanged(std::function<void(bool)> han
 void NifCompareControlPanel::SetOnShowHiddenChanged(std::function<void(bool)> handler) { m_showHiddenChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnShowNormalsChanged(std::function<void(bool)> handler) { m_showNormalsChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnShowTangentsChanged(std::function<void(bool)> handler) { m_showTangentsChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnMsaaChanged(std::function<void(bool)> handler) { m_msaaChk->OnCheckedChanged(std::move(handler)); }
 
 void NifCompareControlPanel::ToggleShowGrid()     { m_showGridChk->SetChecked(!m_showGridChk->Checked(), /*notify=*/true); }
 void NifCompareControlPanel::ToggleShowAxes()     { m_showAxesChk->SetChecked(!m_showAxesChk->Checked(), /*notify=*/true); }
@@ -309,6 +316,7 @@ void NifCompareControlPanel::ToggleWireframe()    { m_wireframeChk->SetChecked(!
 void NifCompareControlPanel::ToggleShowHidden()   { m_showHiddenChk->SetChecked(!m_showHiddenChk->Checked(), /*notify=*/true); }
 void NifCompareControlPanel::ToggleShowNormals()  { m_showNormalsChk->SetChecked(!m_showNormalsChk->Checked(), /*notify=*/true); }
 void NifCompareControlPanel::ToggleShowTangents() { m_showTangentsChk->SetChecked(!m_showTangentsChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::ToggleMsaa()         { m_msaaChk->SetChecked(!m_msaaChk->Checked(), /*notify=*/true); }
 
 void NifCompareControlPanel::CycleOrientation(int delta)
 {
