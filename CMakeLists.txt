@@ -180,6 +180,8 @@ add_executable(NIFDiff WIN32
     ui/NifCompareControlPanel.cpp
     ui/NifCompareView.h
     ui/NifCompareView.cpp
+    ui/ThumbnailStrip.h
+    ui/ThumbnailStrip.cpp
 )
 
 set_target_properties(NIFDiff PROPERTIES

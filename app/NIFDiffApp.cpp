@@ -6,6 +6,7 @@
 #include "FileDialog.h"
 #include "../ui/IpcOpenRequest.h"
 #include "../ui/NifCompareView.h"
+#include "../ui/ThumbnailStrip.h"
 #include "../core/NifLog.h"
 #include "../core/ResourceResolver.h"
 #include "../core/StartupTrace.h"
@@ -15,6 +16,7 @@
 #include <Application.h>
 #include <Backplate.h>
 #include <Core.h>
+#include <DockPanel.h>
 
 #include <algorithm>
 #include <atomic>
@@ -53,6 +55,7 @@ namespace
     constexpr UINT kMenuIdOpenFolder = 6;
     constexpr UINT kMenuIdSaveScreenshot = 7;
     constexpr UINT kMenuIdClearRecent = 8;
+    constexpr UINT kMenuIdBrowseThumbnails = 9;
     // Recent-files (MRU) submenu entries occupy a reserved id range above
     // the fixed items: entry i uses kMenuIdRecentBase + i.
     constexpr UINT kMenuIdRecentBase = 100;
@@ -131,7 +134,8 @@ namespace
     // click landed outside every pane) - the Open/Close items that used to
     // be a per-pane button row act on exactly that pane.
     void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
-                            NifCompareView* view, NifComparePane* pane)
+                            NifCompareView* view, NifComparePane* pane,
+                            const std::function<void()>& onBrowseThumbnails = {})
     {
         POINT screenPt = clientPt;
         ClientToScreen(hwnd, &screenPt);
@@ -178,6 +182,11 @@ namespace
                 (doc != nullptr && !doc->filePath().empty() ? MF_ENABLED : MF_GRAYED);
             AppendMenuW(menu, folderFlags, kMenuIdOpenFolder, L"Open Containing &Folder");
             AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        }
+        if (onBrowseThumbnails)
+        {
+            AppendMenuW(menu, MF_STRING, kMenuIdBrowseThumbnails, L"Open Folder as &Thumbnails...");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
@@ -234,6 +243,11 @@ namespace
 
         case kMenuIdClearRecent:
             ClearRecentFiles(iniPath);
+            break;
+
+        case kMenuIdBrowseThumbnails:
+            if (onBrowseThumbnails)
+                onBrowseThumbnails();
             break;
 
         case kMenuIdAbout:
@@ -720,13 +734,48 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
         std::weak_ptr<ResourceResolver> weakResolver = resolver;
 
-        compareView->SetOnContextMenuRequested([weakView, weakBackplate, iniPath](POINT clientPt, NifComparePane* pane)
+        // Folder thumbnail browser (left strip). Shares the app-wide render
+        // core + texture pool + resolver; clicking a thumbnail loads it into
+        // the active pane. Populated on demand via the context menu.
+        auto thumbnailStrip = std::make_shared<ThumbnailStrip>(L"ThumbStrip");
+        thumbnailStrip->SetRenderDevice(renderDevice.get());
+        thumbnailStrip->SetResourceResolver(resolver.get());
+        thumbnailStrip->SetTextureRepository(textureRepository.get());
+        std::weak_ptr<ThumbnailStrip> weakStrip = thumbnailStrip;
+        thumbnailStrip->SetOnActivated([weakView, weakBackplate](const std::wstring& path)
+        {
+            auto view = weakView.lock();
+            auto bp = weakBackplate.lock();
+            if (!view || !bp) return;
+            if (NifComparePane* pane = view->ActivePane())
+            {
+                std::string error;
+                pane->Load(path, &error);
+                bp->Render();
+            }
+        });
+
+        compareView->SetOnContextMenuRequested(
+            [weakView, weakBackplate, weakStrip, iniPath](POINT clientPt, NifComparePane* pane)
         {
             auto view = weakView.lock();
             auto bp = weakBackplate.lock();
             if (!view || !bp || bp->Window() == nullptr)
                 return;
-            ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane);
+            // "Open Folder as Thumbnails...": pick a folder for the left strip.
+            auto onBrowseThumbnails = [weakStrip, weakBackplate]()
+            {
+                auto strip = weakStrip.lock();
+                auto bp2 = weakBackplate.lock();
+                if (!strip || !bp2) return;
+                std::wstring folder;
+                if (ShowPickFolderDialog(bp2->Window(), L"Open Folder as Thumbnails", folder))
+                {
+                    strip->SetFolder(folder);
+                    bp2->Render();
+                }
+            };
+            ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane, onBrowseThumbnails);
             bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
@@ -827,7 +876,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 
         {
             StartupTrace::Phase p("Backplate AddWnd (view attach)");
-            backplate->AddWnd(compareView);
+            // Root layout: the thumbnail strip docks on the left (zero width
+            // until a folder is browsed), the compare view fills the rest.
+            auto root = std::make_shared<FD2D::DockPanel>(L"Root");
+            root->AddChild(thumbnailStrip);
+            root->SetChildDock(thumbnailStrip, FD2D::Dock::Left);
+            root->AddChild(compareView);
+            root->SetChildDock(compareView, FD2D::Dock::Fill);
+            backplate->AddWnd(root);
         }
 
         // Explorer drag&drop -> NifCompareView::OnFileDrag/OnFileDropPaths.
