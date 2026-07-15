@@ -37,6 +37,21 @@ struct ResourceBytes
     bool ok() const { return !diskPath.empty() || !data.empty(); }
 };
 
+// The identity of a resolved source WITHOUT its bytes - the cheap half of a
+// lookup (loose-file existence / archive HasEntry), split out so the expensive
+// archive byte-extraction can move off the UI thread. Build one with Locate on
+// the UI thread (for a dedup key), then read the bytes with Extract on a worker.
+struct ResourceLocation
+{
+    std::string sourceKey;       // identity, empty on a miss (see ResourceBytes::sourceKey)
+    std::wstring diskPath;       // loose-file hit: the decoder reads this directly
+    int archiveIndex = -1;       // archive hit: index into the resolver's archive list
+    std::wstring archiveEntry;   // archive hit: normalized entry name to extract
+
+    bool ok() const { return !sourceKey.empty(); }
+    bool isLoose() const { return archiveIndex < 0; }
+};
+
 class ResourceResolver
 {
 public:
@@ -74,6 +89,20 @@ public:
     [[nodiscard]] ResourceBytes Find(const std::string& relativePath,
                                      const std::wstring& nifDirectory = {}) const;
 
+    // Cheap identity lookup: which loose file / archive entry `relativePath`
+    // resolves to, WITHOUT reading archive bytes. Thread-safe; safe to call on
+    // the UI thread to obtain a dedup key. (Loose-file hits never wait; an
+    // archive hit waits for the background scan, usually long done.)
+    [[nodiscard]] ResourceLocation Locate(const std::string& relativePath,
+                                          const std::wstring& nifDirectory = {}) const;
+
+    // Read a located source's bytes. A loose file returns empty (the decoder
+    // opens diskPath itself); an archive entry does the ExtractToMemory. Safe
+    // on a worker thread: Floar readers open a fresh stream per extract and
+    // only read immutable metadata, so concurrent extraction is thread-safe
+    // (the IoGate already bounds how many run at once).
+    [[nodiscard]] std::vector<std::uint8_t> Extract(const ResourceLocation& loc) const;
+
     // Windows registry scan for Bethesda Softworks install paths → Data dirs.
     static std::vector<std::wstring> DetectGameDataFolders();
 
@@ -85,8 +114,8 @@ private:
     static std::wstring ToWidePath(const std::string& rel);
     static bool ArchiveHasTexturesOrMaterials(const std::vector<Floar::ArchiveEntry>& entries);
 
-    ResourceBytes FindNormalized(const std::string& rel,
-                                 const std::wstring& nifDirectory) const;
+    ResourceLocation LocateNormalized(const std::string& rel,
+                                      const std::wstring& nifDirectory) const;
 
     // Worker body of ReloadArchives: enumerates gameData (by-value copy so
     // the member stays untouched off-thread) and fills m_archives. Nobody

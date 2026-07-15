@@ -330,10 +330,10 @@ bool ResourceResolver::LooseExists(const std::wstring& root, const std::string& 
     return FileExists(JoinLoose(root, rel));
 }
 
-ResourceBytes ResourceResolver::FindNormalized(const std::string& rel,
-                                               const std::wstring& nifDirectory) const
+ResourceLocation ResourceResolver::LocateNormalized(const std::string& rel,
+                                                    const std::wstring& nifDirectory) const
 {
-    ResourceBytes result;
+    ResourceLocation result;
 
     auto tryLoose = [&](const std::wstring& root) -> bool
     {
@@ -361,26 +361,26 @@ ResourceBytes ResourceResolver::FindNormalized(const std::string& rel,
     // first frame's textures resolve - see the "blocked ... ms" log line).
     WaitForArchiveScan();
 
+    // Cheap HasEntry probe only (read-only map lookup) - the byte extraction
+    // is deferred to Extract, which a worker runs off the UI thread. First
+    // archive with the entry wins (the list is priority-sorted).
     const std::wstring wideRel = ToWidePath(rel);
-    for (const auto& archive : m_archives)
+    for (std::size_t i = 0; i < m_archives.size(); ++i)
     {
+        const LoadedArchive& archive = m_archives[i];
         if (!archive.reader || !archive.reader->HasEntry(wideRel))
             continue;
-        // ExtractToMemory is logically const for our purposes (IO into a buffer).
-        result.data = const_cast<Floar::IArchiveReader&>(*archive.reader).ExtractToMemory(wideRel);
-        if (!result.data.empty())
-        {
-            result.sourceKey = "bsa:" + ToUtf8ForLog(LowerWide(archive.path)) + "|" + rel;
-            return result;
-        }
-        result.data.clear();
+        result.archiveIndex = static_cast<int>(i);
+        result.archiveEntry = wideRel;
+        result.sourceKey = "bsa:" + ToUtf8ForLog(LowerWide(archive.path)) + "|" + rel;
+        return result;
     }
 
     return {};
 }
 
-ResourceBytes ResourceResolver::Find(const std::string& relativePath,
-                                     const std::wstring& nifDirectory) const
+ResourceLocation ResourceResolver::Locate(const std::string& relativePath,
+                                          const std::wstring& nifDirectory) const
 {
     if (relativePath.empty())
         return {};
@@ -389,7 +389,7 @@ ResourceBytes ResourceResolver::Find(const std::string& relativePath,
         std::wstring abs = ToWidePath(relativePath);
         if (FileExists(abs))
         {
-            ResourceBytes r;
+            ResourceLocation r;
             r.sourceKey = MakeFileSourceKey(abs);
             r.diskPath = std::move(abs);
             return r;
@@ -397,15 +397,47 @@ ResourceBytes ResourceResolver::Find(const std::string& relativePath,
     }
 
     const std::string normalized = NormalizeRelative(relativePath);
-    ResourceBytes hit = FindNormalized(normalized, nifDirectory);
+    ResourceLocation hit = LocateNormalized(normalized, nifDirectory);
     if (hit.ok())
         return hit;
 
     const std::string fixed = ApplyTexturesFixup(normalized);
     if (fixed != normalized)
-        return FindNormalized(fixed, nifDirectory);
+        return LocateNormalized(fixed, nifDirectory);
 
     return {};
+}
+
+std::vector<std::uint8_t> ResourceResolver::Extract(const ResourceLocation& loc) const
+{
+    if (loc.archiveIndex < 0)
+        return {}; // loose file: the decoder opens loc.diskPath itself
+
+    WaitForArchiveScan(); // m_archives must be populated (Locate already waited)
+    if (loc.archiveIndex >= static_cast<int>(m_archives.size()))
+        return {};
+    const LoadedArchive& archive = m_archives[static_cast<std::size_t>(loc.archiveIndex)];
+    if (!archive.reader)
+        return {};
+    // ExtractToMemory is logically const (IO into a fresh buffer via a
+    // per-call stream), so this is safe to run concurrently across workers.
+    return const_cast<Floar::IArchiveReader&>(*archive.reader).ExtractToMemory(loc.archiveEntry);
+}
+
+ResourceBytes ResourceResolver::Find(const std::string& relativePath,
+                                     const std::wstring& nifDirectory) const
+{
+    // Full synchronous lookup for the lazy/thumbnail/CM paths: locate + read.
+    const ResourceLocation loc = Locate(relativePath, nifDirectory);
+    if (!loc.ok())
+        return {};
+    ResourceBytes r;
+    r.sourceKey = loc.sourceKey;
+    if (loc.isLoose())
+        r.diskPath = loc.diskPath;
+    else
+        r.data = Extract(loc);
+    return r;
 }
 
 std::vector<std::wstring> ResourceResolver::DetectGameDataFolders()

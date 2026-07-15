@@ -187,15 +187,16 @@ void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, 
         std::chrono::duration<double, std::milli>(StartupTrace::Clock::now() - t0).count());
 }
 
-// One in-flight async decode. Resolved bytes live here so the worker never
-// touches the repository; the completion moves `decoded` into the pooled
-// placeholder on the UI thread.
+// One in-flight async decode. The resolved LOCATION (not the bytes) lives
+// here: the worker does the archive byte-extraction (or loose-file read)
+// itself, off the UI thread, so the ~UI cost of a lookup is just the cheap
+// Locate. The completion moves `decoded` into the pooled placeholder.
 struct TextureRepository::PendingTex
 {
     std::string sourceKey;
     std::string relativePath;
     std::wstring nifDirectory;
-    ResourceBytes bytes;
+    ResourceLocation loc;
     Entry decoded;
 };
 
@@ -210,22 +211,24 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
         return;
     }
 
-    // Resolve + dedup on the UI thread: the resolver and m_bySource are
-    // UI-owned. A source already pooled (loaded OR a pending placeholder) is
-    // skipped, which coalesces overlapping prefetches onto one decode.
+    // Locate + dedup on the UI thread: Locate is cheap (loose-file existence /
+    // archive HasEntry, NO byte read), and m_bySource is UI-owned. A source
+    // already pooled (loaded OR a pending placeholder) is skipped, which
+    // coalesces overlapping prefetches onto one decode.
     int submitted = 0;
     ID3D11Device* const device = m_device;
     ResourceManager* const mgr = m_manager;
+    ResourceResolver* const resolver = m_resolver;
     const ResourceManager::Token token = m_token;
     TextureRepository* const self = this;
     for (const std::string& rel : relativePaths)
     {
         if (rel.empty())
             continue;
-        ResourceBytes found = m_resolver->Find(rel, nifDirectory);
-        if (!found.ok())
+        ResourceLocation loc = m_resolver->Locate(rel, nifDirectory);
+        if (!loc.ok())
             continue;
-        if (m_bySource.find(found.sourceKey) != m_bySource.end())
+        if (m_bySource.find(loc.sourceKey) != m_bySource.end())
             continue; // already loaded or already in flight
 
         // Pool a placeholder now (stable Entry*); GetOrLoad hands meshes this
@@ -233,26 +236,30 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
         Entry placeholder;
         placeholder.relativePath = rel;
         placeholder.nifDirectory = nifDirectory;
-        placeholder.sourceKey = found.sourceKey;
+        placeholder.sourceKey = loc.sourceKey;
         placeholder.pending = true;
-        m_bySource.emplace(found.sourceKey, std::move(placeholder));
+        m_bySource.emplace(loc.sourceKey, std::move(placeholder));
 
         auto job = std::make_shared<PendingTex>();
-        job->sourceKey = found.sourceKey;
+        job->sourceKey = loc.sourceKey;
         job->relativePath = rel;
         job->nifDirectory = nifDirectory;
-        job->bytes = std::move(found);
+        job->loc = std::move(loc);
 
         mgr->Submit(ResourceManager::Priority::TexturePrefetch, token,
-            [mgr, self, device, job, token]()
+            [mgr, self, resolver, device, job, token]()
             {
-                // Worker: decode + SRV create off the UI thread. The disk read
-                // (loose files) goes through the IoGate so texture and NIF
-                // reads share one disk bound; archive bytes are already in
-                // memory. Touches no repository state.
+                // Worker: read the bytes (archive extract, or loose-file read
+                // inside DecodeEntry) + decode + SRV create, all off the UI
+                // thread and IoGate-bounded so texture and NIF reads share one
+                // disk bound. Touches no repository state.
                 {
                     ResourceManager::IoPermit permit(*mgr, ResourceManager::Priority::TexturePrefetch);
-                    DecodeEntry(device, job->decoded, job->bytes);
+                    ResourceBytes bytes;
+                    bytes.diskPath = job->loc.diskPath;
+                    if (!job->loc.isLoose())
+                        bytes.data = resolver->Extract(job->loc);
+                    DecodeEntry(device, job->decoded, bytes);
                 }
                 mgr->PostCompletion(token, [self, job]() { self->PublishPrefetched(job); });
             });

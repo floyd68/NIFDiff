@@ -142,10 +142,12 @@ own copies.
   decoded and uploaded once, shared across panes - and BSA scanning runs
   in parallel in the background at startup (cold start around half a
   second). Loading a model no longer blocks on its textures: the DDS
-  decode + GPU upload for every texture a scene references runs on the
-  shared load pool (IoGate-bounded so it doesn't thrash the disk) and each
-  texture pops into the model as it finishes, so opening a heavy PBR
-  exterior leaves the UI responsive instead of freezing on the decode.
+  archive extraction, DDS decode and GPU upload for every texture a scene
+  references run on the shared load pool (IoGate-bounded so they don't thrash
+  the disk) and each texture pops into the model as it finishes, so opening a
+  heavy PBR exterior leaves the UI responsive instead of freezing on the read.
+  Only the cheap "which file/archive entry is this" lookup stays on the UI
+  thread; the expensive BSA byte-extraction happens on a worker.
 - Opening a file is asynchronous end to end: the NIF parse and scene build
   run on the load pool too, so a pane switches to a placeholder immediately
   and the model appears when it's ready, and the UI thread only does the
