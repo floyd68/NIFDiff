@@ -15,6 +15,7 @@
 #include <Backplate.h>
 #include <Core.h>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <string_view>
@@ -50,6 +51,17 @@ namespace
     constexpr UINT kMenuIdClosePane = 5;
     constexpr UINT kMenuIdOpenFolder = 6;
     constexpr UINT kMenuIdSaveScreenshot = 7;
+    constexpr UINT kMenuIdClearRecent = 8;
+    // Recent-files (MRU) submenu entries occupy a reserved id range above
+    // the fixed items: entry i uses kMenuIdRecentBase + i.
+    constexpr UINT kMenuIdRecentBase = 100;
+    constexpr std::size_t kMaxRecentFiles = 12;
+
+    // MRU helpers (defined below, after the pipe-list utilities they use);
+    // forward-declared here because ShowAppContextMenu references them.
+    std::vector<std::wstring> LoadRecentFiles(const std::wstring& iniPath);
+    void AddRecentFile(const std::wstring& iniPath, const std::wstring& path);
+    void ClearRecentFiles(const std::wstring& iniPath);
 
     // Saves the pane's last rendered 3D frame (the offscreen color target -
     // clean render, no UI chrome) as a PNG. Defaults to the loaded NIF's
@@ -95,6 +107,25 @@ namespace
         ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
     }
 
+    // Menu display string for a recent path: keep the tail (filename lives
+    // there) within a budget with a leading ellipsis, and double any '&' so
+    // it is not eaten as a menu mnemonic.
+    std::wstring MenuLabelForPath(const std::wstring& path)
+    {
+        constexpr std::size_t kMax = 64;
+        std::wstring label = path.size() <= kMax
+            ? path
+            : L"..." + path.substr(path.size() - (kMax - 3));
+        std::wstring escaped;
+        escaped.reserve(label.size() + 4);
+        for (const wchar_t c : label)
+        {
+            escaped += c;
+            if (c == L'&') escaped += L'&';
+        }
+        return escaped;
+    }
+
     // `pane` is the compare pane under the right-click (nullptr when the
     // click landed outside every pane) - the Open/Close items that used to
     // be a per-pane button row act on exactly that pane.
@@ -108,12 +139,32 @@ namespace
         // the same slot always offers the action that makes sense right now.
         const bool registered = AppSetup::AreFileAssociationsRegistered();
 
+        // Loaded once here so the switch below can map a chosen entry id
+        // back to its path (entry i -> recentFiles[i]).
+        const std::vector<std::wstring> recentFiles = LoadRecentFiles(iniPath);
+
         HMENU menu = CreatePopupMenu();
         if (menu == nullptr)
             return;
+        HMENU recentMenu = nullptr; // owned by `menu` once attached; freed with it
         if (view != nullptr && pane != nullptr)
         {
             AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open .nif in This Pane...");
+
+            // Recent-files (MRU) submenu: open a previously loaded .nif into
+            // this pane. Grayed out with no history yet.
+            recentMenu = CreatePopupMenu();
+            if (recentMenu != nullptr && !recentFiles.empty())
+            {
+                for (std::size_t i = 0; i < recentFiles.size(); ++i)
+                    AppendMenuW(recentMenu, MF_STRING, kMenuIdRecentBase + static_cast<UINT>(i),
+                                MenuLabelForPath(recentFiles[i]).c_str());
+                AppendMenuW(recentMenu, MF_SEPARATOR, 0, nullptr);
+                AppendMenuW(recentMenu, MF_STRING, kMenuIdClearRecent, L"&Clear Recent Files");
+            }
+            const UINT recentFlags = MF_POPUP | (recentFiles.empty() ? MF_GRAYED : MF_ENABLED);
+            AppendMenuW(menu, recentFlags, reinterpret_cast<UINT_PTR>(recentMenu), L"Open &Recent");
+
             // Closing the last remaining pane is never allowed (see
             // NifCompareView::QueueClosePane) - gray the item out instead of
             // offering a click that silently does nothing.
@@ -138,7 +189,25 @@ namespace
         const UINT cmd = static_cast<UINT>(TrackPopupMenuEx(
             menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
             screenPt.x, screenPt.y, hwnd, nullptr));
-        DestroyMenu(menu);
+        DestroyMenu(menu); // also destroys the attached recent submenu
+
+        // Recent-files entries share a contiguous id range, so they are
+        // handled here rather than in the fixed-id switch: open the chosen
+        // path into the clicked pane (same "replace this pane" semantics as
+        // "Open .nif in This Pane").
+        if (cmd >= kMenuIdRecentBase &&
+            cmd < kMenuIdRecentBase + static_cast<UINT>(recentFiles.size()))
+        {
+            if (view != nullptr && pane != nullptr)
+            {
+                const std::wstring& path = recentFiles[cmd - kMenuIdRecentBase];
+                std::string error;
+                if (!pane->Load(path, &error))
+                    MessageBoxW(hwnd, (L"Could not open the recent file:\n" + path).c_str(),
+                                L"NIFDiff", MB_OK | MB_ICONWARNING);
+            }
+            return;
+        }
 
         switch (cmd)
         {
@@ -160,6 +229,10 @@ namespace
         case kMenuIdSaveScreenshot:
             if (pane != nullptr)
                 SavePaneScreenshot(hwnd, *pane);
+            break;
+
+        case kMenuIdClearRecent:
+            ClearRecentFiles(iniPath);
             break;
 
         case kMenuIdAbout:
@@ -227,6 +300,39 @@ namespace
             out += parts[i];
         }
         return out;
+    }
+
+    // Recent-files (MRU) list, persisted pipe-joined under [Session].
+    // Read fresh from the INI each time: the list changes at runtime (every
+    // open appends to it), so the startup AppSettings snapshot goes stale.
+    std::vector<std::wstring> LoadRecentFiles(const std::wstring& iniPath)
+    {
+        const AppSettings s = AppSettings::Load(iniPath);
+        std::vector<std::wstring> out = SplitPipeList(s.GetString(kSectionSession, L"RecentFiles"));
+        if (out.size() > kMaxRecentFiles)
+            out.resize(kMaxRecentFiles);
+        return out;
+    }
+
+    void AddRecentFile(const std::wstring& iniPath, const std::wstring& path)
+    {
+        if (path.empty())
+            return;
+        std::vector<std::wstring> files = LoadRecentFiles(iniPath);
+        // Case-insensitive de-dupe, then push to the front so the just-opened
+        // file is always most-recent (bounded to kMaxRecentFiles on save).
+        files.erase(std::remove_if(files.begin(), files.end(),
+            [&](const std::wstring& p) { return _wcsicmp(p.c_str(), path.c_str()) == 0; }),
+            files.end());
+        files.insert(files.begin(), path);
+        if (files.size() > kMaxRecentFiles)
+            files.resize(kMaxRecentFiles);
+        AppSettings::SetString(iniPath, kSectionSession, L"RecentFiles", JoinPipeList(files));
+    }
+
+    void ClearRecentFiles(const std::wstring& iniPath)
+    {
+        AppSettings::SetString(iniPath, kSectionSession, L"RecentFiles", L"");
     }
 
     void ApplyResourcesToUi(NifCompareView& view, const ResourceResolver& resolver)
@@ -592,6 +698,15 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         compareView->SetTextureRepository(textureRepository.get());
         compareView->SetIpcOpenQueue(ipcQueue);
         ApplyResourcesToUi(*compareView, *resolver);
+
+        // Keep the recent-files (MRU) list current: every successful open
+        // (file dialog, drag&drop, command line, session restore, IPC)
+        // funnels through NifComparePane::Load. Wired before the initial
+        // load so command-line / restored files are recorded too.
+        compareView->SetOnFileOpened([iniPath](const std::wstring& path)
+        {
+            AddRecentFile(iniPath, path);
+        });
 
         std::weak_ptr<NifCompareView> weakView = compareView;
         std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;

@@ -68,9 +68,11 @@ own copies.
   `Del` clears its document, `Ctrl+E` shows its file in Explorer,
   `F12` saves its screenshot; `I` toggles the material diff panel and
   `T` the texture inspector.
-- **Per-pane context menu**: open/close the pane, open the containing
-  folder in Explorer with the file selected, and save the pane's 3D
-  render as a PNG (defaults next to the .nif, auto-numbered).
+- **Per-pane context menu**: open/close the pane, reopen a **recent file**
+  into it (an MRU submenu of the last dozen opened .nifs, most-recent
+  first, with a "Clear Recent Files" entry), open the containing folder in
+  Explorer with the file selected, and save the pane's 3D render as a PNG
+  (defaults next to the .nif, auto-numbered).
 - **Drag & drop from Explorer** (FICture2's drag-controller semantics):
   hovering the left 75% of a pane shows a red overlay and the drop
   REPLACES that pane's document; the right 25% shows a green strip and
@@ -91,8 +93,8 @@ own copies.
   decoded and uploaded once, shared across panes - and BSA scanning runs
   in parallel in the background at startup (cold start around half a
   second).
-- Session persistence (open files, splitter ratios, Game Data path,
-  override folders),
+- Session persistence (open files, splitter ratios, recent-files list,
+  Game Data path, override folders),
   `.nif` file association, and single-instance forwarding: opening a
   file whose NAME matches a document already open lands in a new pane of
   the existing window - the "compare two mods' versions of the same

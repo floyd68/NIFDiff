@@ -41,6 +41,12 @@ public:
     // Parallax Height slider applies to anything currently loaded).
     void SetOnDocumentChanged(std::function<void()> handler) { m_onDocumentChanged = std::move(handler); }
 
+    // Fires only on a successful Load(), carrying the loaded path - the
+    // single choke point every open path (file dialog, drag&drop, command
+    // line, session restore, IPC) funnels through, so NifCompareView routes
+    // it to the app's recent-files (MRU) list.
+    void SetOnFileOpened(std::function<void(const std::wstring&)> handler) { m_onFileOpened = std::move(handler); }
+
 private:
     void UpdatePathLabel();
     void UpdateStatsLabel();
@@ -51,6 +57,7 @@ private:
     std::wstring m_selectedName;              // name of the viewport's picked sub-mesh, empty when none
     std::wstring m_selectedKind;              // shader kind of the picked sub-mesh (see NifViewport::ShaderKindFor)
     std::function<void()> m_onDocumentChanged;
+    std::function<void(const std::wstring&)> m_onFileOpened;
     std::unique_ptr<NifDocument> m_doc;
 };
 

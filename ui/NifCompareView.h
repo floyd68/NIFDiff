@@ -56,6 +56,11 @@ public:
     // just tells it *which* pane requested it.
     void SetOnPaneOpenRequested(std::function<void(NifComparePane&)> handler);
 
+    // Fires whenever any pane successfully loads a file (every open path
+    // funnels through NifComparePane::Load) - the app shell uses it to keep
+    // its recent-files (MRU) list current.
+    void SetOnFileOpened(std::function<void(const std::wstring&)> handler);
+
     // Adds a pane (up to kMaxPanes) and rebuilds the equal-width host tree.
     // Returns the new pane, or nullptr if already at kMaxPanes.
     NifComparePane* AddPane();
@@ -253,6 +258,7 @@ private:
     TextureRepository* m_textureRepository = nullptr;
 
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
+    std::function<void(const std::wstring&)> m_onFileOpened;
     std::function<void(POINT, NifComparePane*)> m_onContextMenuRequested;
     std::function<void(NifComparePane&)> m_onScreenshotRequested;
 

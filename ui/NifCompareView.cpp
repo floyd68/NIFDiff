@@ -217,6 +217,11 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
         RefreshExtendedMaterialControls();
         UpdateIpcOpenSnapshot();
     });
+    pane->SetOnFileOpened([this](const std::wstring& path)
+    {
+        if (m_onFileOpened)
+            m_onFileOpened(path);
+    });
 }
 
 void NifCompareView::RefreshExtendedMaterialControls()
@@ -249,6 +254,11 @@ void NifCompareView::RequestOpenPane(NifComparePane& pane)
 {
     if (m_onPaneOpenRequested)
         m_onPaneOpenRequested(pane);
+}
+
+void NifCompareView::SetOnFileOpened(std::function<void(const std::wstring&)> handler)
+{
+    m_onFileOpened = std::move(handler);
 }
 
 void NifCompareView::RequestClosePane(NifComparePane& pane)

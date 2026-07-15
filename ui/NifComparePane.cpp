@@ -128,6 +128,8 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     UpdateStatsLabel();
     if (m_onDocumentChanged)
         m_onDocumentChanged();
+    if (m_onFileOpened)
+        m_onFileOpened(path);
     return true;
 }
 
