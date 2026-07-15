@@ -57,6 +57,12 @@ public:
     // it to the app's recent-files (MRU) list.
     void SetOnFileOpened(std::function<void(const std::wstring&)> handler) { m_onFileOpened = std::move(handler); }
 
+    // Fires when the user picks a .nif from THIS pane's thumbnail strip (after
+    // it loads here) - NifCompareView uses it to sync the same file name into
+    // the other panes' folders. Distinct from SetOnFileOpened, which fires for
+    // every load path (and would recurse if it drove the sync).
+    void SetOnThumbnailChosen(std::function<void(const std::wstring&)> handler) { m_onThumbnailChosen = std::move(handler); }
+
 private:
     void UpdatePathLabel();
     void UpdateStatsLabel();
@@ -69,6 +75,7 @@ private:
     std::wstring m_selectedKind;              // shader kind of the picked sub-mesh (see NifViewport::ShaderKindFor)
     std::function<void()> m_onDocumentChanged;
     std::function<void(const std::wstring&)> m_onFileOpened;
+    std::function<void(const std::wstring&)> m_onThumbnailChosen;
     std::unique_ptr<NifDocument> m_doc;
 };
 

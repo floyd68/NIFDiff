@@ -62,6 +62,9 @@ NifComparePane::NifComparePane(const std::wstring& name)
         std::string err;
         Load(path, &err);
         Invalidate();
+        // Let the owner mirror this pick into the other panes' folders.
+        if (m_onThumbnailChosen)
+            m_onThumbnailChosen(path);
     });
 
     // DockPanel's Fill dock stops any further docking, so the Top-docked path

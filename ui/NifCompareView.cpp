@@ -41,6 +41,7 @@ NifCompareView::NifCompareView(const std::wstring& name)
     });
     m_controls->SetOnSyncViewsChanged([this](bool on) { m_syncViews = on; });
     m_controls->SetOnSyncLightingChanged([this](bool on) { m_syncLighting = on; });
+    m_controls->SetOnSyncFilesChanged([this](bool on) { m_syncThumbnails = on; });
     m_controls->SetOnOrientationChanged([this](int idx) { ApplyOrientationPreset(idx); });
 
     m_controls->SetOnFrontalLightChanged([this](bool on)
@@ -242,6 +243,38 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
             m_onFileOpened(path);
         // The pane refreshes its own thumbnail strip in Load().
     });
+    pane->SetOnThumbnailChosen([this, paneRaw](const std::wstring& path)
+    {
+        SyncThumbnailSelection(paneRaw, path);
+    });
+}
+
+void NifCompareView::SyncThumbnailSelection(NifComparePane* source, const std::wstring& path)
+{
+    if (!m_syncThumbnails)
+        return;
+    const std::wstring fileName = std::filesystem::path(path).filename().wstring();
+    if (fileName.empty())
+        return;
+    for (auto& pane : m_panes)
+    {
+        if (pane.get() == source)
+            continue;
+        // Look for the same file name in this pane's own folder (the parent of
+        // its currently-open .nif); load it if present. Panes whose folder
+        // lacks that name are left as-is.
+        const std::wstring current = pane->CurrentPath();
+        if (current.empty())
+            continue;
+        std::error_code ec;
+        const std::filesystem::path candidate =
+            std::filesystem::path(current).parent_path() / fileName;
+        if (std::filesystem::is_regular_file(candidate, ec))
+        {
+            std::string err;
+            pane->Load(candidate.wstring(), &err);
+        }
+    }
 }
 
 void NifCompareView::RefreshExtendedMaterialControls()

@@ -40,6 +40,11 @@ own copies.
 - **Synced cameras and lighting** across panes (each sync individually
   toggleable), so one orbit/pan/zoom or light change hits every model at
   once.
+- **Synced file selection** ("Sync Files"): picking a .nif from one pane's
+  thumbnail strip also loads the same file name from every other pane's own
+  folder, so you can step through a mesh set and see each variant (e.g. a
+  parallax mod vs. vanilla) side by side. Panes whose folder lacks that name
+  are left unchanged.
 - **Click-to-select**: a left click picks the sub-mesh under the cursor,
   overlays it in wireframe, and reports its shader classification; each
   pane also shows a shader-kind summary (e.g. `Default x8 · Parallax x3`)

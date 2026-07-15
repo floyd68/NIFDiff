@@ -310,6 +310,11 @@ private:
 
     bool m_syncViews = true;
     bool m_syncLighting = true;
+    bool m_syncThumbnails = true;
+
+    // After a thumbnail pick in `source`, load the same file name from every
+    // other pane's own folder (skips panes lacking that name).
+    void SyncThumbnailSelection(NifComparePane* source, const std::wstring& path);
     bool m_applyingSync = false; // re-entrancy guard while mirroring camera changes
     float m_parallaxHeightScale = 2.0f; // current "Parallax Height" slider value, applied to new panes
     bool m_enableParallax = true;        // extended-material toggles, mirrored onto new panes

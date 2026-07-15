@@ -76,6 +76,14 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_syncLightingChk->SetChecked(true);
     view->AddChild(m_syncLightingChk);
 
+    // Selecting a thumbnail in one pane loads the same file name from every
+    // other pane's folder (compare a mesh across mods). On by default; a
+    // no-op when no other pane's folder holds that name.
+    m_syncFilesChk = std::make_shared<FD2D::CheckBox>(L"SyncFiles");
+    m_syncFilesChk->SetLabel(L"Sync Files");
+    m_syncFilesChk->SetChecked(true);
+    view->AddChild(m_syncFilesChk);
+
     // Folder thumbnail strip on/off (the ThumbnailStrip browser). On by
     // default; unchecking hides the strip and idles its loader.
     m_thumbnailStripChk = std::make_shared<FD2D::CheckBox>(L"ThumbnailStrip");
@@ -307,6 +315,7 @@ void NifCompareControlPanel::SetOnResetCameras(std::function<void()> handler) { 
 
 void NifCompareControlPanel::SetOnSyncViewsChanged(std::function<void(bool)> handler) { m_syncViewsChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnSyncLightingChanged(std::function<void(bool)> handler) { m_syncLightingChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnSyncFilesChanged(std::function<void(bool)> handler) { m_syncFilesChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnThumbnailStripChanged(std::function<void(bool)> handler) { m_thumbnailStripChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetThumbnailStripChecked(bool checked, bool notify) { m_thumbnailStripChk->SetChecked(checked, notify); }
 bool NifCompareControlPanel::ThumbnailStripChecked() const { return m_thumbnailStripChk->Checked(); }

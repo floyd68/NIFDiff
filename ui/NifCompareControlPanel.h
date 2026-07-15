@@ -36,6 +36,9 @@ public:
 
     void SetOnSyncViewsChanged(std::function<void(bool)> handler);
     void SetOnSyncLightingChanged(std::function<void(bool)> handler);
+    // Selecting a thumbnail in one pane also loads the same-named .nif from
+    // every other pane's own folder (for comparing variants across mods).
+    void SetOnSyncFilesChanged(std::function<void(bool)> handler);
     // Folder thumbnail strip master on/off (the ThumbnailStrip browser). The
     // checkbox is the whole-UI mirror of the same context-menu toggle.
     void SetOnThumbnailStripChanged(std::function<void(bool)> handler);
@@ -119,6 +122,7 @@ private:
     std::shared_ptr<FD2D::Button> m_resetBtn;
     std::shared_ptr<FD2D::CheckBox> m_syncViewsChk;
     std::shared_ptr<FD2D::CheckBox> m_syncLightingChk;
+    std::shared_ptr<FD2D::CheckBox> m_syncFilesChk;
     std::shared_ptr<FD2D::CheckBox> m_thumbnailStripChk;
     std::shared_ptr<FD2D::ComboBox> m_orientationCombo;
     std::shared_ptr<FD2D::CheckBox> m_frontalLightChk;
