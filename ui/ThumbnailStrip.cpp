@@ -263,7 +263,7 @@ void ThumbnailStrip::EnqueuePending()
                 auto parsed = std::make_shared<ParsedThumb>();
                 parsed->generation = gen;
                 parsed->index = index;
-                BuildParsedThumb(path, *parsed);
+                BuildParsedThumb(mgr, path, *parsed);
                 // UI apply, delivered only while this strip's gen is current.
                 mgr->PostCompletion({ self, gen },
                     [self, parsed]() { self->AcceptParsed(parsed); });
@@ -348,14 +348,16 @@ FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
     return m_desired;
 }
 
-void ThumbnailStrip::BuildParsedThumb(const std::wstring& path, ParsedThumb& out)
+void ThumbnailStrip::BuildParsedThumb(ResourceManager* manager, const std::wstring& path,
+                                     ParsedThumb& out)
 {
     // Pool thread: parse + build are free of shared state. The shared_ptr doc
     // must outlive the meshes, which borrow its geometry. STATIC on purpose -
     // it never touches the strip, which may be destroyed while this runs.
-    auto doc = std::make_shared<NifDocument>();
-    std::string err;
-    if (!doc->loadFromFile(path, &err) || !doc->isValid())
+    // The parse goes through the manager's shared NifCache, so a file opened in
+    // a pane (or listed in several strips) is parsed exactly once and reused.
+    std::shared_ptr<const NifDocument> doc = manager->GetOrParseNif(path);
+    if (!doc)
     {
         out.failed = true;
         return;

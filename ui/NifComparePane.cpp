@@ -1,5 +1,6 @@
 #include "NifComparePane.h"
 
+#include "../core/ResourceManager.h" // GetOrParseNif (shared NifCache)
 #include "../core/StartupTrace.h"
 
 #ifndef NOMINMAX
@@ -142,10 +143,23 @@ void NifComparePane::UpdateStatsLabel()
 bool NifComparePane::Load(const std::wstring& path, std::string* error)
 {
     StartupTrace::Phase total("Pane Load total");
-    auto doc = std::make_unique<NifDocument>();
+    std::shared_ptr<const NifDocument> doc;
     {
         StartupTrace::Phase p("  NifDocument::loadFromFile");
-        if (!doc->loadFromFile(path, error))
+        // Through the shared NifCache: if this file is already parsed (another
+        // pane, or its own thumbnail) we reuse the doc instead of re-parsing.
+        // Falls back to a direct parse if no manager is wired (e.g. tests).
+        if (m_resourceManager)
+        {
+            doc = m_resourceManager->GetOrParseNif(path, error);
+        }
+        else
+        {
+            auto fresh = std::make_shared<NifDocument>();
+            if (fresh->loadFromFile(path, error) && fresh->isValid())
+                doc = std::move(fresh);
+        }
+        if (!doc)
             return false;
     }
     m_doc = std::move(doc);

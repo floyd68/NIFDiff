@@ -99,7 +99,11 @@ own copies.
   3D thumbnails (each parsed + scene-built on the app-wide background load pool
   - a shared `ResourceManager`, one bounded thread pool for every strip - then
   rendered headlessly through the shared render core on the UI thread a few per
-  frame, so even a large folder never blocks or stutters the UI). Each thumbnail is framed from a slight 3/4 angle (a small
+  frame, so even a large folder never blocks or stutters the UI). Parsing goes
+  through a shared NIF cache with in-flight de-duplication, so a file is parsed
+  exactly once no matter how many panes or strips want it: opening the same mesh
+  into several panes, or a pane's own file showing up in its thumbnail strip,
+  reuses one parsed document instead of re-reading and re-parsing it. Each thumbnail is framed from a slight 3/4 angle (a small
   yaw off dead-on frontal) with an orthographic camera fitted tightly to the
   model's non-hidden bounds with equal margins, so cards take the model's own aspect
   ratio - wide meshes get wide cards, tall meshes tall ones - all sized to the

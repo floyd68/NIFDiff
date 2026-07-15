@@ -1,8 +1,14 @@
 #include "ResourceManager.h"
 
+#include "NifDocument.h"
+#include "NifLog.h"
+#include "StartupTrace.h"
+
 #include <Backplate.h> // FD2D::AsyncRedrawToken
 
 #include <algorithm>
+#include <cwctype>
+#include <system_error>
 
 namespace nsk
 {
@@ -132,6 +138,124 @@ ResourceManager::Job ResourceManager::PopHighestPriority()
         }
     }
     return {};
+}
+
+std::wstring ResourceManager::NormalizeNifKey(const std::wstring& path)
+{
+    // Windows paths are case-insensitive and may mix separators, so fold both
+    // out; two spellings of the same file must land on one cache entry.
+    std::wstring key = std::filesystem::path(path).lexically_normal().wstring();
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    return key;
+}
+
+std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
+    const std::wstring& path, std::string* error)
+{
+    const std::wstring key = NormalizeNifKey(path);
+
+    std::error_code ec;
+    const auto mtime = std::filesystem::last_write_time(path, ec);
+    const auto stamp = ec ? std::filesystem::file_time_type::min() : mtime;
+
+    const std::string name = std::filesystem::path(path).filename().string();
+
+    std::shared_future<NifPtr> join; // set if we must wait on another parse
+    {
+        std::unique_lock<std::mutex> lk(m_nifMutex);
+
+        // Cache hit (still fresh): move it to the MRU front and return it.
+        if (auto it = m_nifCache.find(key); it != m_nifCache.end())
+        {
+            if (it->second.mtime == stamp)
+            {
+                m_nifLru.splice(m_nifLru.begin(), m_nifLru, it->second.lru);
+                NIFLOG_INFO("[NIFCACHE] hit   {}", name);
+                return it->second.doc;
+            }
+            // Stale (file changed on disk): drop it and re-parse below.
+            m_nifLru.erase(it->second.lru);
+            m_nifCache.erase(it);
+        }
+
+        // Already being parsed by someone else: join their result.
+        if (auto it = m_nifInFlight.find(key); it != m_nifInFlight.end())
+        {
+            join = it->second;
+        }
+        else
+        {
+            // Become the parser: publish a future the joiners can wait on.
+            std::promise<NifPtr> promise;
+            std::shared_future<NifPtr> fut = promise.get_future().share();
+            m_nifInFlight.emplace(key, fut);
+
+            // Parse OUTSIDE the lock so concurrent requests for OTHER files (or
+            // joiners of this one) aren't blocked by our disk read + parse.
+            lk.unlock();
+            const auto t0 = StartupTrace::Clock::now();
+            auto mutableDoc = std::make_shared<NifDocument>();
+            const bool ok = mutableDoc->loadFromFile(path, error) && mutableDoc->isValid();
+            NifPtr doc = ok ? NifPtr(std::move(mutableDoc)) : nullptr;
+            const double ms = std::chrono::duration<double, std::milli>(
+                StartupTrace::Clock::now() - t0).count();
+            lk.lock();
+
+            m_nifInFlight.erase(key);
+            if (doc)
+            {
+                m_nifLru.push_front(key);
+                m_nifCache[key] = NifEntry { doc, stamp, m_nifLru.begin() };
+                EvictNif();
+            }
+            promise.set_value(doc); // release any joiners
+            NIFLOG_INFO("[NIFCACHE] parse {} ({:.1f} ms){}", name, ms,
+                        doc ? "" : " FAILED");
+            return doc;
+        }
+    }
+
+    // Wait for the in-flight parse (its owner isn't blocked, so this returns
+    // once the parse finishes; failure yields nullptr).
+    NIFLOG_INFO("[NIFCACHE] join  {}", name);
+    NifPtr doc = join.get();
+    if (!doc && error)
+        *error = "NIF parse failed";
+    return doc;
+}
+
+void ResourceManager::EvictNif()
+{
+    // Caller holds m_nifMutex. Trim from the LRU back, but keep any doc still
+    // referenced elsewhere (a pane/thumbnail holds it) - evicting a pinned doc
+    // would only force a re-parse when it's asked for again.
+    while (m_nifCache.size() > kNifCacheCap)
+    {
+        bool evicted = false;
+        for (auto rit = m_nifLru.rbegin(); rit != m_nifLru.rend(); ++rit)
+        {
+            auto cit = m_nifCache.find(*rit);
+            if (cit == m_nifCache.end())
+                continue;
+            if (cit->second.doc.use_count() > 1) // pinned: in active use
+                continue;
+            m_nifLru.erase(std::next(rit).base());
+            m_nifCache.erase(cit);
+            evicted = true;
+            break;
+        }
+        if (!evicted)
+            break; // everything over the cap is pinned; let the cache grow
+    }
+}
+
+void ResourceManager::ClearNifCache()
+{
+    std::lock_guard<std::mutex> lk(m_nifMutex);
+    m_nifCache.clear();
+    m_nifLru.clear();
+    // In-flight parses are left alone; they erase themselves on completion.
 }
 
 void ResourceManager::WorkerLoop()

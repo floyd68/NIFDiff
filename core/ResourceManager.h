@@ -20,9 +20,13 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <functional>
+#include <future>
+#include <list>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -31,6 +35,8 @@ namespace FD2D { class AsyncRedrawToken; }
 
 namespace nsk
 {
+
+class NifDocument;
 
 class ResourceManager
 {
@@ -81,6 +87,21 @@ public:
     // UI thread, once per frame: run the ready completions.
     void DrainCompletions();
 
+    // --- NIF parse cache + in-flight coalescing (migration phase 2) ----------
+    // Get-or-parse a .nif, shared and de-duplicated: the same file is parsed
+    // exactly once even when several panes/thumbnails ask for it concurrently
+    // (a second request for a file already parsing joins the first instead of
+    // starting its own). Callable from a worker OR the UI thread; it BLOCKS the
+    // caller until the parse (its own, or another thread's in-flight one) is
+    // done. Returns nullptr if the file fails to load. Thread-safe.
+    //
+    // The returned shared_ptr keeps the doc alive; a holder therefore pins its
+    // cache entry against eviction. The cache re-parses when the file's
+    // last-write time changes.
+    std::shared_ptr<const NifDocument> GetOrParseNif(const std::wstring& path,
+                                                     std::string* error = nullptr);
+    void ClearNifCache(); // drop cache references (docs held elsewhere survive)
+
 private:
     struct Job
     {
@@ -111,6 +132,27 @@ private:
     std::deque<Completion> m_completions;
 
     std::shared_ptr<FD2D::AsyncRedrawToken> m_redraw;
+
+    // --- NIF cache internals -------------------------------------------------
+    using NifPtr = std::shared_ptr<const NifDocument>;
+    static std::wstring NormalizeNifKey(const std::wstring& path);
+    void EvictNif(); // caller holds m_nifMutex; trims the LRU (pinned docs kept)
+
+    struct NifEntry
+    {
+        NifPtr doc;
+        std::filesystem::file_time_type mtime {};
+        std::list<std::wstring>::iterator lru; // position in m_nifLru
+    };
+
+    static constexpr std::size_t kNifCacheCap = 64; // LRU size (pinned docs exempt)
+
+    mutable std::mutex m_nifMutex;
+    std::unordered_map<std::wstring, NifEntry> m_nifCache; // key = NormalizeNifKey
+    std::list<std::wstring> m_nifLru;                      // MRU at front
+    // Files currently being parsed: joiners wait on the shared_future instead
+    // of starting a duplicate parse.
+    std::unordered_map<std::wstring, std::shared_future<NifPtr>> m_nifInFlight;
 };
 
 } // namespace nsk

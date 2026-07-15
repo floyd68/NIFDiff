@@ -39,7 +39,11 @@ public:
     void SetResourceResolver(ResourceResolver* resolver);
     void SetTextureRepository(TextureRepository* repository);
     void SetRenderDevice(RenderDevice* device);
-    void SetResourceManager(ResourceManager* manager) { m_thumbStrip->SetResourceManager(manager); }
+    void SetResourceManager(ResourceManager* manager)
+    {
+        m_resourceManager = manager;               // pane loads reuse the shared NifCache
+        m_thumbStrip->SetResourceManager(manager); // strip parses feed the same cache
+    }
     void InvalidateTextureCache();
 
     // This pane's own thumbnail strip (FICture2's ThumbnailPane, one per pane):
@@ -91,7 +95,10 @@ private:
     std::function<void(const std::wstring&)> m_onFileOpened;
     std::function<void(const std::wstring&)> m_onThumbnailChosen;
     std::function<void(float, bool)> m_onThumbStripResize;
-    std::unique_ptr<NifDocument> m_doc;
+    // Shared with the ResourceManager's NifCache and this pane's thumbnail of
+    // its own file: the doc is parsed once and held here (pinning its entry).
+    std::shared_ptr<const NifDocument> m_doc;
+    ResourceManager* m_resourceManager = nullptr;
 };
 
 } // namespace nsk
