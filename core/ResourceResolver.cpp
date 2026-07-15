@@ -174,6 +174,17 @@ void ResourceResolver::WaitForArchiveScan() const
         NIFLOG_INFO("[STARTUP]   blocked {:.2f} ms waiting for the archive scan", waitedMs);
 }
 
+bool ResourceResolver::IsArchiveScanReady() const
+{
+    std::shared_future<void> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_scanMutex);
+        pending = m_pendingScan;
+    }
+    return !pending.valid() ||
+           pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+}
+
 void ResourceResolver::ScanArchives(std::wstring gameData)
 {
     StartupTrace::Phase total("Archive scan (worker thread)");

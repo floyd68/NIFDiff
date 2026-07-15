@@ -927,14 +927,18 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         if (!backplate->EnsureDropTargetRegistered())
             NIFLOG_ERROR("RegisterDragDrop failed - Explorer drag&drop disabled for this run.");
 
-        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow, ipcQueue](HWND hwnd)
+        // The window is now shown BEFORE the initial pane load (below), so it
+        // can be closed while the panes are still empty; don't let that
+        // overwrite the saved session with blanks. Only true once loaded.
+        auto initialLoadDone = std::make_shared<std::atomic<bool>>(false);
+        backplate->SetOnBeforeDestroy([iniPath, weakView, weakResolver, ipcUiWindow, ipcQueue, initialLoadDone](HWND hwnd)
         {
             // Stop routing IPC opens at a window that is about to die;
             // future requests answer Ignore right away.
             ipcQueue->MarkShuttingDown();
             ipcUiWindow->store(kIpcUiWindowGone);
             SaveWindowPlacement(iniPath, hwnd);
-            if (auto view = weakView.lock())
+            if (auto view = weakView.lock(); view && initialLoadDone->load())
                 SaveSession(iniPath, *view);
             if (auto res = weakResolver.lock())
                 SaveResources(iniPath, *res);
@@ -944,50 +948,76 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             SaveWindowPlacement(iniPath, hwnd);
         });
 
-        {
-            StartupTrace::Phase p("Initial NIF load (panes)");
-            if (!cmdFiles.empty())
-                LoadFilesIntoPanes(*compareView, cmdFiles);
-            else
-                LoadAndOpenInitialSession(*compareView, settings);
-        }
-
-        // Restore the global thumbnail-strip on/off. Each pane's strip follows
-        // its own .nif folder, which the initial load above already pointed it
-        // at; nothing folder-specific is persisted. Default: enabled.
-        {
-            // Enabled unless explicitly turned off last session. Reflect it in
-            // the VIEW-group checkbox and apply to every pane without notifying
-            // (avoids a redundant INI write).
-            const bool stripOn =
-                settings.GetString(kSectionSession, L"ThumbnailStripEnabled") != L"0";
-            compareView->SetThumbnailStripEnabled(stripOn, /*notify=*/false);
-
-            // Card size (default Medium); any saved value is accepted - the
-            // strip clamps it to its valid resize range.
-            const int savedSize = settings.GetInt(kSectionSession, L"ThumbnailSize",
-                                                  static_cast<int>(ThumbnailStrip::kSizeMedium));
-            compareView->SetThumbnailStripSize(static_cast<float>(savedSize));
-        }
-
-        // UI is fully wired (view attached, initial files loaded) - publish
-        // the window so IPC accepts can post their drain broadcast at it,
-        // then drain whatever was accepted while the window did not exist
-        // yet. Order matters: publish FIRST, so an accept racing this point
-        // either lands in the explicit drain below or posts its own
-        // broadcast (processed once RunMessageLoop starts) - never neither.
-        ipcUiWindow->store(backplate->Window());
-        ipcQueue->MarkUiReady();
-        compareView->DrainIpcOpenQueue();
-
+        // Show the window BEFORE the several-second initial load so it appears
+        // right away instead of only after every pane + its BSA textures are
+        // ready. The load stalls on the background archive scan, so keep the
+        // (empty) window painting/responsive until the scan lands - then the
+        // pane loads below resolve textures without a long freeze.
         const int effectiveShowCmd = hasSavedPlacement ? savedShowCmd : nCmdShow;
         {
             StartupTrace::Phase p("Backplate Show");
             backplate->Show(effectiveShowCmd);
         }
+        bool windowAlive = true;
+        {
+            StartupTrace::Phase p("Archive scan wait (window responsive)");
+            const HWND hwnd = backplate->Window();
+            MSG msg;
+            while (resolver && !resolver->IsArchiveScanReady())
+            {
+                while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+                {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                if (!IsWindow(hwnd)) { windowAlive = false; break; } // closed while waiting
+                if (resolver && !resolver->IsArchiveScanReady())
+                    Sleep(6); // brief; keeps CPU free for the scan
+            }
+        }
 
-        StartupTrace::Mark("Entering message loop");
-        result = app.RunMessageLoop();
+        if (windowAlive)
+        {
+            {
+                StartupTrace::Phase p("Initial NIF load (panes)");
+                if (!cmdFiles.empty())
+                    LoadFilesIntoPanes(*compareView, cmdFiles);
+                else
+                    LoadAndOpenInitialSession(*compareView, settings);
+            }
+            initialLoadDone->store(true); // the session is now safe to persist
+
+            // Restore the global thumbnail-strip on/off. Each pane's strip
+            // follows its own .nif folder, which the initial load above already
+            // pointed it at; nothing folder-specific is persisted. Default: on.
+            {
+                // Enabled unless explicitly turned off last session. Reflect it
+                // in the VIEW-group checkbox and apply to every pane without
+                // notifying (avoids a redundant INI write).
+                const bool stripOn =
+                    settings.GetString(kSectionSession, L"ThumbnailStripEnabled") != L"0";
+                compareView->SetThumbnailStripEnabled(stripOn, /*notify=*/false);
+
+                // Card size (default Medium); any saved value is accepted - the
+                // strip clamps it to its valid resize range.
+                const int savedSize = settings.GetInt(kSectionSession, L"ThumbnailSize",
+                                                      static_cast<int>(ThumbnailStrip::kSizeMedium));
+                compareView->SetThumbnailStripSize(static_cast<float>(savedSize));
+            }
+
+            // UI is fully wired (view attached, initial files loaded) - publish
+            // the window so IPC accepts can post their drain broadcast at it,
+            // then drain whatever was accepted while the window did not exist
+            // yet. Order matters: publish FIRST, so an accept racing this point
+            // either lands in the explicit drain below or posts its own
+            // broadcast (processed once RunMessageLoop starts) - never neither.
+            ipcUiWindow->store(backplate->Window());
+            ipcQueue->MarkUiReady();
+            compareView->DrainIpcOpenQueue();
+
+            StartupTrace::Mark("Entering message loop");
+            result = app.RunMessageLoop();
+        }
     }
 
     app.Shutdown();

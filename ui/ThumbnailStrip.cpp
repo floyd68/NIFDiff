@@ -256,11 +256,12 @@ void ThumbnailStrip::EnqueuePending()
             }
         }
     }
+    // Wake any running workers. The pool itself is started lazily from the
+    // first OnRenderD3D (see there): during startup the panes' initial loads
+    // queue jobs here, but we must NOT read those folders' .nifs from disk yet
+    // - that competes with the startup-critical BSA archive scan's disk I/O.
     if (any)
-    {
-        EnsureWorker();
         m_jobCv.notify_all();
-    }
 }
 
 void ThumbnailStrip::SetFixedExtent(float extent)
@@ -557,6 +558,19 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
     {
         FD2D::Wnd::OnRenderD3D(context);
         return;
+    }
+    // Start the parse pool lazily on the first render: by the time we paint,
+    // the startup-critical archive scan + initial pane loads are done, so the
+    // thumbnails' disk reads no longer contend with them.
+    if (m_workers.empty())
+    {
+        bool pending;
+        { std::lock_guard<std::mutex> lk(m_jobMutex); pending = !m_jobs.empty(); }
+        if (pending)
+        {
+            EnsureWorker();
+            m_jobCv.notify_all();
+        }
     }
     // Render a few of the worker's freshly parsed scenes per frame (RenderScene
     // needs the immediate context, so it must run here on the UI thread).

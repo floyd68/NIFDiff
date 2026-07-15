@@ -63,6 +63,12 @@ public:
     // Blocks until the scan launched by the last ReloadArchives finished.
     void WaitForArchiveScan() const;
 
+    // Non-blocking: true when no scan is pending or the pending one is done.
+    // Lets startup keep the window responsive (pump messages) until the scan
+    // lands, so the initial pane loads don't stall on it before the window
+    // is even shown.
+    bool IsArchiveScanReady() const;
+
     // relativePath uses either / or \ (normalized internally). nifDirectory
     // is the folder containing the NIF currently being rendered (may be empty).
     [[nodiscard]] ResourceBytes Find(const std::string& relativePath,
