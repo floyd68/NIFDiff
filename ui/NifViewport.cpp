@@ -192,13 +192,14 @@ void NifViewport::RefreshTextures()
     Invalidate();
 }
 
-void NifViewport::FinishSceneLoad()
+void NifViewport::FrameCameraToScene()
 {
-    PrefetchSceneTextures();
-
     // Fit the camera to the combined bounding sphere of every mesh, mirroring
     // GLView's "center on load" behaviour (glview.cpp's Scene::updateSceneOptions
-    // + centerOn() path prior to the first frame).
+    // + centerOn() path prior to the first frame). Depends only on geometry, so
+    // it is done FIRST (before any texture work) - the model is framed correctly
+    // the instant it first draws, untextured, rather than jumping once textures
+    // finish loading.
     Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
     bool any = false;
     for (const RenderMesh& mesh : m_meshes)
@@ -234,6 +235,15 @@ void NifViewport::FinishSceneLoad()
         m_camera.frame(Vector3(), 50.0f);
         m_camera.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
     }
+}
+
+void NifViewport::FinishSceneLoad()
+{
+    // Frame FIRST (geometry-only), then submit the async texture prefetch: the
+    // camera is positioned before the first (untextured) draw, so it never
+    // shifts when the textures land.
+    FrameCameraToScene();
+    PrefetchSceneTextures();
 }
 
 void NifViewport::ResetCamera()

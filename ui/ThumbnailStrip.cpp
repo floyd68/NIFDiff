@@ -57,6 +57,17 @@ void ThumbnailStrip::SetOrientation(Orientation o)
     Invalidate();
 }
 
+void ThumbnailStrip::SetActive(bool active)
+{
+    if (active == m_active)
+        return;
+    m_active = active;
+    // Presence (measured extent) changed, so relayout the pane's dock.
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
 void ThumbnailStrip::SetEnabled(bool enabled)
 {
     if (enabled == m_enabled)
@@ -338,7 +349,7 @@ void ThumbnailStrip::NavigateUp()
 
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
 {
-    if (!HasContent() || !m_enabled)
+    if (!ShouldShow())
     {
         m_desired = { 0.0f, 0.0f };
         return m_desired;
@@ -642,7 +653,7 @@ void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F
 
 void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 {
-    if (!target || !HasContent() || !m_enabled)
+    if (!target || !ShouldShow())
         return;
     EnsureTextFormat();
 
@@ -778,7 +789,7 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 
 bool ThumbnailStrip::InResizeGrip(const POINT& pt) const
 {
-    if (!HasContent() || !m_enabled)
+    if (!ShouldShow())
         return false;
     const D2D1_RECT_F r = LayoutRect();
     const float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
@@ -824,7 +835,7 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
 
     const D2D1_RECT_F r = LayoutRect();
     auto inStrip = [&](const POINT& p) {
-        return HasContent() && m_enabled && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+        return ShouldShow() && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
     };
 
     switch (event.type)

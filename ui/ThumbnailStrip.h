@@ -78,6 +78,15 @@ public:
     const std::wstring& Folder() const { return m_folder; }
     bool HasContent() const { return !m_entries.empty(); }
 
+    // "This pane will have a strip" - set the instant the pane is named (before
+    // its folder is listed / thumbnails load), so the strip reserves its height
+    // from pane creation instead of popping in later and shrinking the viewport
+    // (which reframes the model). Cleared when the pane is emptied.
+    void SetActive(bool active);
+    // The strip occupies space + paints when enabled and either active (named
+    // pane) or already listing a folder.
+    bool ShouldShow() const { return m_enabled && (m_active || HasContent()); }
+
     // Master on/off: when disabled the strip collapses (Measure 0, no paint)
     // and thumbnail generation stops (the per-frame loader idles), while the
     // folder + any thumbnails already rendered are kept for a later re-enable.
@@ -215,6 +224,7 @@ private:
     std::wstring m_currentFile;  // active pane's .nif, highlighted when present
     std::vector<Entry> m_entries;
     bool m_enabled = true;          // master on/off (see SetEnabled)
+    bool m_active = false;          // pane is named -> reserve strip space (see SetActive)
     float m_fixedExtent = kSizeMedium; // strip thickness (see SetFixedExtent)
     bool m_horizontal = false;
     float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)

@@ -190,6 +190,8 @@ private:
     // Post-build setup shared by RebuildScene and SetPrebuiltScene (async load):
     // async texture prefetch + camera framing from the current m_meshes.
     void FinishSceneLoad();
+    // Frame the camera to the current m_meshes' world bounds (geometry only).
+    void FrameCameraToScene();
     // Submit the async texture prefetch for the current m_meshes (no camera fit).
     void PrefetchSceneTextures();
     void EnsureD2DTarget();

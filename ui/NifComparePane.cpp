@@ -171,6 +171,7 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     m_state = LoadState::Loading;
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(true);
+    m_thumbStrip->SetActive(true); // reserve the strip's space up front (stable layout)
     UpdatePathLabel();
     UpdateStatsLabel();
     SubmitParseJob(path);
@@ -267,6 +268,9 @@ void NifComparePane::ShowPendingFile(const std::wstring& path)
     m_loadSubmitted = false; // named only; StartPendingLoad will queue the job
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(true);
+    // Reserve the thumbnail strip's space now, before its folder is listed, so
+    // it doesn't pop in later and shrink the viewport (which reframes the model).
+    m_thumbStrip->SetActive(true);
     UpdatePathLabel();
     UpdateStatsLabel();
 }
@@ -282,6 +286,7 @@ void NifComparePane::Clear()
     m_doc.reset();
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(false);
+    m_thumbStrip->SetActive(false); // empty pane: release the strip's reserved space
     UpdatePathLabel();
     UpdateStatsLabel();
     m_thumbStrip->ShowForFile(std::wstring()); // nothing loaded -> empty strip

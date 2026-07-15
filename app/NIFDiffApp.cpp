@@ -1015,6 +1015,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 // fill in beside the first ones.
                 compareView->PlaceQueuedIpcPanesNamesOnly();
                 compareView->StartAllPendingLoads();
+                // A worker finished a parse while we wait: this plain PeekMessage
+                // pump doesn't watch the async-redraw event (RunMessageLoop does),
+                // so process it here - the model gets framed (SetPrebuiltScene ->
+                // FrameCameraToScene) and drawn NOW, during the scan, instead of
+                // only once the loop exits.
+                if (WaitForSingleObject(backplate->AsyncRedrawEvent(), 0) == WAIT_OBJECT_0)
+                    backplate->ProcessAsyncRedraw();
                 if (resolver && !resolver->IsArchiveScanReady())
                     Sleep(6); // brief; keeps CPU free for the scan
             }
