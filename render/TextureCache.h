@@ -23,6 +23,12 @@ public:
     {
     }
 
+    // A one-shot render (thumbnail) that needs every texture in the single
+    // frame it draws, rather than a live viewport that can let async-prefetch
+    // placeholders pop in over later frames. When set, GetOrLoad force-decodes
+    // any pending placeholder in place instead of drawing it untextured.
+    void SetSynchronous(bool sync) { m_synchronous = sync; }
+
     // Changing the NIF directory changes what relative paths resolve to, so
     // the memo is dropped (the repository keeps the loaded textures - a
     // re-resolve that lands on the same source is a pool hit).
@@ -75,6 +81,15 @@ public:
             m_repository->Prefetch(relativePaths, m_nifDirectory);
     }
 
+    // Async prefetch under this cache's resolution context: textures decode on
+    // the shared pool and pop in without blocking the UI (see
+    // TextureRepository::PrefetchAsync). The per-path memo still forms lazily.
+    void PrefetchAsync(const std::vector<std::string>& relativePaths)
+    {
+        if (m_repository != nullptr)
+            m_repository->PrefetchAsync(relativePaths, m_nifDirectory);
+    }
+
     bool HasComplexMaterialHeight(const std::string& relativePath)
     {
         TextureRepository::Entry* e = Lookup(relativePath);
@@ -93,14 +108,22 @@ private:
             return nullptr;
         auto it = m_memo.find(relativePath);
         if (it != m_memo.end())
-            return it->second; // may be nullptr: memoized "does not resolve"
-        TextureRepository::Entry* e = m_repository->GetOrLoad(relativePath, m_nifDirectory);
-        m_memo.emplace(relativePath, e);
+        {
+            // A memoized placeholder that has since been force-loaded stays the
+            // same stable Entry* (srv now filled); only re-run GetOrLoad while
+            // it is still pending and this cache wants it decoded now.
+            if (!(m_synchronous && it->second && it->second->pending))
+                return it->second; // may be nullptr: memoized "does not resolve"
+        }
+        TextureRepository::Entry* e =
+            m_repository->GetOrLoad(relativePath, m_nifDirectory, m_synchronous);
+        m_memo[relativePath] = e;
         return e;
     }
 
     TextureRepository* m_repository = nullptr;
     std::wstring m_nifDirectory;
+    bool m_synchronous = false;
     // Entry pointers stay valid until TextureRepository::Clear (node-based
     // map); the view-level invalidation clears repository and memos together.
     std::unordered_map<std::string, TextureRepository::Entry*> m_memo;

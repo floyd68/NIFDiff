@@ -16,9 +16,12 @@
 // sharing SRVs across them is safe.
 #pragma once
 
+#include "../core/ResourceManager.h" // shared load pool (async prefetch)
+
 #include <d3d11_1.h>
 #include <wrl/client.h>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -63,10 +66,20 @@ public:
         // re-fetch the same bytes (Find with equal inputs is deterministic).
         std::string relativePath;
         std::wstring nifDirectory;
+
+        // Async prefetch placeholder: this entry is pooled but its bytes are
+        // still decoding on a worker (srv stays null until the completion fills
+        // it in place). Meshes render untextured meanwhile, then pop in. Also
+        // marks the source as in-flight so a second request coalesces onto it.
+        bool pending = false;
     };
 
     // Set from NifViewport::OnAttached; idempotent (single shared device).
     void SetDevice(ID3D11Device* device) { m_device = device; }
+
+    // Wire the shared load pool for async prefetch (registers a stable
+    // cancellation token so completions always publish + clear in-flight).
+    void SetResourceManager(ResourceManager* manager);
 
     // Resolve relativePath (against nifDirectory) and return the pooled
     // entry for the resolved source, loading/decoding/uploading it only if
@@ -74,7 +87,14 @@ public:
     // path does not resolve at all; an entry with a null srv means the
     // source resolved but failed to decode. Returned pointers stay valid
     // until Clear() (unordered_map nodes are stable).
-    Entry* GetOrLoad(const std::string& relativePath, const std::wstring& nifDirectory);
+    //
+    // forceSyncPending: if the source is an async-prefetch placeholder still
+    // decoding (srv null, pending), decode it in place now instead of handing
+    // back the placeholder. A live viewport leaves it false (the texture pops
+    // in when the async decode lands, next paint); a one-shot render that needs
+    // the texture this instant (thumbnails) passes true.
+    Entry* GetOrLoad(const std::string& relativePath, const std::wstring& nifDirectory,
+                     bool forceSyncPending = false);
 
     // Computes both complex-material verdicts for the entry if not probed
     // yet (one DDS re-read, shared by the alpha and height questions).
@@ -90,15 +110,34 @@ public:
     // left unpooled and take the normal lazy path.
     void Prefetch(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory);
 
+    // Async counterpart of Prefetch: resolve + dedup on the calling (UI)
+    // thread, pool a null-srv placeholder per unseen source, then decode+upload
+    // each on the shared pool (IoGate-gated) and fill the placeholder's srv in
+    // place from the completion. The UI never blocks on the decode; textures
+    // pop in as they finish. Falls back to synchronous Prefetch when no manager
+    // is wired (e.g. tests). Safe to call repeatedly - in-flight/pooled sources
+    // are skipped.
+    void PrefetchAsync(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory);
+
     void Clear() { m_bySource.clear(); }
 
 private:
     // Fills srv/format/width/height/mipLevels of `entry` from the resolved
-    // bytes (loose file or archive memory).
-    void LoadEntry(Entry& entry, const ResourceBytes& found);
+    // bytes (loose file or archive memory). Static + device-parametrized so the
+    // async path can run it on a worker (DirectXTex + the free-threaded device
+    // only; touches no repository state).
+    static void DecodeEntry(ID3D11Device* device, Entry& entry, const ResourceBytes& found);
+    void LoadEntry(Entry& entry, const ResourceBytes& found) { DecodeEntry(m_device, entry, found); }
+
+    // One in-flight async decode (shared between the worker and its UI
+    // completion). Holds its own resolved bytes so the worker is self-contained.
+    struct PendingTex;
+    void PublishPrefetched(const std::shared_ptr<PendingTex>& job); // UI thread
 
     ID3D11Device* m_device = nullptr;
     ResourceResolver* m_resolver = nullptr;
+    ResourceManager* m_manager = nullptr;
+    ResourceManager::Token m_token {}; // stable (never re-bumped) so texture completions always run
     std::unordered_map<std::string, Entry> m_bySource; // key = ResourceBytes::sourceKey
 };
 

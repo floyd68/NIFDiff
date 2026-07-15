@@ -141,7 +141,11 @@ own copies.
 - Textures are pooled process-wide - each unique resolved source is
   decoded and uploaded once, shared across panes - and BSA scanning runs
   in parallel in the background at startup (cold start around half a
-  second).
+  second). Loading a model no longer blocks on its textures: the DDS
+  decode + GPU upload for every texture a scene references runs on the
+  shared load pool (IoGate-bounded so it doesn't thrash the disk) and each
+  texture pops into the model as it finishes, so opening a heavy PBR
+  exterior leaves the UI responsive instead of freezing on the decode.
 - Session persistence (open files, splitter ratios, recent-files list,
   Game Data path, override folders),
   `.nif` file association, and single-instance forwarding: opening a

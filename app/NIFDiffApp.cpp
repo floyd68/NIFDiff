@@ -715,6 +715,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // ResourceManager::Cancel).
     auto resourceManager = std::make_shared<ResourceManager>();
     resourceManager->Start();
+    // Route texture decode+upload through the shared pool (async prefetch).
+    // The repo (declared above) outlives the manager, so its completions never
+    // reference a torn-down repo.
+    textureRepository->SetResourceManager(resourceManager.get());
 
     RECT savedRect {};
     int savedShowCmd = SW_SHOWNORMAL;

@@ -115,6 +115,21 @@ public:
     // threads run CPU-only work (scene build, decode) meanwhile.
     void SetIoPermits(int permits);
 
+    // RAII disk permit for background reads OTHER than GetOrParseNif (e.g. a
+    // worker decoding a texture): acquire around the read so all disk-touching
+    // pool work shares one bound. Blocks on construction until a permit is
+    // granted (priority-ordered), releases on destruction.
+    class IoPermit
+    {
+    public:
+        IoPermit(ResourceManager& mgr, Priority prio) : m_mgr(mgr) { m_mgr.IoAcquire(prio); }
+        ~IoPermit() { m_mgr.IoRelease(); }
+        IoPermit(const IoPermit&) = delete;
+        IoPermit& operator=(const IoPermit&) = delete;
+    private:
+        ResourceManager& m_mgr;
+    };
+
 private:
     struct Job
     {

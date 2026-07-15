@@ -477,6 +477,7 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
 
     std::filesystem::path nifPath(e.path);
     TextureCache textures(m_textureRepository);
+    textures.SetSynchronous(true); // one-shot render: decode pending placeholders now
     textures.SetNifDirectory(nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring());
 
     RenderSettings s;

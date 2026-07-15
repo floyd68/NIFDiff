@@ -42,7 +42,7 @@ namespace
     }
 }
 
-void TextureRepository::LoadEntry(Entry& entry, const ResourceBytes& found)
+void TextureRepository::DecodeEntry(ID3D11Device* device, Entry& entry, const ResourceBytes& found)
 {
     DirectX::TexMetadata metadata {};
     DirectX::ScratchImage scratch;
@@ -61,13 +61,25 @@ void TextureRepository::LoadEntry(Entry& entry, const ResourceBytes& found)
 
     // Handles 2D/mip-chain/cube-map/array layouts from the DDS metadata
     // (a cube map DDS yields a TEXTURECUBE-dimension SRV, which the lit
-    // shader's TextureCube at t4 requires).
+    // shader's TextureCube at t4 requires). CreateShaderResourceView is
+    // free-threaded, so this is safe on a worker thread.
     (void)DirectX::CreateShaderResourceView(
-        m_device, scratch.GetImages(), scratch.GetImageCount(), metadata, &entry.srv);
+        device, scratch.GetImages(), scratch.GetImageCount(), metadata, &entry.srv);
+}
+
+void TextureRepository::SetResourceManager(ResourceManager* manager)
+{
+    m_manager = manager;
+    // Register a stable requester token (generation never bumped again), so
+    // every texture completion runs - publishing the SRV and clearing the
+    // in-flight placeholder - regardless of which viewport triggered it.
+    if (manager)
+        m_token = { this, manager->BumpGeneration(this) };
 }
 
 TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relativePath,
-                                                       const std::wstring& nifDirectory)
+                                                       const std::wstring& nifDirectory,
+                                                       bool forceSyncPending)
 {
     if (relativePath.empty() || m_resolver == nullptr || m_device == nullptr)
         return nullptr;
@@ -85,10 +97,18 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
 
     if (auto it = m_bySource.find(found.sourceKey); it != m_bySource.end())
     {
-        NIFLOG_TRACE("[TEXLOAD] pool-hit resolve={:.2f}ms {} <- {}",
+        Entry& e = it->second;
+        // Async-prefetch placeholder a one-shot caller needs now: decode it in
+        // place (the pending async completion becomes an idempotent no-op).
+        if (e.pending && forceSyncPending)
+        {
+            DecodeEntry(m_device, e, found);
+            e.pending = false;
+        }
+        NIFLOG_TRACE("[TEXLOAD] pool-hit resolve={:.2f}ms {} <- {}{}",
             std::chrono::duration<double, std::milli>(t1 - t0).count(),
-            relativePath, found.sourceKey);
-        return &it->second;
+            relativePath, found.sourceKey, e.pending ? " (pending)" : "");
+        return &e;
     }
 
     Entry entry;
@@ -165,6 +185,100 @@ void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, 
     NIFLOG_INFO("[TEXLOAD] prefetch: {} path(s) -> {} new source(s), {} loaded ok, {:.1f}ms total",
         relativePaths.size(), pending.size(), okCount,
         std::chrono::duration<double, std::milli>(StartupTrace::Clock::now() - t0).count());
+}
+
+// One in-flight async decode. Resolved bytes live here so the worker never
+// touches the repository; the completion moves `decoded` into the pooled
+// placeholder on the UI thread.
+struct TextureRepository::PendingTex
+{
+    std::string sourceKey;
+    std::string relativePath;
+    std::wstring nifDirectory;
+    ResourceBytes bytes;
+    Entry decoded;
+};
+
+void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePaths,
+                                      const std::wstring& nifDirectory)
+{
+    // No pool wired (e.g. tests / headless thumbnails): keep the synchronous
+    // path so behaviour is unchanged.
+    if (m_manager == nullptr || m_resolver == nullptr || m_device == nullptr || relativePaths.empty())
+    {
+        Prefetch(relativePaths, nifDirectory);
+        return;
+    }
+
+    // Resolve + dedup on the UI thread: the resolver and m_bySource are
+    // UI-owned. A source already pooled (loaded OR a pending placeholder) is
+    // skipped, which coalesces overlapping prefetches onto one decode.
+    int submitted = 0;
+    ID3D11Device* const device = m_device;
+    ResourceManager* const mgr = m_manager;
+    const ResourceManager::Token token = m_token;
+    TextureRepository* const self = this;
+    for (const std::string& rel : relativePaths)
+    {
+        if (rel.empty())
+            continue;
+        ResourceBytes found = m_resolver->Find(rel, nifDirectory);
+        if (!found.ok())
+            continue;
+        if (m_bySource.find(found.sourceKey) != m_bySource.end())
+            continue; // already loaded or already in flight
+
+        // Pool a placeholder now (stable Entry*); GetOrLoad hands meshes this
+        // null-srv entry so they render untextured until the decode fills it.
+        Entry placeholder;
+        placeholder.relativePath = rel;
+        placeholder.nifDirectory = nifDirectory;
+        placeholder.sourceKey = found.sourceKey;
+        placeholder.pending = true;
+        m_bySource.emplace(found.sourceKey, std::move(placeholder));
+
+        auto job = std::make_shared<PendingTex>();
+        job->sourceKey = found.sourceKey;
+        job->relativePath = rel;
+        job->nifDirectory = nifDirectory;
+        job->bytes = std::move(found);
+
+        mgr->Submit(ResourceManager::Priority::TexturePrefetch, token,
+            [mgr, self, device, job, token]()
+            {
+                // Worker: decode + SRV create off the UI thread. The disk read
+                // (loose files) goes through the IoGate so texture and NIF
+                // reads share one disk bound; archive bytes are already in
+                // memory. Touches no repository state.
+                {
+                    ResourceManager::IoPermit permit(*mgr, ResourceManager::Priority::TexturePrefetch);
+                    DecodeEntry(device, job->decoded, job->bytes);
+                }
+                mgr->PostCompletion(token, [self, job]() { self->PublishPrefetched(job); });
+            });
+        ++submitted;
+    }
+    if (submitted > 0)
+        NIFLOG_INFO("[TEXLOAD] prefetch-async: {} path(s) -> {} decode job(s)",
+                    relativePaths.size(), submitted);
+}
+
+void TextureRepository::PublishPrefetched(const std::shared_ptr<PendingTex>& job)
+{
+    // UI thread (manager completion): move the decoded SRV + metadata into the
+    // pooled placeholder in place. The Entry* the memos/renderer hold is
+    // stable, so filling srv here makes the texture appear on the next paint
+    // (PostCompletion already requested a redraw) with no memo invalidation.
+    auto it = m_bySource.find(job->sourceKey);
+    if (it == m_bySource.end())
+        return; // pool was cleared (document changed) - drop the stale result
+    Entry& pooled = it->second;
+    pooled.srv = std::move(job->decoded.srv);
+    pooled.format = job->decoded.format;
+    pooled.width = job->decoded.width;
+    pooled.height = job->decoded.height;
+    pooled.mipLevels = job->decoded.mipLevels;
+    pooled.pending = false;
 }
 
 void TextureRepository::EnsureCmProbe(Entry& entry)

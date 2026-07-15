@@ -132,13 +132,14 @@ void NifViewport::RebuildScene()
         m_meshes = SceneBuilder::build(*m_doc, m_showHiddenNodes);
     }
 
-    // Front-load every texture the scene references through the pool's
-    // parallel prefetch: the first frame's per-draw GetOrLoad calls then
-    // hit the pool instead of serially reading+uploading ~8ms per texture
-    // (measured 414ms -> parallel for a 26-shape PBR exterior).
+    // Front-load every texture the scene references through the pool's async
+    // prefetch: decode + upload (~8ms each, measured 414ms for a 26-shape PBR
+    // exterior) happen on the shared pool instead of blocking this UI-thread
+    // load. Meshes render untextured for the first frame(s) and each texture
+    // pops in as its decode completes (see TextureRepository::PrefetchAsync).
     if (m_textures)
     {
-        StartupTrace::Phase p("    Texture prefetch (parallel)");
+        StartupTrace::Phase p("    Texture prefetch (submit async)");
         std::vector<std::string> paths;
         paths.reserve(m_meshes.size() * 4);
         for (const RenderMesh& mesh : m_meshes)
@@ -152,7 +153,7 @@ void NifViewport::RebuildScene()
                     paths.push_back(*tex);
             }
         }
-        m_textures->Prefetch(paths);
+        m_textures->PrefetchAsync(paths);
     }
 
     // Fit the camera to the combined bounding sphere of every mesh, mirroring
