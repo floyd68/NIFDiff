@@ -270,3 +270,82 @@ Each phase is independently shippable and testable.
   through the manager; `DrainIpcOpenQueue` → `OpenRequestCoordinator`.
 - `app/NIFDiffApp` — construct the `ResourceManager`; retire the startup
   pump-wait once dependency ordering lands.
+
+## Appendix A — API sketch
+
+Illustrative, not final. All public entry points are called from the UI thread;
+callbacks are delivered on the UI thread via the completion drain.
+
+```cpp
+// A cancellation handle. Bumping the generation invalidates prior submissions.
+struct LoadToken { const void* requester; uint64_t generation; };
+
+enum class LoadPriority { ActivePane, OtherPane, TexturePrefetch, Thumbnail };
+
+class ResourceManager {
+public:
+    // --- lifecycle ---
+    void Start(ID3D11Device* device, ResourceResolver* resolver); // sizes the pool
+    void Shutdown();                                              // drains + joins
+
+    // --- NIF: parse+build off-thread, cached + coalesced by canonical path ---
+    // onReady runs on the UI thread; skipped if the token generation is stale.
+    void RequestNif(std::wstring path, LoadPriority prio, LoadToken tok,
+                    std::function<void(std::shared_ptr<NifDocument>)> onReady,
+                    std::function<void()> onFailed = {});
+
+    // --- Textures: resolve (archive lane) + decode + SRV, pooled by sourceKey ---
+    void PrefetchTextures(std::vector<std::string> relPaths, std::wstring nifDir,
+                          LoadPriority prio, LoadToken tok);
+    // Synchronous pool hit (UI thread) once prefetched; else lazy load.
+    TextureRepository::Entry* GetOrLoadTexture(const std::string& rel,
+                                               const std::wstring& nifDir);
+
+    // --- cancellation: drop everything queued/in-flight for this requester ---
+    void Cancel(const void* requester);            // e.g. pane closed
+    // (retarget = caller bumps generation, then re-requests with the new one)
+
+    // --- UI pump: run each frame; applies completed results on the UI thread ---
+    void DrainCompletions();                       // called from the render loop
+
+    // --- dependencies: texture jobs wait on this; no UI blocking ---
+    bool IsArchiveScanReady() const;               // moved from ResourceResolver
+};
+```
+
+Notes:
+- `RequestNif` consults `NifCache` first (hit → `onReady` next drain); on a
+  miss it checks the in-flight map (join) before enqueuing a parse job.
+- The pool worker acquires an `IoGate` permit around the disk read only, then
+  releases it before the CPU-only build, so permits track *disk* concurrency,
+  not thread count.
+- `DrainCompletions` is the single UI-side apply point; each result carries its
+  `LoadToken` and is dropped if `tok.generation != current(requester)`.
+
+## Appendix B — IPC 8-open burst, across threads
+
+```
+ IPC thread        UI thread (OpenRequestCoordinator)          ResourceManager pool
+ ─────────         ────────────────────────────────           ────────────────────
+ accept f1..f8  →  enqueue OpenRequest x8 (IpcQueue)
+   (ack each                │
+    on ACCEPT)      DrainIpcOpenQueue (one cycle):
+                    ① dedup + cap8 + intent
+                    ② create/reuse ≤8 panes,
+                       set path label + Loading,
+                       ONE relayout
+                    ③ for each pane:
+                       RequestNif(prio, {pane,gen})   ──────►  parse+build (IoGate-gated read)
+                                │                                        │  (P0 active first)
+                    window shows 8 named panes                 complete f_k ─┐
+                    (placeholders) ~immediately                              │
+                                │                              RequestAsyncRedraw
+                    DrainCompletions (per frame):  ◄───────────────────────┘
+                       if gen current → SetDocument(pane_k)
+                       (panes fill in independently, any order)
+```
+
+Retarget during the burst: if pane 3 is re-pointed f3→f9, the coordinator bumps
+pane 3's generation and calls `RequestNif(f9, {pane3, gen+1})`; the in-flight
+`f3` result arrives with the old generation and is discarded at
+`DrainCompletions`.
