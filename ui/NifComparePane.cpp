@@ -169,8 +169,15 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     // and the path label reads "Loading"), then parse+build on the shared pool.
     m_pendingPath = path;
     m_state = LoadState::Loading;
-    m_viewport->SetDocument(nullptr);
-    m_viewport->SetLoading(true);
+    // Retarget (this pane already shows a model, e.g. picking a sibling from the
+    // thumbnail strip): keep the current model on screen until the new one is
+    // ready, so the main view doesn't flash the empty placeholder grid between
+    // them. A fresh/empty pane shows the placeholder + "Loading" overlay.
+    if (!m_doc)
+    {
+        m_viewport->SetDocument(nullptr);
+        m_viewport->SetLoading(true);
+    }
     m_thumbStrip->SetActive(true); // reserve the strip's space up front (stable layout)
     UpdatePathLabel();
     UpdateStatsLabel();
