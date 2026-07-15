@@ -89,8 +89,9 @@ own copies.
   area (below the panes, above the control strip), each rendered headlessly
   through the shared render core (no extra device/shaders). Thumbnails
   generate a few per frame so a large folder never blocks the UI; clicking
-  one loads it into the active pane. (The strip also supports a vertical/side
-  orientation.)
+  one loads it into the active pane. The context menu can move the strip
+  between the bottom (horizontal) and the left side (vertical); the placement
+  and the last-browsed folder are remembered across sessions.
 - **Drag & drop from Explorer** (FICture2's drag-controller semantics):
   hovering the left 75% of a pane shows a red overlay and the drop
   REPLACES that pane's document; the right 25% shows a green strip and

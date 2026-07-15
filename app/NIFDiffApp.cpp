@@ -56,6 +56,7 @@ namespace
     constexpr UINT kMenuIdSaveScreenshot = 7;
     constexpr UINT kMenuIdClearRecent = 8;
     constexpr UINT kMenuIdBrowseThumbnails = 9;
+    constexpr UINT kMenuIdToggleThumbnailDock = 10;
     // Recent-files (MRU) submenu entries occupy a reserved id range above
     // the fixed items: entry i uses kMenuIdRecentBase + i.
     constexpr UINT kMenuIdRecentBase = 100;
@@ -135,7 +136,9 @@ namespace
     // be a per-pane button row act on exactly that pane.
     void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
                             NifCompareView* view, NifComparePane* pane,
-                            const std::function<void()>& onBrowseThumbnails = {})
+                            const std::function<void()>& onBrowseThumbnails = {},
+                            const std::function<void()>& onToggleThumbnailDock = {},
+                            bool thumbnailsOnBottom = true)
     {
         POINT screenPt = clientPt;
         ClientToScreen(hwnd, &screenPt);
@@ -187,6 +190,10 @@ namespace
         if (onBrowseThumbnails)
         {
             AppendMenuW(menu, MF_STRING, kMenuIdBrowseThumbnails, L"Open Folder as &Thumbnails...");
+            if (onToggleThumbnailDock)
+                AppendMenuW(menu, MF_STRING, kMenuIdToggleThumbnailDock,
+                            thumbnailsOnBottom ? L"Move Thumbnails to &Left Side"
+                                               : L"Move Thumbnails to &Bottom");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
@@ -248,6 +255,11 @@ namespace
         case kMenuIdBrowseThumbnails:
             if (onBrowseThumbnails)
                 onBrowseThumbnails();
+            break;
+
+        case kMenuIdToggleThumbnailDock:
+            if (onToggleThumbnailDock)
+                onToggleThumbnailDock();
             break;
 
         case kMenuIdAbout:
@@ -762,7 +774,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             auto bp = weakBackplate.lock();
             if (!view || !bp || bp->Window() == nullptr)
                 return;
-            // "Open Folder as Thumbnails...": pick a folder for the left strip.
+            // "Open Folder as Thumbnails...": pick a folder for the strip.
             auto onBrowseThumbnails = [weakStrip, weakBackplate]()
             {
                 auto strip = weakStrip.lock();
@@ -775,7 +787,31 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                     bp2->Render();
                 }
             };
-            ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane, onBrowseThumbnails);
+            // Toggle strip placement between the bottom (horizontal) and the
+            // left side (vertical); offered only once a folder is loaded.
+            std::function<void()> onToggleDock;
+            bool onBottom = true;
+            if (auto strip = weakStrip.lock(); strip && strip->HasContent())
+            {
+                onBottom = (strip->GetOrientation() == ThumbnailStrip::Orientation::Horizontal);
+                onToggleDock = [weakStrip, weakView, weakBackplate, iniPath]()
+                {
+                    auto strip = weakStrip.lock();
+                    auto v = weakView.lock();
+                    auto bp2 = weakBackplate.lock();
+                    if (!strip || !v || !bp2) return;
+                    const bool toBottom =
+                        (strip->GetOrientation() == ThumbnailStrip::Orientation::Vertical);
+                    strip->SetOrientation(toBottom ? ThumbnailStrip::Orientation::Horizontal
+                                                   : ThumbnailStrip::Orientation::Vertical);
+                    v->SetThumbnailStripDock(toBottom ? FD2D::Dock::Bottom : FD2D::Dock::Left);
+                    AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailDock",
+                                           toBottom ? L"bottom" : L"left");
+                    bp2->Render();
+                };
+            }
+            ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane,
+                               onBrowseThumbnails, onToggleDock, onBottom);
             bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
@@ -918,8 +954,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 LoadAndOpenInitialSession(*compareView, settings);
         }
 
-        // Restore the last-browsed thumbnail folder (skip if it has vanished).
+        // Restore the thumbnail strip placement + last-browsed folder (skip a
+        // folder that has since vanished). Default is bottom/horizontal.
         {
+            if (settings.GetString(kSectionSession, L"ThumbnailDock") == L"left")
+            {
+                thumbnailStrip->SetOrientation(ThumbnailStrip::Orientation::Vertical);
+                compareView->SetThumbnailStripDock(FD2D::Dock::Left);
+            }
             const std::wstring thumbFolder = settings.GetString(kSectionSession, L"ThumbnailFolder");
             std::error_code ec;
             if (!thumbFolder.empty() && std::filesystem::is_directory(thumbFolder, ec))

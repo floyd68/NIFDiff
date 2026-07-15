@@ -178,11 +178,13 @@ public:
     // pane's viewport. Must outlive this view.
     void SetRenderDevice(RenderDevice* device);
 
-    // Docks an accessory strip (the folder thumbnail browser) along the
-    // bottom of the VIEWS area - below the pane grid but above the control
-    // strip - rather than at the very bottom of the window. Zero-size until
-    // it has content, so it takes no space when unused.
+    // Docks an accessory strip (the folder thumbnail browser) along an edge
+    // of the VIEWS area - below the pane grid or beside it, but inside the
+    // views region above the control strip - rather than at the very bottom
+    // of the window. Zero-size until it has content, so it takes no space
+    // when unused. SetThumbnailStripDock chooses the edge (Bottom or Left).
     void SetThumbnailStrip(const std::shared_ptr<FD2D::Wnd>& strip);
+    void SetThumbnailStripDock(FD2D::Dock dock);
 
     void InvalidateTextureCaches();
 
@@ -272,6 +274,7 @@ private:
     // sits below the panes and above the control strip.
     std::shared_ptr<FD2D::DockPanel> m_viewsArea;
     std::shared_ptr<FD2D::Wnd> m_thumbnailStrip;
+    FD2D::Dock m_thumbnailStripDock = FD2D::Dock::Bottom;
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
     std::shared_ptr<IpcOpenQueue> m_ipcQueue;

@@ -1402,7 +1402,7 @@ void NifCompareView::RebuildViewsArea()
     if (m_thumbnailStrip)
     {
         m_viewsArea->AddChild(m_thumbnailStrip);
-        m_viewsArea->SetChildDock(m_thumbnailStrip, FD2D::Dock::Bottom);
+        m_viewsArea->SetChildDock(m_thumbnailStrip, m_thumbnailStripDock);
     }
     if (m_hostRoot)
     {
@@ -1414,6 +1414,17 @@ void NifCompareView::RebuildViewsArea()
 void NifCompareView::SetThumbnailStrip(const std::shared_ptr<FD2D::Wnd>& strip)
 {
     m_thumbnailStrip = strip;
+    RebuildViewsArea();
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
+void NifCompareView::SetThumbnailStripDock(FD2D::Dock dock)
+{
+    if (m_thumbnailStripDock == dock)
+        return;
+    m_thumbnailStripDock = dock;
     RebuildViewsArea();
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
