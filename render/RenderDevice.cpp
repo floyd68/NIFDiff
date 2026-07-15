@@ -863,6 +863,23 @@ void RenderDevice::RenderScene(RenderTarget& target, RenderMeshCache& cache,
             }
             auto [normalSrv, hasNormal] = resolve(mat.normalTexture, m_flatNormalSRV.Get());
             auto [cubeSrv, hasCube] = resolve(mat.hasCubeMap ? mat.cubeTexture : kNone, nullptr);
+            // t4 is declared as a TextureCube in the shader, so it must never
+            // receive a 2D view. Some meshes point the environment-map slot at
+            // a plain 2D texture (not a real cube DDS); binding that to the
+            // cube slot with the env-map flag set trips the debug layer's
+            // cube/2D dimension mismatch (#354) on every draw of that shape.
+            // Treat a non-cube resolve as "no cube": bind null + clear the flag,
+            // which degrades to the no-environment-reflection path.
+            if (hasCube && cubeSrv != nullptr)
+            {
+                D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+                cubeSrv->GetDesc(&srvDesc);
+                if (srvDesc.ViewDimension != D3D11_SRV_DIMENSION_TEXTURECUBE)
+                {
+                    cubeSrv = nullptr;
+                    hasCube = false;
+                }
+            }
             auto [envMaskSrv, hasEnvMask] = resolve(mat.useEnvironmentMask ? mat.envMaskTexture : kNone, m_whiteTexSRV.Get());
 
             // t3 is dual-purpose: the parallax height map (shader type 3) or
