@@ -31,6 +31,11 @@ ThumbnailStrip::ThumbnailStrip(const std::wstring& name)
 {
 }
 
+ThumbnailStrip::~ThumbnailStrip()
+{
+    StopWorker();
+}
+
 void ThumbnailStrip::SetOrientation(Orientation o)
 {
     const bool h = (o == Orientation::Horizontal);
@@ -49,8 +54,20 @@ void ThumbnailStrip::SetEnabled(bool enabled)
         return;
     m_enabled = enabled;
     m_hoverCard = -1;
-    // Toggling presence changes our measured extent (0 when off), so relayout;
-    // re-enabling resumes generation from where it left off (m_nextToRender).
+    if (!enabled)
+    {
+        // Idle the loader: cancel queued/in-flight parses (bump the generation
+        // so the worker discards its current job) and drop pending results.
+        ++m_generation;
+        { std::lock_guard<std::mutex> lk(m_jobMutex); m_jobs.clear(); }
+        { std::lock_guard<std::mutex> lk(m_readyMutex); m_ready.clear(); }
+    }
+    else
+    {
+        // Resume: re-queue any files not rendered before we were turned off.
+        EnqueuePending();
+    }
+    // Toggling presence changes our measured extent (0 when off), so relayout.
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
@@ -86,6 +103,7 @@ void ThumbnailStrip::OnAttached(FD2D::Backplate& backplate)
     FD2D::Wnd::OnAttached(backplate);
     m_device = backplate.D3DDevice();
     m_context = backplate.D3DContext();
+    m_redrawToken = backplate.GetAsyncRedrawToken(); // worker wakes the UI through this
 }
 
 void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
@@ -114,8 +132,13 @@ void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
 
 void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 {
+    // Cancel in-flight/queued parses from the previous folder: bump the
+    // generation (the worker discards older results) and drop pending work.
+    ++m_generation;
+    { std::lock_guard<std::mutex> lk(m_jobMutex); m_jobs.clear(); }
+    { std::lock_guard<std::mutex> lk(m_readyMutex); m_ready.clear(); }
+
     m_entries.clear();
-    m_nextToRender = 0;
     m_scroll = 0.0f;
     m_hoverCard = -1;
     m_folder = folder;
@@ -181,10 +204,40 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
         }
     }
 
+    // Queue the new folder's files for the background worker.
+    EnqueuePending();
+
     // Presence (and thus our measured extent) may have changed, so relayout.
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
+}
+
+void ThumbnailStrip::EnqueuePending()
+{
+    // Queue every not-yet-rendered .nif entry for the worker (skipped while
+    // disabled - the loader must idle when the strip is off).
+    if (!m_enabled)
+        return;
+    const std::uint64_t gen = m_generation.load();
+    bool any = false;
+    {
+        std::lock_guard<std::mutex> lk(m_jobMutex);
+        for (std::size_t i = 0; i < m_entries.size(); ++i)
+        {
+            const Entry& e = m_entries[i];
+            if (e.kind == EntryKind::File && !e.rendered)
+            {
+                m_jobs.push_back({ gen, i, e.path });
+                any = true;
+            }
+        }
+    }
+    if (any)
+    {
+        EnsureWorker();
+        m_jobCv.notify_all();
+    }
 }
 
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
@@ -199,59 +252,103 @@ FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
     return m_desired;
 }
 
-bool ThumbnailStrip::RenderNextThumbnail()
+void ThumbnailStrip::EnsureWorker()
 {
-    // Folder/Up tiles need no 3D render - skip past them (they sort before the
-    // .nif files, so this just advances the cursor to the first file once).
-    while (m_nextToRender < m_entries.size() &&
-           m_entries[m_nextToRender].kind != EntryKind::File)
-        ++m_nextToRender;
-    if (m_nextToRender >= m_entries.size())
-        return false;
-    if (!m_renderDevice || !m_renderDevice->IsInitialized() || !m_device ||
-        !m_context || !m_textureRepository)
-        return false;
+    if (m_worker.joinable())
+        return;
+    m_workerStop = false;
+    m_worker = std::thread([this] { WorkerLoop(); });
+}
 
-    Entry& e = m_entries[m_nextToRender++];
-
-    NifDocument doc;
-    std::string err;
-    if (!doc.loadFromFile(e.path, &err) || !doc.isValid())
+void ThumbnailStrip::StopWorker()
+{
     {
-        e.failed = true; e.rendered = true;
-        return true;
+        std::lock_guard<std::mutex> lk(m_jobMutex);
+        m_workerStop = true;
     }
-    std::vector<RenderMesh> meshes = SceneBuilder::build(doc);
-    if (meshes.empty())
-    {
-        e.failed = true; e.rendered = true;
-        return true;
-    }
+    m_jobCv.notify_all();
+    if (m_worker.joinable())
+        m_worker.join();
+}
 
-    // World-space bounds -> framing (same as NifViewport's fresh-load fit).
-    Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
-    bool any = false;
-    for (const RenderMesh& mesh : meshes)
+void ThumbnailStrip::WorkerLoop()
+{
+    for (;;)
     {
-        if (!mesh.geometry) continue;
-        for (const Vector3& p : mesh.geometry->positions)
+        ParseJob job;
         {
-            Vector3 wp = mesh.worldTransform * p;
-            minB.boundMin(wp); maxB.boundMax(wp); any = true;
+            std::unique_lock<std::mutex> lk(m_jobMutex);
+            m_jobCv.wait(lk, [this] { return m_workerStop.load() || !m_jobs.empty(); });
+            if (m_workerStop.load())
+                return;
+            job = std::move(m_jobs.front());
+            m_jobs.pop_front();
         }
-    }
-    if (!any)
-    {
-        e.failed = true; e.rendered = true;
-        return true;
-    }
-    const Vector3 center = (minB + maxB) * 0.5f;
-    const float radius = (std::max)((maxB - minB).length() * 0.5f, 1.0f);
+        if (job.generation != m_generation.load())
+            continue; // folder changed after this job was queued
 
+        // Parse + build off the UI thread (both are free of shared state). The
+        // shared_ptr doc must outlive the meshes, which borrow its geometry.
+        ParsedThumb result;
+        result.generation = job.generation;
+        result.index = job.index;
+
+        auto doc = std::make_shared<NifDocument>();
+        std::string err;
+        if (!doc->loadFromFile(job.path, &err) || !doc->isValid())
+        {
+            result.failed = true;
+        }
+        else
+        {
+            std::vector<RenderMesh> meshes = SceneBuilder::build(*doc);
+            Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
+            bool any = false;
+            for (const RenderMesh& mesh : meshes)
+            {
+                if (!mesh.geometry) continue;
+                for (const Vector3& p : mesh.geometry->positions)
+                {
+                    Vector3 wp = mesh.worldTransform * p;
+                    minB.boundMin(wp); maxB.boundMax(wp); any = true;
+                }
+            }
+            if (meshes.empty() || !any)
+            {
+                result.failed = true;
+            }
+            else
+            {
+                result.center = (minB + maxB) * 0.5f;
+                result.radius = (std::max)((maxB - minB).length() * 0.5f, 1.0f);
+                result.meshes = std::move(meshes);
+                result.doc = std::move(doc);
+            }
+        }
+
+        if (job.generation != m_generation.load())
+            continue; // discard: folder changed while we parsed
+        {
+            std::lock_guard<std::mutex> lk(m_readyMutex);
+            m_ready.push_back(std::move(result));
+        }
+        if (m_redrawToken)
+            m_redrawToken->RequestAsyncRedraw(); // wake the UI to render it
+    }
+}
+
+void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
+{
+    e.rendered = true;
+    if (pt.failed || !pt.doc || pt.meshes.empty())
+    {
+        e.failed = true;
+        return;
+    }
     if (!m_thumbTarget.Resize(m_device, kThumbPx, kThumbPx, 1))
     {
-        e.failed = true; e.rendered = true;
-        return true;
+        e.failed = true;
+        return;
     }
     m_thumbCache.Clear();
 
@@ -260,14 +357,14 @@ bool ThumbnailStrip::RenderNextThumbnail()
     textures.SetNifDirectory(nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring());
 
     Camera cam;
-    cam.frame(center, radius);
+    cam.frame(pt.center, pt.radius);
     cam.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
 
     RenderSettings s;
     s.view = cam.viewMatrix();
     const float dist = cam.distance();
     const float nearZ = (std::max)(dist * 0.02f, 1e-4f);
-    const float farZ = dist + radius * 4.0f + 10.0f;
+    const float farZ = dist + pt.radius * 4.0f + 10.0f;
     s.proj = Camera::projectionMatrix(kFovY, 1.0f, nearZ, farZ);
     s.eyePos = cam.eyePosition();
     s.brightness = 1.15f;   // thumbnails read a touch brighter than the panes
@@ -275,7 +372,7 @@ bool ThumbnailStrip::RenderNextThumbnail()
     s.showAxes = false;
     s.clearColor = Color4 { 0.11f, 0.11f, 0.13f, 1.0f };
 
-    m_renderDevice->RenderScene(m_thumbTarget, m_thumbCache, meshes, s, &textures);
+    m_renderDevice->RenderScene(m_thumbTarget, m_thumbCache, pt.meshes, s, &textures);
 
     // Copy the render into a persistent per-thumbnail texture (the reusable
     // target is about to be overwritten by the next thumbnail).
@@ -297,25 +394,48 @@ bool ThumbnailStrip::RenderNextThumbnail()
     {
         e.failed = true;
     }
-    e.rendered = true;
-    return true;
 }
 
 void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
 {
-    // Off: the loader idles - no parsing/building/rendering happens.
+    // Off: the loader idles - no parsing/rendering happens.
     if (!m_enabled)
     {
         FD2D::Wnd::OnRenderD3D(context);
         return;
     }
-    // Generate a few thumbnails per frame in the D3D pass (RenderScene binds
-    // its own targets), then keep painting until the whole folder is done.
-    for (int i = 0; i < kPerFrame; ++i)
-        if (!RenderNextThumbnail())
-            break;
-    if (m_nextToRender < m_entries.size())
-        Invalidate(); // schedule the next batch
+    // Render a few of the worker's freshly parsed scenes per frame (RenderScene
+    // needs the immediate context, so it must run here on the UI thread).
+    if (m_renderDevice && m_renderDevice->IsInitialized() && m_device &&
+        m_context && m_textureRepository)
+    {
+        int done = 0;
+        while (done < kPerFrame)
+        {
+            ParsedThumb pt;
+            {
+                std::lock_guard<std::mutex> lk(m_readyMutex);
+                if (m_ready.empty())
+                    break;
+                pt = std::move(m_ready.front());
+                m_ready.pop_front();
+            }
+            if (pt.generation != m_generation.load() || pt.index >= m_entries.size())
+                continue; // stale result from a previous folder
+            Entry& e = m_entries[pt.index];
+            if (e.kind != EntryKind::File)
+                continue;
+            RenderParsedThumb(e, pt);
+            ++done;
+        }
+    }
+    bool more;
+    {
+        std::lock_guard<std::mutex> lk(m_readyMutex);
+        more = !m_ready.empty();
+    }
+    if (more)
+        Invalidate(); // keep draining next frame
 
     FD2D::Wnd::OnRenderD3D(context);
 }

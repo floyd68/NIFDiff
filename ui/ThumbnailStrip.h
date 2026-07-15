@@ -6,13 +6,17 @@
 // the strip owns ONE small offscreen RenderTarget and reuses the app-wide
 // shared RenderDevice to draw each model headlessly, then copies the result
 // into a per-thumbnail texture wrapped as an ID2D1Bitmap1 for display. No
-// extra device/shaders/IBL - those are shared. Thumbnails are generated a few
-// per frame (in the D3D pass) so opening a large folder never blocks the UI;
-// the parse itself still happens on the UI thread (a background loader is a
-// later refinement). Clicking a thumbnail activates it (the owner loads it
-// into a pane).
+// extra device/shaders/IBL - those are shared.
+//
+// Threading: the heavy per-file work (NifDocument::loadFromFile + SceneBuilder
+// ::build, both free of global state) runs on a background worker thread; only
+// the D3D render-to-target + copy stays on the UI thread (immediate context).
+// The worker pushes parsed scenes to a ready queue and wakes the UI via an
+// AsyncRedrawToken; a generation counter cancels stale work when the folder
+// changes. Clicking a thumbnail activates it (the owner loads it into a pane).
 #pragma once
 
+#include "../core/NifTypes.h"        // Vector3 (ParsedThumb::center)
 #include "../core/ResourceResolver.h"
 #include "../render/RenderDevice.h"
 #include "../render/RenderTarget.h"
@@ -22,13 +26,23 @@
 #include <Wnd.h>
 #include <d2d1_1.h>
 #include <dwrite.h>
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
+
+namespace FD2D { class AsyncRedrawToken; }
 
 namespace nsk
 {
+
+class NifDocument;
 
 class ThumbnailStrip : public FD2D::Wnd
 {
@@ -39,6 +53,7 @@ public:
     enum class Orientation { Vertical, Horizontal };
 
     explicit ThumbnailStrip(const std::wstring& name);
+    ~ThumbnailStrip() override; // stops + joins the background worker
 
     // Layout orientation; the owner must dock the strip on the matching edge.
     void SetOrientation(Orientation o);
@@ -94,8 +109,30 @@ private:
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;   // D2D view of tex (built lazily in the D2D pass)
     };
 
+    // A background-parsed scene ready for the UI thread to render to a
+    // thumbnail. Holds the doc alive because the meshes borrow its geometry.
+    struct ParsedThumb
+    {
+        std::uint64_t generation = 0;
+        std::size_t index = 0;      // into m_entries (valid while generation matches)
+        bool failed = false;
+        std::shared_ptr<NifDocument> doc;
+        std::vector<RenderMesh> meshes;
+        Vector3 center { 0.0f, 0.0f, 0.0f };
+        float radius = 1.0f;
+    };
+    // One queued parse job: file path (a copy - the worker never touches
+    // m_entries) tagged with the generation it belongs to.
+    struct ParseJob
+    {
+        std::uint64_t generation = 0;
+        std::size_t index = 0;
+        std::wstring path;
+    };
+
     // Re-list a directory: Up tile (if any parent) + subfolders + *.nif files,
-    // with selectPath's file card highlighted. Resets thumbnail generation.
+    // with selectPath's file card highlighted. Bumps the generation, drops
+    // stale queued/ready work, and enqueues the new files for the worker.
     // Args are taken BY VALUE: the first thing this does is clear m_entries, so
     // a caller passing an entry's own path/name (a folder/Up tile) would be
     // handing us a reference into the vector we are about to free.
@@ -103,9 +140,17 @@ private:
     // Draws a folder / up-arrow glyph inside rc for Folder/Up tiles.
     void DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const;
 
-    // Renders one queued File entry's model into m_thumbTarget and copies it
-    // into a persistent per-entry texture. Returns false when none pending.
-    bool RenderNextThumbnail();
+    // Queues every not-yet-rendered .nif entry for the worker (no-op when the
+    // strip is disabled). Called after a re-list and on re-enable.
+    void EnqueuePending();
+    // Background worker: parses + builds queued files, publishes to m_ready,
+    // wakes the UI. EnsureWorker starts it lazily; the dtor stops + joins it.
+    void EnsureWorker();
+    void StopWorker();
+    void WorkerLoop();
+    // UI thread: render one background-parsed scene into m_thumbTarget and copy
+    // it into the entry's persistent texture (immediate context).
+    void RenderParsedThumb(Entry& entry, ParsedThumb& parsed);
     // Builds the D2D bitmap for an entry whose texture exists but bitmap doesn't.
     void EnsureBitmap(Entry& entry);
     void EnsureTextFormat();
@@ -131,11 +176,23 @@ private:
     std::wstring m_folder;       // directory currently listed
     std::wstring m_currentFile;  // active pane's .nif, highlighted when present
     std::vector<Entry> m_entries;
-    std::size_t m_nextToRender = 0; // index of the next entry to generate
     bool m_enabled = true;          // master on/off (see SetEnabled)
     bool m_horizontal = false;
     float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)
     int m_hoverCard = -1;
+
+    // Background parse worker. m_generation is bumped on every NavigateTo;
+    // jobs/results tagged with an older generation are dropped. m_jobs is the
+    // worker's input, m_ready its output; both are drained under their mutex.
+    std::thread m_worker;
+    std::mutex m_jobMutex;
+    std::condition_variable m_jobCv;
+    std::deque<ParseJob> m_jobs;
+    std::mutex m_readyMutex;
+    std::deque<ParsedThumb> m_ready;
+    std::atomic<std::uint64_t> m_generation { 0 };
+    std::atomic<bool> m_workerStop { false };
+    std::shared_ptr<FD2D::AsyncRedrawToken> m_redrawToken; // UI wake from worker
 
     std::function<void(const std::wstring&)> m_onActivated;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_textFormat;

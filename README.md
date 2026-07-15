@@ -87,10 +87,11 @@ own copies.
   every pane hosts its own scrollable strip along its bottom edge that lists
   the folder of THAT pane's currently-open .nif - so when comparing files from
   different folders, each pane browses its own. Sibling .nif files appear as
-  3D thumbnails (rendered headlessly through the shared render core, a few per
-  frame so a large folder never blocks the UI), subfolders and an ".." tile
-  appear as folder icons, and the pane's current file is drawn with a blue
-  highlight. Clicking a sibling loads it into that pane (the highlight
+  3D thumbnails (each parsed + scene-built on a background worker thread, then
+  rendered headlessly through the shared render core on the UI thread a few
+  per frame, so even a large folder never blocks or stutters the UI),
+  subfolders and an ".." tile appear as folder icons, and the pane's current
+  file is drawn with a blue highlight. Clicking a sibling loads it into that pane (the highlight
   follows); clicking a folder or ".." navigates that pane's strip in place.
   Each card's file name is centered and ellipsized under its thumbnail, and
   hovering shows the full path as a tooltip. The VIEW group's "Thumbnails"
