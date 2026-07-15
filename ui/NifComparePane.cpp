@@ -151,7 +151,10 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
         // Falls back to a direct parse if no manager is wired (e.g. tests).
         if (m_resourceManager)
         {
-            doc = m_resourceManager->GetOrParseNif(path, error);
+            // UI thread: not IoGate-throttled, so an open never waits behind
+            // background thumbnail reads (it still shares/populates the cache).
+            doc = m_resourceManager->GetOrParseNif(
+                path, error, ResourceManager::Priority::ActivePane, /*throttle=*/false);
         }
         else
         {

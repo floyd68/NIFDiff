@@ -103,7 +103,10 @@ own copies.
   through a shared NIF cache with in-flight de-duplication, so a file is parsed
   exactly once no matter how many panes or strips want it: opening the same mesh
   into several panes, or a pane's own file showing up in its thumbnail strip,
-  reuses one parsed document instead of re-reading and re-parsing it. Each thumbnail is framed from a slight 3/4 angle (a small
+  reuses one parsed document instead of re-reading and re-parsing it. Background
+  reads pass through an I/O gate that bounds how many run at once, so a folder
+  full of thumbnails can't thrash the disk; an interactive file-open is never
+  throttled behind them. Each thumbnail is framed from a slight 3/4 angle (a small
   yaw off dead-on frontal) with an orthographic camera fitted tightly to the
   model's non-hidden bounds with equal margins, so cards take the model's own aspect
   ratio - wide meshes get wide cards, tall meshes tall ones - all sized to the

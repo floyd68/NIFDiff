@@ -98,9 +98,22 @@ public:
     // The returned shared_ptr keeps the doc alive; a holder therefore pins its
     // cache entry against eviction. The cache re-parses when the file's
     // last-write time changes.
+    //
+    // `prio` orders IoGate permits (higher priority gets a freed disk permit
+    // first); `throttle` gates the disk read through the IoGate. Background
+    // (pool-thread) callers throttle so they don't thrash the disk; a
+    // synchronous UI-thread load passes throttle=false so it is never made to
+    // wait behind background reads.
     std::shared_ptr<const NifDocument> GetOrParseNif(const std::wstring& path,
-                                                     std::string* error = nullptr);
+                                                     std::string* error = nullptr,
+                                                     Priority prio = Priority::Thumbnail,
+                                                     bool throttle = true);
     void ClearNifCache(); // drop cache references (docs held elsewhere survive)
+
+    // IoGate: cap concurrent background disk reads (default 4). Fewer permits
+    // than pool threads keeps disk-bound jobs from thrashing; the surplus
+    // threads run CPU-only work (scene build, decode) meanwhile.
+    void SetIoPermits(int permits);
 
 private:
     struct Job
@@ -138,6 +151,12 @@ private:
     static std::wstring NormalizeNifKey(const std::wstring& path);
     void EvictNif(); // caller holds m_nifMutex; trims the LRU (pinned docs kept)
 
+    // Priority-aware disk-permit gate. A freed permit is granted to the
+    // highest-priority (lowest enum) waiter, so a pane load out-prioritizes a
+    // thumbnail once both compete for the disk.
+    int IoAcquire(Priority prio); // blocks until granted; returns held-permit count
+    void IoRelease();
+
     struct NifEntry
     {
         NifPtr doc;
@@ -153,6 +172,14 @@ private:
     // Files currently being parsed: joiners wait on the shared_future instead
     // of starting a duplicate parse.
     std::unordered_map<std::wstring, std::shared_future<NifPtr>> m_nifInFlight;
+
+    // --- IoGate internals ----------------------------------------------------
+    mutable std::mutex m_ioMutex;
+    std::condition_variable m_ioCv;
+    int m_ioPermits = 4;   // free permits
+    int m_ioActive = 0;    // permits currently held (diagnostics)
+    int m_ioPeak = 0;      // high-water mark of concurrent reads (diagnostics)
+    std::array<int, static_cast<std::size_t>(Priority::Count)> m_ioWaiting {};
 };
 
 } // namespace nsk

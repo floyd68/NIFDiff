@@ -150,8 +150,51 @@ std::wstring ResourceManager::NormalizeNifKey(const std::wstring& path)
     return key;
 }
 
+void ResourceManager::SetIoPermits(int permits)
+{
+    std::lock_guard<std::mutex> lk(m_ioMutex);
+    // Difference goes to the free pool (held permits are unaffected). Called
+    // before loads begin, but this keeps it correct if retuned live.
+    m_ioPermits += (permits - (m_ioPermits + m_ioActive));
+    if (m_ioPermits < 0)
+        m_ioPermits = 0;
+    m_ioCv.notify_all();
+}
+
+int ResourceManager::IoAcquire(Priority prio)
+{
+    const std::size_t p = static_cast<std::size_t>(prio);
+    std::unique_lock<std::mutex> lk(m_ioMutex);
+    ++m_ioWaiting[p];
+    m_ioCv.wait(lk, [&]
+    {
+        if (m_ioPermits <= 0)
+            return false;
+        // Yield to any higher-priority (lower enum) waiter still queued.
+        for (std::size_t hp = 0; hp < p; ++hp)
+            if (m_ioWaiting[hp] > 0)
+                return false;
+        return true;
+    });
+    --m_ioWaiting[p];
+    --m_ioPermits;
+    ++m_ioActive;
+    m_ioPeak = (std::max)(m_ioPeak, m_ioActive);
+    return m_ioActive;
+}
+
+void ResourceManager::IoRelease()
+{
+    {
+        std::lock_guard<std::mutex> lk(m_ioMutex);
+        ++m_ioPermits;
+        --m_ioActive;
+    }
+    m_ioCv.notify_all(); // wake waiters; the highest-priority one proceeds
+}
+
 std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
-    const std::wstring& path, std::string* error)
+    const std::wstring& path, std::string* error, Priority prio, bool throttle)
 {
     const std::wstring key = NormalizeNifKey(path);
 
@@ -193,13 +236,19 @@ std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
 
             // Parse OUTSIDE the lock so concurrent requests for OTHER files (or
             // joiners of this one) aren't blocked by our disk read + parse.
+            // Background reads pass through the IoGate (bounded disk
+            // concurrency); the synchronous UI path (throttle=false) does not,
+            // so it never waits behind background loads.
             lk.unlock();
+            const int io = throttle ? IoAcquire(prio) : 0; // held permits incl. self
             const auto t0 = StartupTrace::Clock::now();
             auto mutableDoc = std::make_shared<NifDocument>();
             const bool ok = mutableDoc->loadFromFile(path, error) && mutableDoc->isValid();
             NifPtr doc = ok ? NifPtr(std::move(mutableDoc)) : nullptr;
             const double ms = std::chrono::duration<double, std::milli>(
                 StartupTrace::Clock::now() - t0).count();
+            if (throttle)
+                IoRelease();
             lk.lock();
 
             m_nifInFlight.erase(key);
@@ -210,7 +259,7 @@ std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
                 EvictNif();
             }
             promise.set_value(doc); // release any joiners
-            NIFLOG_INFO("[NIFCACHE] parse {} ({:.1f} ms){}", name, ms,
+            NIFLOG_INFO("[NIFCACHE] parse {} ({:.1f} ms, io={}){}", name, ms, io,
                         doc ? "" : " FAILED");
             return doc;
         }
