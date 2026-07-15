@@ -80,6 +80,20 @@ public:
     void SetEnabled(bool enabled);
     bool IsEnabled() const { return m_enabled; }
 
+    // Strip thickness (card size) presets - the fixed dimension the strip
+    // takes along its docked edge (height when horizontal). Bigger = larger
+    // thumbnails but less room for the 3D view.
+    static constexpr float kSizeSmall = 150.0f;
+    static constexpr float kSizeMedium = 196.0f;
+    static constexpr float kSizeLarge = 248.0f;
+    void SetFixedExtent(float extent);
+    float FixedExtent() const { return m_fixedExtent; }
+
+    // Live resize by dragging the grip on the strip's inner edge. Fires while
+    // dragging (committed=false, so the owner can mirror the size onto the
+    // other panes live) and once on release (committed=true, to persist it).
+    void SetOnResize(std::function<void(float extent, bool committed)> handler) { m_onResize = std::move(handler); }
+
     // Keyboard stepping helpers (act on the strip's current listing):
     // StepFile returns the .nif `delta` cards from the highlighted file (wraps;
     // first/last when nothing is highlighted); EdgeFile returns the first
@@ -164,6 +178,7 @@ private:
     void EnsureBitmap(Entry& entry);
     void EnsureTextFormat();
     int CardAtPoint(const POINT& pt) const; // -1 when none
+    bool InResizeGrip(const POINT& pt) const; // over the drag-to-resize edge
     // Geometry helpers, orientation-aware. thumb = square thumbnail side;
     // cardMain = per-card size along the scroll axis; leadGutter = space before
     // the first card (the header in vertical mode).
@@ -186,14 +201,23 @@ private:
     std::wstring m_currentFile;  // active pane's .nif, highlighted when present
     std::vector<Entry> m_entries;
     bool m_enabled = true;          // master on/off (see SetEnabled)
+    float m_fixedExtent = kSizeMedium; // strip thickness (see SetFixedExtent)
     bool m_horizontal = false;
     float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)
     int m_hoverCard = -1;
 
-    // Background parse worker. m_generation is bumped on every NavigateTo;
+    // Drag-to-resize state (grip on the strip's inner edge).
+    bool m_resizing = false;
+    bool m_gripHover = false;
+    float m_dragStartMouse = 0.0f;  // cursor pos on the resize axis at drag start
+    float m_dragStartExtent = 0.0f; // m_fixedExtent at drag start
+    std::function<void(float, bool)> m_onResize;
+
+    // Background parse workers (a small per-strip pool - the WorkerLoop is
+    // safe to run concurrently). m_generation is bumped on every NavigateTo;
     // jobs/results tagged with an older generation are dropped. m_jobs is the
-    // worker's input, m_ready its output; both are drained under their mutex.
-    std::thread m_worker;
+    // workers' shared input, m_ready their output; both drained under a mutex.
+    std::vector<std::thread> m_workers;
     std::mutex m_jobMutex;
     std::condition_variable m_jobCv;
     std::deque<ParseJob> m_jobs;

@@ -209,6 +209,7 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetEnableGlow(m_enableGlow);
     pane->Viewport().SetEnableLighting(m_enableLighting);
     pane->SetThumbnailStripEnabled(m_thumbStripEnabled); // new panes inherit the global toggle
+    pane->SetThumbnailStripSize(m_thumbStripExtent);     // ... and the current card size
     WirePaneCallbacks(pane);
     return pane;
 }
@@ -246,6 +247,14 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     pane->SetOnThumbnailChosen([this, paneRaw](const std::wstring& path)
     {
         SyncThumbnailSelection(paneRaw, path);
+    });
+    pane->SetOnThumbnailStripResize([this](float ext, bool committed)
+    {
+        // Keep every pane's strip the same size as the one being dragged;
+        // persist only once the drag settles.
+        SetThumbnailStripSize(ext);
+        if (committed && m_onThumbStripSizeCommitted)
+            m_onThumbStripSizeCommitted(ext);
     });
 }
 
@@ -489,6 +498,21 @@ void NifCompareView::ApplyThumbStripEnabled(bool on)
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
+}
+
+void NifCompareView::SetThumbnailStripSize(float extent)
+{
+    m_thumbStripExtent = extent;
+    for (auto& p : m_panes)
+        p->SetThumbnailStripSize(extent);
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
+void NifCompareView::SetOnThumbnailStripSizeChanged(std::function<void(float)> handler)
+{
+    m_onThumbStripSizeCommitted = std::move(handler);
 }
 
 bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)

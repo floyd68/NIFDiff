@@ -45,6 +45,12 @@ public:
     // it lists the folder of THIS pane's open .nif. Master on/off is a global
     // UI toggle applied to every pane.
     void SetThumbnailStripEnabled(bool enabled);
+    // Thumbnail-strip thickness (card size); a global UI setting, all panes
+    // share it. Use ThumbnailStrip::kSizeSmall/Medium/Large.
+    void SetThumbnailStripSize(float extent) { m_thumbStrip->SetFixedExtent(extent); }
+    // Fired while the user drags THIS pane's strip grip (committed=false live,
+    // true on release) - NifCompareView mirrors the size onto every pane.
+    void SetOnThumbnailStripResize(std::function<void(float, bool)> handler) { m_onThumbStripResize = std::move(handler); }
 
     // Keyboard stepping over this pane's thumbnail strip (owner-driven).
     // StepThumbnailFile returns the prev/next sibling .nif to load (empty if
@@ -83,6 +89,7 @@ private:
     std::function<void()> m_onDocumentChanged;
     std::function<void(const std::wstring&)> m_onFileOpened;
     std::function<void(const std::wstring&)> m_onThumbnailChosen;
+    std::function<void(float, bool)> m_onThumbStripResize;
     std::unique_ptr<NifDocument> m_doc;
 };
 

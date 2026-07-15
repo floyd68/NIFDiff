@@ -66,6 +66,11 @@ NifComparePane::NifComparePane(const std::wstring& name)
         if (m_onThumbnailChosen)
             m_onThumbnailChosen(path);
     });
+    m_thumbStrip->SetOnResize([this](float ext, bool committed)
+    {
+        if (m_onThumbStripResize)
+            m_onThumbStripResize(ext, committed);
+    });
 
     // DockPanel's Fill dock stops any further docking, so the Top-docked path
     // strip and the Bottom-docked strips must be added before the Fill-docked

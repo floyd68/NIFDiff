@@ -17,9 +17,11 @@ namespace nsk
 
 namespace
 {
-    constexpr float kFixedExtent = 196.0f; // strip's fixed dim (width if vertical, height if horizontal)
     constexpr float kPad = 8.0f;
     constexpr float kLabelH = 20.0f;
+    constexpr float kGripThickness = 8.0f;  // drag-to-resize band on the inner edge
+    constexpr float kMinExtent = 110.0f;    // resize clamp (see SetFixedExtent)
+    constexpr float kMaxExtent = 360.0f;
     constexpr float kHeaderH = 26.0f;      // count header (vertical mode only)
     constexpr UINT kThumbPx = 168;         // offscreen render resolution
     constexpr int kPerFrame = 2;           // thumbnails generated per frame
@@ -77,8 +79,8 @@ float ThumbnailStrip::ThumbSide() const
 {
     // Horizontal leaves room below the square thumbnail for the label row;
     // vertical uses the full width for the thumbnail (label sits under it).
-    return m_horizontal ? (kFixedExtent - kLabelH - kPad * 3.0f)
-                        : (kFixedExtent - kPad * 2.0f);
+    return m_horizontal ? (m_fixedExtent - kLabelH - kPad * 3.0f)
+                        : (m_fixedExtent - kPad * 2.0f);
 }
 
 float ThumbnailStrip::CardMain() const
@@ -240,6 +242,18 @@ void ThumbnailStrip::EnqueuePending()
     }
 }
 
+void ThumbnailStrip::SetFixedExtent(float extent)
+{
+    extent = std::clamp(extent, kMinExtent, kMaxExtent);
+    if (extent == m_fixedExtent)
+        return;
+    m_fixedExtent = extent;
+    m_scroll = 0.0f; // card geometry changed; avoid a now-invalid scroll offset
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
+}
+
 std::wstring ThumbnailStrip::StepFile(int delta) const
 {
     // File entries in display order (folders/".." are not stepped through).
@@ -300,17 +314,22 @@ FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
         m_desired = { 0.0f, 0.0f };
         return m_desired;
     }
-    m_desired = m_horizontal ? FD2D::Size { available.w, kFixedExtent }
-                             : FD2D::Size { kFixedExtent, available.h };
+    m_desired = m_horizontal ? FD2D::Size { available.w, m_fixedExtent }
+                             : FD2D::Size { m_fixedExtent, available.h };
     return m_desired;
 }
 
 void ThumbnailStrip::EnsureWorker()
 {
-    if (m_worker.joinable())
+    if (!m_workers.empty())
         return;
     m_workerStop = false;
-    m_worker = std::thread([this] { WorkerLoop(); });
+    // A few threads per strip parse in parallel (large folders finish sooner);
+    // kept small so several panes' pools don't oversubscribe the CPU.
+    const unsigned hw = std::thread::hardware_concurrency();
+    const unsigned count = std::clamp(hw / 4u, 1u, 3u);
+    for (unsigned i = 0; i < count; ++i)
+        m_workers.emplace_back([this] { WorkerLoop(); });
 }
 
 void ThumbnailStrip::StopWorker()
@@ -320,8 +339,10 @@ void ThumbnailStrip::StopWorker()
         m_workerStop = true;
     }
     m_jobCv.notify_all();
-    if (m_worker.joinable())
-        m_worker.join();
+    for (std::thread& t : m_workers)
+        if (t.joinable())
+            t.join();
+    m_workers.clear();
 }
 
 void ThumbnailStrip::WorkerLoop()
@@ -600,11 +621,31 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     // (right when docked left, top when docked bottom).
     if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.12f), &brush)))
         target->FillRectangle(r, brush.Get());
-    if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.28f, 0.29f, 0.33f), &brush)))
+    // Separator on the inner edge; it thickens + brightens into a drag grip
+    // while the cursor is over it or a resize is in progress.
+    const bool gripActive = m_gripHover || m_resizing;
+    const float sepW = gripActive ? 3.0f : 1.0f;
+    const D2D1_COLOR_F sepColor = gripActive ? D2D1::ColorF(0.42f, 0.58f, 0.82f)
+                                             : D2D1::ColorF(0.28f, 0.29f, 0.33f);
+    if (SUCCEEDED(target->CreateSolidColorBrush(sepColor, &brush)))
     {
-        const D2D1_RECT_F sep = m_horizontal ? D2D1::RectF(r.left, r.top, r.right, r.top + 1.0f)
-                                             : D2D1::RectF(r.right - 1.0f, r.top, r.right, r.bottom);
+        const D2D1_RECT_F sep = m_horizontal ? D2D1::RectF(r.left, r.top, r.right, r.top + sepW)
+                                             : D2D1::RectF(r.right - sepW, r.top, r.right, r.bottom);
         target->FillRectangle(sep, brush.Get());
+        // A short centered grip handle to hint the edge is draggable.
+        if (gripActive && SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.75f, 0.85f, 1.0f), &brush)))
+        {
+            if (m_horizontal)
+            {
+                const float cx = (r.left + r.right) * 0.5f;
+                target->FillRectangle(D2D1::RectF(cx - 18.0f, r.top, cx + 18.0f, r.top + sepW), brush.Get());
+            }
+            else
+            {
+                const float cy = (r.top + r.bottom) * 0.5f;
+                target->FillRectangle(D2D1::RectF(r.right - sepW, cy - 18.0f, r.right, cy + 18.0f), brush.Get());
+            }
+        }
     }
 
     target->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_ALIASED);
@@ -700,6 +741,19 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     target->PopAxisAlignedClip();
 }
 
+bool ThumbnailStrip::InResizeGrip(const POINT& pt) const
+{
+    if (!HasContent() || !m_enabled)
+        return false;
+    const D2D1_RECT_F r = LayoutRect();
+    const float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
+    // The grip is the band on the strip's inner edge (top when docked at the
+    // bottom, right when docked on the left).
+    if (m_horizontal)
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.top + kGripThickness;
+    return y >= r.top && y <= r.bottom && x >= r.right - kGripThickness && x <= r.right;
+}
+
 int ThumbnailStrip::CardAtPoint(const POINT& pt) const
 {
     const D2D1_RECT_F r = LayoutRect();
@@ -746,37 +800,100 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
     case InputEventType::MouseMove:
     {
         if (!event.hasPoint) break;
-        const int hit = inStrip(event.point) ? CardAtPoint(event.point) : -1;
-        if (hit != m_hoverCard)
+        if (m_resizing)
         {
-            m_hoverCard = hit;
-            Invalidate();
+            // Drag the inner edge: toward the 3D view grows the strip.
+            const float cur = m_horizontal ? static_cast<float>(event.point.y)
+                                           : static_cast<float>(event.point.x);
+            const float delta = m_horizontal ? (m_dragStartMouse - cur) : (cur - m_dragStartMouse);
+            const float newExt = std::clamp(m_dragStartExtent + delta, kMinExtent, kMaxExtent);
+            if (newExt != m_fixedExtent)
+            {
+                SetFixedExtent(newExt);
+                if (m_onResize)
+                    m_onResize(newExt, /*committed=*/false); // live-mirror onto the other panes
+            }
+            return true;
+        }
+        const bool grip = InResizeGrip(event.point);
+        if (grip != m_gripHover) { m_gripHover = grip; Invalidate(); }
+        const int hit = (!grip && inStrip(event.point)) ? CardAtPoint(event.point) : -1;
+        if (hit != m_hoverCard) { m_hoverCard = hit; Invalidate(); }
+        break;
+    }
+
+    case InputEventType::SetCursor:
+    {
+        // Resize cursor while over the grip or dragging it.
+        POINT pt {};
+        const bool overGrip = m_backplate && GetCursorPos(&pt) &&
+                              ScreenToClient(m_backplate->Window(), &pt) && InResizeGrip(pt);
+        if (m_resizing || overGrip)
+        {
+            SetCursor(LoadCursor(nullptr, m_horizontal ? IDC_SIZENS : IDC_SIZEWE));
+            return true;
         }
         break;
     }
 
     case InputEventType::MouseDown:
-        if (event.button == MouseButton::Left && event.hasPoint && inStrip(event.point))
+        if (event.button == MouseButton::Left && event.hasPoint)
         {
-            const int hit = CardAtPoint(event.point);
-            if (hit >= 0)
+            // The resize grip takes priority over a card click.
+            if (InResizeGrip(event.point) && m_backplate)
             {
-                RequestFocus();
-                const Entry& e = m_entries[static_cast<std::size_t>(hit)];
-                if (e.kind == EntryKind::File)
-                {
-                    // Load the sibling into the active pane (owner's handler).
-                    if (m_onActivated)
-                        m_onActivated(e.path);
-                }
-                else
-                {
-                    // Folder / ".." tile: navigate the strip in place, keeping
-                    // the current-file highlight (matches only if it reappears).
-                    NavigateTo(e.path, m_currentFile);
-                }
+                m_resizing = true;
+                m_dragStartMouse = m_horizontal ? static_cast<float>(event.point.y)
+                                                : static_cast<float>(event.point.x);
+                m_dragStartExtent = m_fixedExtent;
+                SetCapture(m_backplate->Window());
+                Invalidate();
                 return true;
             }
+            if (inStrip(event.point))
+            {
+                const int hit = CardAtPoint(event.point);
+                if (hit >= 0)
+                {
+                    RequestFocus();
+                    const Entry& e = m_entries[static_cast<std::size_t>(hit)];
+                    if (e.kind == EntryKind::File)
+                    {
+                        // Load the sibling into the active pane (owner's handler).
+                        if (m_onActivated)
+                            m_onActivated(e.path);
+                    }
+                    else
+                    {
+                        // Folder / ".." tile: navigate the strip in place, keeping
+                        // the current-file highlight (matches only if it reappears).
+                        NavigateTo(e.path, m_currentFile);
+                    }
+                    return true;
+                }
+            }
+        }
+        break;
+
+    case InputEventType::MouseUp:
+        if (m_resizing && event.button == MouseButton::Left)
+        {
+            m_resizing = false;
+            ReleaseCapture();
+            if (m_onResize)
+                m_onResize(m_fixedExtent, /*committed=*/true); // persist the final size
+            Invalidate();
+            return true;
+        }
+        break;
+
+    case InputEventType::CaptureChanged:
+        if (m_resizing)
+        {
+            m_resizing = false;
+            if (m_onResize)
+                m_onResize(m_fixedExtent, /*committed=*/true);
+            Invalidate();
         }
         break;
 

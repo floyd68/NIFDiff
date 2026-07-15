@@ -56,6 +56,9 @@ namespace
     constexpr UINT kMenuIdSaveScreenshot = 7;
     constexpr UINT kMenuIdClearRecent = 8;
     constexpr UINT kMenuIdToggleThumbnailStrip = 11;
+    constexpr UINT kMenuIdThumbSizeSmall = 12;
+    constexpr UINT kMenuIdThumbSizeMedium = 13;
+    constexpr UINT kMenuIdThumbSizeLarge = 14;
     // Recent-files (MRU) submenu entries occupy a reserved id range above
     // the fixed items: entry i uses kMenuIdRecentBase + i.
     constexpr UINT kMenuIdRecentBase = 100;
@@ -136,7 +139,9 @@ namespace
     void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
                             NifCompareView* view, NifComparePane* pane,
                             const std::function<void()>& onToggleThumbnailStrip = {},
-                            bool thumbnailStripEnabled = true)
+                            bool thumbnailStripEnabled = true,
+                            const std::function<void(float)>& onSetThumbnailSize = {},
+                            float currentThumbnailSize = ThumbnailStrip::kSizeMedium)
     {
         POINT screenPt = clientPt;
         ClientToScreen(hwnd, &screenPt);
@@ -190,6 +195,21 @@ namespace
             AppendMenuW(menu, MF_STRING, kMenuIdToggleThumbnailStrip,
                         thumbnailStripEnabled ? L"&Hide Thumbnail Strips"
                                               : L"&Show Thumbnail Strips");
+            if (onSetThumbnailSize)
+            {
+                // "Thumbnail Size" submenu with a radio check on the current size.
+                HMENU sizeMenu = CreatePopupMenu();
+                auto sizeItem = [&](UINT id, const wchar_t* label, float extent)
+                {
+                    const bool on = currentThumbnailSize > extent - 0.5f &&
+                                    currentThumbnailSize < extent + 0.5f;
+                    AppendMenuW(sizeMenu, MF_STRING | (on ? MF_CHECKED : MF_UNCHECKED), id, label);
+                };
+                sizeItem(kMenuIdThumbSizeSmall,  L"&Small",  ThumbnailStrip::kSizeSmall);
+                sizeItem(kMenuIdThumbSizeMedium, L"&Medium", ThumbnailStrip::kSizeMedium);
+                sizeItem(kMenuIdThumbSizeLarge,  L"&Large",  ThumbnailStrip::kSizeLarge);
+                AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sizeMenu), L"Thumbnail Si&ze");
+            }
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         AppendMenuW(menu, MF_STRING, kMenuIdAbout, L"&About NIFDiff...");
@@ -251,6 +271,16 @@ namespace
         case kMenuIdToggleThumbnailStrip:
             if (onToggleThumbnailStrip)
                 onToggleThumbnailStrip();
+            break;
+
+        case kMenuIdThumbSizeSmall:
+            if (onSetThumbnailSize) onSetThumbnailSize(ThumbnailStrip::kSizeSmall);
+            break;
+        case kMenuIdThumbSizeMedium:
+            if (onSetThumbnailSize) onSetThumbnailSize(ThumbnailStrip::kSizeMedium);
+            break;
+        case kMenuIdThumbSizeLarge:
+            if (onSetThumbnailSize) onSetThumbnailSize(ThumbnailStrip::kSizeLarge);
             break;
 
         case kMenuIdAbout:
@@ -749,6 +779,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailStripEnabled",
                                    on ? L"1" : L"0");
         });
+        // Persist the final size after a drag-resize (or a size-menu pick).
+        compareView->SetOnThumbnailStripSizeChanged([iniPath](float extent)
+        {
+            AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailSize",
+                                   std::to_wstring(static_cast<int>(extent)));
+        });
 
         compareView->SetOnContextMenuRequested(
             [weakView, weakBackplate, iniPath](POINT clientPt, NifComparePane* pane)
@@ -768,8 +804,20 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 v->ToggleThumbnailStrip();
                 bp2->Render();
             };
+            // "Thumbnail Size" submenu: apply to every pane + persist.
+            const float currentSize = view->ThumbnailStripSize();
+            std::function<void(float)> onSetSize = [weakView, weakBackplate, iniPath](float ext)
+            {
+                auto v = weakView.lock();
+                auto bp2 = weakBackplate.lock();
+                if (!v || !bp2) return;
+                v->SetThumbnailStripSize(ext);
+                AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailSize",
+                                       std::to_wstring(static_cast<int>(ext)));
+                bp2->Render();
+            };
             ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane,
-                               onToggleStrip, stripEnabled);
+                               onToggleStrip, stripEnabled, onSetSize, currentSize);
             bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
@@ -914,6 +962,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             const bool stripOn =
                 settings.GetString(kSectionSession, L"ThumbnailStripEnabled") != L"0";
             compareView->SetThumbnailStripEnabled(stripOn, /*notify=*/false);
+
+            // Card size (default Medium); any saved value is accepted - the
+            // strip clamps it to its valid resize range.
+            const int savedSize = settings.GetInt(kSectionSession, L"ThumbnailSize",
+                                                  static_cast<int>(ThumbnailStrip::kSizeMedium));
+            compareView->SetThumbnailStripSize(static_cast<float>(savedSize));
         }
 
         // UI is fully wired (view attached, initial files loaded) - publish

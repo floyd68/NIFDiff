@@ -96,9 +96,10 @@ own copies.
   every pane hosts its own scrollable strip along its bottom edge that lists
   the folder of THAT pane's currently-open .nif - so when comparing files from
   different folders, each pane browses its own. Sibling .nif files appear as
-  3D thumbnails (each parsed + scene-built on a background worker thread, then
-  rendered headlessly through the shared render core on the UI thread a few
-  per frame, so even a large folder never blocks or stutters the UI),
+  3D thumbnails (each parsed + scene-built on a small pool of background
+  worker threads, then rendered headlessly through the shared render core on
+  the UI thread a few per frame, so even a large folder never blocks or
+  stutters the UI),
   subfolders and an ".." tile appear as folder icons, and the pane's current
   file is drawn with a blue highlight. Clicking a sibling loads it into that pane (the highlight
   follows); clicking a folder or ".." navigates that pane's strip in place.
@@ -106,8 +107,10 @@ own copies.
   hovering shows the full path as a tooltip. The VIEW group's "Thumbnails"
   checkbox (mirrored by a "Hide/Show Thumbnail Strips" context-menu item)
   turns every pane's strip off at once - they collapse and their loaders idle
-  so no thumbnails are generated. The on/off state is remembered across
-  sessions.
+  so no thumbnails are generated. Card size is adjustable - drag the strip's
+  top edge to resize it live (all panes' strips follow), or pick a
+  Small/Medium/Large preset from the "Thumbnail Size" context-menu submenu.
+  The on/off state and the size are remembered across sessions.
 - **Drag & drop from Explorer** (FICture2's drag-controller semantics):
   hovering the left 75% of a pane shows a red overlay and the drop
   REPLACES that pane's document; the right 25% shows a green strip and

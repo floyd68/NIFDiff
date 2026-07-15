@@ -188,6 +188,14 @@ public:
     bool IsThumbnailStripEnabled() const;
     void ToggleThumbnailStrip();
 
+    // Thumbnail card size (strip thickness), applied to every pane's strip and
+    // inherited by new panes. Use ThumbnailStrip::kSize{Small,Medium,Large}.
+    void SetThumbnailStripSize(float extent);
+    float ThumbnailStripSize() const { return m_thumbStripExtent; }
+    // Fired when a drag-resize of any pane's strip settles, so the owner can
+    // persist the final size (live drag frames don't fire this).
+    void SetOnThumbnailStripSizeChanged(std::function<void(float)> handler);
+
     void InvalidateTextureCaches();
 
     // Resources panel callbacks (Game Data / overrides), forwarded to the
@@ -275,9 +283,12 @@ private:
     // (Fill) and, docked at its bottom, the thumbnail strip - so the strip
     // sits below the panes and above the control strip.
     std::shared_ptr<FD2D::DockPanel> m_viewsArea;
-    // Global on/off for every pane's thumbnail strip (new panes inherit it).
+    // Global on/off + size for every pane's thumbnail strip (new panes inherit
+    // both). kSizeMedium is the default extent.
     bool m_thumbStripEnabled = true;
+    float m_thumbStripExtent = ThumbnailStrip::kSizeMedium;
     std::function<void(bool)> m_onThumbStripEnabledChanged;
+    std::function<void(float)> m_onThumbStripSizeCommitted;
     void ApplyThumbStripEnabled(bool on); // broadcast to all panes + relayout
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
