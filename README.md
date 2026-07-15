@@ -75,10 +75,14 @@ own copies.
   `PgUp`/`PgDn` cycle the camera preset;
   pane-context keys acting on the active pane: `1`-`8` / `Tab` /
   `Shift+Tab` select it, `R` resets its camera, `C` focuses its
-  selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+W` closes it,
+  selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+Shift+O` opens one
+  into a new pane, `Ctrl+W` (or `Ctrl+F4`) closes it,
   `Del` clears its document, `Ctrl+E` shows its file in Explorer,
-  `F12` saves its screenshot; `I` toggles the material diff panel and
-  `T` the texture inspector.
+  `F12` saves its screenshot; thumbnail-strip navigation (FICture2's browser
+  keys, and Sync Files mirrors each pick into the other panes): `←`/`→`
+  (or `,`/`.`) step to the previous/next sibling .nif, `Home`/`End` jump to
+  the first/last, `Backspace` (or `Ctrl+Up`) browses to the parent folder;
+  `I` toggles the material diff panel and `T` the texture inspector.
 - **Per-pane context menu**: open/close the pane, reopen a **recent file**
   into it (an MRU submenu of the last dozen opened .nifs, most-recent
   first, with a "Clear Recent Files" entry), open the containing folder in

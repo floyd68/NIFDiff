@@ -46,6 +46,13 @@ public:
     // UI toggle applied to every pane.
     void SetThumbnailStripEnabled(bool enabled);
 
+    // Keyboard stepping over this pane's thumbnail strip (owner-driven).
+    // StepThumbnailFile returns the prev/next sibling .nif to load (empty if
+    // none); NavigateThumbnailUp browses the strip to the parent folder.
+    std::wstring StepThumbnailFile(int delta) const { return m_thumbStrip->StepFile(delta); }
+    std::wstring EdgeThumbnailFile(bool last) const { return m_thumbStrip->EdgeFile(last); }
+    void NavigateThumbnailUp() { m_thumbStrip->NavigateUp(); }
+
     // Fires after Load/Clear changed this pane's document - NifCompareView
     // uses it to refresh document-dependent control state (e.g. whether the
     // Parallax Height slider applies to anything currently loaded).

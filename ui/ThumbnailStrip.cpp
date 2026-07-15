@@ -240,6 +240,59 @@ void ThumbnailStrip::EnqueuePending()
     }
 }
 
+std::wstring ThumbnailStrip::StepFile(int delta) const
+{
+    // File entries in display order (folders/".." are not stepped through).
+    std::vector<std::size_t> files;
+    for (std::size_t i = 0; i < m_entries.size(); ++i)
+        if (m_entries[i].kind == EntryKind::File)
+            files.push_back(i);
+    if (files.empty())
+        return std::wstring();
+
+    // Locate the currently-highlighted file among them.
+    int cur = -1;
+    for (std::size_t k = 0; k < files.size(); ++k)
+        if (m_entries[files[k]].path == m_currentFile)
+        {
+            cur = static_cast<int>(k);
+            break;
+        }
+
+    const int n = static_cast<int>(files.size());
+    int next;
+    if (cur < 0)
+        next = (delta >= 0) ? 0 : n - 1; // nothing highlighted -> first / last
+    else
+        next = ((cur + delta) % n + n) % n; // wrap around
+    return m_entries[files[static_cast<std::size_t>(next)]].path;
+}
+
+std::wstring ThumbnailStrip::EdgeFile(bool last) const
+{
+    if (last)
+    {
+        for (auto it = m_entries.rbegin(); it != m_entries.rend(); ++it)
+            if (it->kind == EntryKind::File)
+                return it->path;
+    }
+    else
+    {
+        for (const Entry& e : m_entries)
+            if (e.kind == EntryKind::File)
+                return e.path;
+    }
+    return std::wstring();
+}
+
+void ThumbnailStrip::NavigateUp()
+{
+    // The ".." tile (when present) carries the parent directory. NavigateTo
+    // takes its args by value, so passing the entry's own path is safe.
+    if (!m_entries.empty() && m_entries.front().kind == EntryKind::Up)
+        NavigateTo(m_entries.front().path, m_currentFile);
+}
+
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
 {
     if (!HasContent() || !m_enabled)

@@ -249,6 +249,27 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     });
 }
 
+void NifCompareView::ApplyThumbnailPick(NifComparePane* active, const std::wstring& path)
+{
+    if (!active || path.empty())
+        return;
+    std::string err;
+    active->Load(path, &err);      // moves this pane's strip highlight (ShowForFile)
+    SyncThumbnailSelection(active, path); // mirror into the other panes, like a click
+}
+
+void NifCompareView::StepActiveThumbnail(int delta)
+{
+    if (NifComparePane* active = ActivePane())
+        ApplyThumbnailPick(active, active->StepThumbnailFile(delta));
+}
+
+void NifCompareView::LoadEdgeThumbnail(bool last)
+{
+    if (NifComparePane* active = ActivePane())
+        ApplyThumbnailPick(active, active->EdgeThumbnailFile(last));
+}
+
 void NifCompareView::SyncThumbnailSelection(NifComparePane* source, const std::wstring& path)
 {
     if (!m_syncThumbnails)
@@ -1353,6 +1374,32 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_PRIOR: m_controls->CycleOrientation(-1); return true; // PgUp
     case VK_NEXT:  m_controls->CycleOrientation(+1); return true; // PgDn
 
+    // Thumbnail navigation on the active pane's strip (FICture2's browser
+    // keys); each load syncs into the other panes via Sync Files.
+    //   Left / ',' : previous sibling    Right / '.' : next sibling
+    //   Home : first file                End : last file
+    //   Backspace / Ctrl+Up : parent folder
+    case VK_LEFT:       StepActiveThumbnail(-1); return true;
+    case VK_RIGHT:      StepActiveThumbnail(+1); return true;
+    case VK_OEM_COMMA:  StepActiveThumbnail(-1); return true; // ',' / '<'
+    case VK_OEM_PERIOD: StepActiveThumbnail(+1); return true; // '.' / '>'
+    case VK_HOME:       LoadEdgeThumbnail(false); return true;
+    case VK_END:        LoadEdgeThumbnail(true);  return true;
+
+    case VK_BACK: // Backspace: browse the active pane's strip to the parent
+        if (NifComparePane* active = ActivePane())
+            active->NavigateThumbnailUp();
+        return true;
+
+    case VK_UP: // Ctrl+Up: same as Backspace (browse to the parent folder)
+        if (ctrl)
+        {
+            if (NifComparePane* active = ActivePane())
+                active->NavigateThumbnailUp();
+            return true;
+        }
+        return false;
+
     case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8':
     {
@@ -1365,9 +1412,33 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case 'O':
         if (!ctrl)
             return false;
-        if (NifComparePane* target = ActivePane())
+        // Ctrl+O opens into the active pane (FICture2's OpenImage);
+        // Ctrl+Shift+O opens into a fresh pane (its OpenImageSplitNew).
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+        {
+            NifComparePane* target = AddPane(); // nullptr at kMaxPanes
+            if (target == nullptr)
+                target = ActivePane();          // fall back: reuse the active pane
+            if (target != nullptr)
+            {
+                SetActivePane(target);
+                RequestOpenPane(*target);
+            }
+        }
+        else if (NifComparePane* target = ActivePane())
+        {
             RequestOpenPane(*target);
+        }
         return true;
+
+    case VK_F4: // Ctrl+F4: close the active pane (FICture2's Close; == Ctrl+W)
+        if (ctrl)
+        {
+            if (NifComparePane* active = ActivePane())
+                RequestClosePane(*active);
+            return true;
+        }
+        return false;
 
     case VK_F12:
         if (NifComparePane* target = ActivePane())

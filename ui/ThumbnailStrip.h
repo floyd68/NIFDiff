@@ -80,6 +80,15 @@ public:
     void SetEnabled(bool enabled);
     bool IsEnabled() const { return m_enabled; }
 
+    // Keyboard stepping helpers (act on the strip's current listing):
+    // StepFile returns the .nif `delta` cards from the highlighted file (wraps;
+    // first/last when nothing is highlighted); EdgeFile returns the first
+    // (last=false) or last file. Both empty if the folder has no files - the
+    // owner loads the returned path. NavigateUp browses to the parent folder.
+    std::wstring StepFile(int delta) const;
+    std::wstring EdgeFile(bool last) const;
+    void NavigateUp();
+
     // Fires when a thumbnail is clicked, with its full .nif path.
     void SetOnActivated(std::function<void(const std::wstring&)> handler) { m_onActivated = std::move(handler); }
 
