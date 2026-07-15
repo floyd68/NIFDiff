@@ -58,6 +58,10 @@ public:
     // Fires when a thumbnail is clicked, with its full .nif path.
     void SetOnActivated(std::function<void(const std::wstring&)> handler) { m_onActivated = std::move(handler); }
 
+    // Full path of the thumbnail under the cursor, so Backplate's hover
+    // tooltip reveals it (the card label only shows the file name, ellipsized).
+    std::wstring TooltipText() const override;
+
     void OnAttached(FD2D::Backplate& backplate) override;
     FD2D::Size Measure(FD2D::Size available) override;
     void OnRenderD3D(ID3D11DeviceContext* context) override;

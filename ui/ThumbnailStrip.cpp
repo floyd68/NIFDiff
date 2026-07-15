@@ -273,6 +273,22 @@ void ThumbnailStrip::EnsureTextFormat()
     }
 }
 
+std::wstring ThumbnailStrip::TooltipText() const
+{
+    // Backplate only queries this on the window its own deep hit-test placed
+    // under the cursor (us), so derive the card straight from the live cursor
+    // instead of a routed hover index (MouseMove may not reach a docked strip).
+    if (!m_backplate)
+        return std::wstring();
+    POINT pt;
+    if (!GetCursorPos(&pt) || !ScreenToClient(m_backplate->Window(), &pt))
+        return std::wstring();
+    const int card = CardAtPoint(pt);
+    if (card >= 0 && card < static_cast<int>(m_entries.size()))
+        return m_entries[static_cast<std::size_t>(card)].path;
+    return std::wstring();
+}
+
 void ThumbnailStrip::ClampScroll()
 {
     const D2D1_RECT_F r = LayoutRect();
@@ -304,6 +320,8 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     target->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_ALIASED);
 
     // Header count (vertical mode only - the horizontal strip has no room).
+    if (m_textFormat)
+        m_textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     if (!m_horizontal && m_textFormat &&
         SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.62f, 0.66f, 0.72f), &brush)))
     {
@@ -317,6 +335,11 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     const float thumb = ThumbSide();
     const float cardMain = CardMain();
     const float lead = LeadGutter();
+
+    // Card labels are centered under the thumbnail; long names ellipsize (the
+    // format carries character-granularity trimming), full path on hover.
+    if (m_textFormat)
+        m_textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
 
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
