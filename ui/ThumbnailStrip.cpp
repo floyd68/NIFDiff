@@ -324,7 +324,9 @@ std::wstring ThumbnailStrip::StepFile(int delta) const
     if (cur < 0)
         next = (delta >= 0) ? 0 : n - 1; // nothing highlighted -> first / last
     else
-        next = ((cur + delta) % n + n) % n; // wrap around
+        next = std::clamp(cur + delta, 0, n - 1); // stop at the ends (no wrap-around)
+    if (next == cur)
+        return std::wstring(); // already at that end - no move, don't reload
     return m_entries[files[static_cast<std::size_t>(next)]].path;
 }
 
