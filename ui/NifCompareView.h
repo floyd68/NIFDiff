@@ -155,13 +155,15 @@ public:
     void RequestOpenPane(NifComparePane& pane);
     void RequestClosePane(NifComparePane& pane);
 
-    // Splitter-ratio persistence (FICture2's Capture/ApplyHorizontalSplitRatios
-    // pattern, extended to this view's two-row grid): the pre-order list of
-    // every SplitPanel ratio inside the pane host tree. RebuildHostTree
-    // captures before and re-applies after, so dragged splitters survive
-    // pane add/remove; the app shell also saves/restores them with the
-    // session. Applying is positional best-effort - a different pane count
-    // consumes whatever prefix still lines up.
+    // Splitter-ratio persistence for the SESSION only (FICture2's
+    // Capture/ApplyHorizontalSplitRatios pattern, extended to this view's
+    // two-row grid): the pre-order list of every SplitPanel ratio inside the
+    // pane host tree. The app shell saves these on close and re-applies them
+    // after restoring the session's files, so a dragged layout comes back on
+    // relaunch. Adding/removing a pane deliberately does NOT carry ratios over
+    // (see RebuildHostTree) - it resets to equal widths, which is what the
+    // same-named-mesh compare workflow wants. Applying is positional: it lines
+    // up exactly when the restored pane count matches what was saved.
     std::vector<float> CaptureSplitRatios() const;
     void ApplySplitRatios(const std::vector<float>& ratios);
 

@@ -32,10 +32,11 @@ own copies.
 
 - **1-8 panes** in an equal-width grid (1-4 in a single row, 5-6 as 3x2,
   7-8 as 4x2), added and removed at runtime; per-pane Open/Close via the
-  pane's own buttons or the right-click context menu. Dragged splitter
-  positions survive pane add/remove (FICture2's capture/apply-split-ratios
-  pattern) and are saved with the session, so a restored window comes back
-  with the same pane widths.
+  pane's own buttons or the right-click context menu. Adding or removing a
+  pane resets every pane to an equal width (so opening several same-named
+  NIFs to compare them lines them up evenly); a dragged splitter layout is
+  still saved with the session and re-applied on the next launch (FICture2's
+  capture/apply-split-ratios pattern).
 - **Synced cameras and lighting** across panes (each sync individually
   toggleable), so one orbit/pan/zoom or light change hits every model at
   once.

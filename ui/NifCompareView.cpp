@@ -1383,10 +1383,15 @@ void NifCompareView::ApplySplitRatios(const std::vector<float>& ratios)
 
 void NifCompareView::RebuildHostTree()
 {
-    // Keep the user's splitter positions across the rebuild (equal-width
-    // ratios are only the DEFAULTS the coordinator bakes in).
-    const std::vector<float> keepRatios = CaptureSplitRatios();
-
+    // Every caller of this changes the pane COUNT (add / remove / initial
+    // build), which changes the split-tree shape. Carrying the old splitter
+    // ratios across a shape change only mis-maps them positionally (a 2-pane
+    // 0.35 drag would land on the first splitter of a 3-pane tree and skew
+    // it), so the rebuild instead keeps the coordinator's equal-width
+    // defaults - every pane comes out the same width. This is what the
+    // "open several same-named NIFs into new panes" compare workflow wants.
+    // Dragged ratios still persist across a full app session (saved to the
+    // INI, re-applied by LoadAndOpenInitialSession via ApplySplitRatios).
     std::vector<std::shared_ptr<FD2D::Wnd>> wnds;
     wnds.reserve(m_panes.size());
     for (auto& p : m_panes)
@@ -1409,7 +1414,6 @@ void NifCompareView::RebuildHostTree()
     m_hostRoot = host;
 
     SetFirstChild(host);
-    ApplySplitRatios(keepRatios);
 
     // A new/removed child changes this panel's Measure/Arrange results, not
     // just its pixel content - Invalidate() alone only schedules a repaint
