@@ -99,7 +99,11 @@ own copies.
   3D thumbnails (each parsed + scene-built on a small pool of background
   worker threads, then rendered headlessly through the shared render core on
   the UI thread a few per frame, so even a large folder never blocks or
-  stutters the UI),
+  stutters the UI). Each thumbnail is framed from a slight 3/4 angle (a small
+  yaw off dead-on frontal) with an orthographic camera fitted tightly to the
+  model's non-hidden bounds with equal margins, so cards take the model's own aspect
+  ratio - wide meshes get wide cards, tall meshes tall ones - all sized to the
+  strip height.
   subfolders and an ".." tile appear as folder icons, and the pane's current
   file is drawn with a blue highlight. Clicking a sibling loads it into that pane (the highlight
   follows); clicking a folder or ".." navigates that pane's strip in place.

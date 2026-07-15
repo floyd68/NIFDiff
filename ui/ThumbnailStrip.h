@@ -128,6 +128,7 @@ private:
         std::wstring name;      // label (file/folder name, or "..")
         bool rendered = false;  // 3D pass produced a texture (File only)
         bool failed = false;    // parse/build failed - show a placeholder
+        float aspect = 1.0f;    // rendered thumbnail w/h (drives the card width)
         Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;   // persistent copy of the render
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;   // D2D view of tex (built lazily in the D2D pass)
     };
@@ -141,8 +142,13 @@ private:
         bool failed = false;
         std::shared_ptr<NifDocument> doc;
         std::vector<RenderMesh> meshes;
-        Vector3 center { 0.0f, 0.0f, 0.0f };
-        float radius = 1.0f;
+        // Framing computed on the worker: a rolled view + a tight orthographic
+        // projection around the non-hidden geometry (equal margins), plus the
+        // resulting w/h aspect for the non-square render target and card.
+        Matrix4 view;
+        Matrix4 proj;
+        Vector3 eyePos { 0.0f, 0.0f, 0.0f };
+        float aspect = 1.0f;
     };
     // One queued parse job: file path (a copy - the worker never touches
     // m_entries) tagged with the generation it belongs to.
@@ -171,6 +177,12 @@ private:
     void EnsureWorker();
     void StopWorker();
     void WorkerLoop();
+    // Worker thread: pick the thumbnail camera (slight roll) and a tight
+    // orthographic frustum around the non-hidden geometry with equal margins,
+    // filling out.view/proj/eyePos/aspect. `minB`/`maxB` are the world bounds.
+    void ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
+                             const Vector3& minB, const Vector3& maxB,
+                             ParsedThumb& out) const;
     // UI thread: render one background-parsed scene into m_thumbTarget and copy
     // it into the entry's persistent texture (immediate context).
     void RenderParsedThumb(Entry& entry, ParsedThumb& parsed);
@@ -179,11 +191,14 @@ private:
     void EnsureTextFormat();
     int CardAtPoint(const POINT& pt) const; // -1 when none
     bool InResizeGrip(const POINT& pt) const; // over the drag-to-resize edge
-    // Geometry helpers, orientation-aware. thumb = square thumbnail side;
-    // cardMain = per-card size along the scroll axis; leadGutter = space before
-    // the first card (the header in vertical mode).
+    // Geometry helpers, orientation-aware. ThumbSide = the thumbnail's fixed
+    // dimension (height when horizontal); CardExtent = one card's size along
+    // the scroll axis (VARIES per card now: File cards are ThumbSide*aspect
+    // wide, folder/Up tiles are square); leadGutter = space before the first
+    // card; CardOffset = accumulated offset of card i along the scroll axis.
     float ThumbSide() const;
-    float CardMain() const;
+    float CardExtent(std::size_t index) const;
+    float CardOffset(std::size_t index) const;
     float LeadGutter() const;
     float ContentExtent() const; // total size along the scroll axis
     void ClampScroll();

@@ -23,9 +23,12 @@ namespace
     constexpr float kMinExtent = 110.0f;    // resize clamp (see SetFixedExtent)
     constexpr float kMaxExtent = 360.0f;
     constexpr float kHeaderH = 26.0f;      // count header (vertical mode only)
-    constexpr UINT kThumbPx = 168;         // offscreen render resolution
+    constexpr UINT kThumbPx = 168;         // offscreen render HEIGHT (width follows aspect)
     constexpr int kPerFrame = 2;           // thumbnails generated per frame
-    constexpr float kFovY = 0.9f;
+    constexpr float kYawRad = 0.1745f;     // ~10 deg yaw (3/4 view) so thumbnails aren't dead-on
+    constexpr float kThumbMarginFrac = 0.06f; // equal margin, fraction of the larger extent
+    constexpr float kMinAspect = 0.45f;    // clamp card w/h so cards stay reasonable
+    constexpr float kMaxAspect = 2.6f;
 }
 
 ThumbnailStrip::ThumbnailStrip(const std::wstring& name)
@@ -77,17 +80,32 @@ void ThumbnailStrip::SetEnabled(bool enabled)
 
 float ThumbnailStrip::ThumbSide() const
 {
-    // Horizontal leaves room below the square thumbnail for the label row;
-    // vertical uses the full width for the thumbnail (label sits under it).
+    // The thumbnail's FIXED dimension (height when horizontal): the strip
+    // thickness minus the label row and padding. Card WIDTH follows the aspect.
     return m_horizontal ? (m_fixedExtent - kLabelH - kPad * 3.0f)
                         : (m_fixedExtent - kPad * 2.0f);
 }
 
-float ThumbnailStrip::CardMain() const
+float ThumbnailStrip::CardExtent(std::size_t index) const
 {
-    // Size of one card along the scroll axis.
-    return m_horizontal ? (ThumbSide() + kPad * 2.0f)
-                        : (ThumbSide() + kLabelH + kPad * 2.0f);
+    // Size of one card along the scroll axis. Horizontal cards vary in width
+    // with the thumbnail aspect (folder/Up tiles and unrendered files are
+    // square, aspect 1); vertical cards keep a uniform height.
+    const float thumb = ThumbSide();
+    if (m_horizontal)
+    {
+        const float aspect = (index < m_entries.size()) ? m_entries[index].aspect : 1.0f;
+        return thumb * aspect + kPad * 2.0f;
+    }
+    return thumb + kLabelH + kPad * 2.0f;
+}
+
+float ThumbnailStrip::CardOffset(std::size_t index) const
+{
+    float off = LeadGutter();
+    for (std::size_t i = 0; i < index && i < m_entries.size(); ++i)
+        off += CardExtent(i);
+    return off;
 }
 
 float ThumbnailStrip::LeadGutter() const
@@ -97,7 +115,10 @@ float ThumbnailStrip::LeadGutter() const
 
 float ThumbnailStrip::ContentExtent() const
 {
-    return LeadGutter() + static_cast<float>(m_entries.size()) * CardMain() + kPad;
+    float total = LeadGutter() + kPad;
+    for (std::size_t i = 0; i < m_entries.size(); ++i)
+        total += CardExtent(i);
+    return total;
 }
 
 void ThumbnailStrip::OnAttached(FD2D::Backplate& backplate)
@@ -375,6 +396,8 @@ void ThumbnailStrip::WorkerLoop()
         }
         else
         {
+            // SceneBuilder excludes hidden meshes by default, so the bounds
+            // below already ignore them.
             std::vector<RenderMesh> meshes = SceneBuilder::build(*doc);
             Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
             bool any = false;
@@ -393,8 +416,7 @@ void ThumbnailStrip::WorkerLoop()
             }
             else
             {
-                result.center = (minB + maxB) * 0.5f;
-                result.radius = (std::max)((maxB - minB).length() * 0.5f, 1.0f);
+                ComputeThumbFraming(meshes, minB, maxB, result);
                 result.meshes = std::move(meshes);
                 result.doc = std::move(doc);
             }
@@ -411,6 +433,65 @@ void ThumbnailStrip::WorkerLoop()
     }
 }
 
+void ThumbnailStrip::ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
+                                         const Vector3& minB, const Vector3& maxB,
+                                         ParsedThumb& out) const
+{
+    const Vector3 center = (minB + maxB) * 0.5f;
+    const float radius = (std::max)((maxB - minB).length() * 0.5f, 1.0f);
+
+    // Orbit view (gentle downward tilt) turned a little off-axis (yaw) so the
+    // thumbnail is a slight 3/4 view rather than dead-on frontal.
+    Camera cam;
+    cam.frame(center, radius);
+    cam.setOrbit(Camera::kDefaultYaw - kYawRad, Camera::kDefaultPitch);
+    const Matrix4 view = cam.viewMatrix();
+
+    // Tight bounds of the (non-hidden) geometry in the yawed view.
+    float vminX = 1e9f, vminY = 1e9f, vminZ = 1e9f;
+    float vmaxX = -1e9f, vmaxY = -1e9f, vmaxZ = -1e9f;
+    for (const RenderMesh& mesh : meshes)
+    {
+        if (!mesh.geometry) continue;
+        for (const Vector3& p : mesh.geometry->positions)
+        {
+            const Vector3 vp = view * (mesh.worldTransform * p);
+            vminX = (std::min)(vminX, vp[0]); vmaxX = (std::max)(vmaxX, vp[0]);
+            vminY = (std::min)(vminY, vp[1]); vmaxY = (std::max)(vmaxY, vp[1]);
+            vminZ = (std::min)(vminZ, vp[2]); vmaxZ = (std::max)(vmaxZ, vp[2]);
+        }
+    }
+
+    const float cx = (vminX + vmaxX) * 0.5f, cy = (vminY + vmaxY) * 0.5f;
+    const float vw = vmaxX - vminX, vh = vmaxY - vminY;
+    const float margin = kThumbMarginFrac * (std::max)(vw, vh);
+    float halfW = vw * 0.5f + margin;
+    float halfH = vh * 0.5f + margin;
+    // Cap the aspect by widening the SHORT side's margin, keeping the model
+    // centered (so left==right and top==bottom margins).
+    const float aspect0 = halfW / (std::max)(halfH, 1e-4f);
+    if (aspect0 > kMaxAspect)      halfH = halfW / kMaxAspect;
+    else if (aspect0 < kMinAspect) halfW = halfH * kMinAspect;
+    out.aspect = halfW / (std::max)(halfH, 1e-4f);
+
+    const float l = cx - halfW, r = cx + halfW, b = cy - halfH, t = cy + halfH;
+    const float zpad = 0.02f * (vmaxZ - vminZ) + 1.0f;
+    const float n = (std::max)(vminZ - zpad, 0.01f);
+    const float f = vmaxZ + zpad;
+
+    // Off-center orthographic, left-handed, D3D depth [0,1], column-vector
+    // (translation in column 3) to match Camera::projectionMatrix(). Starting
+    // from the identity, only the six cells below differ.
+    Matrix4 proj;
+    proj(0, 0) = 2.0f / (r - l);  proj(0, 3) = -(r + l) / (r - l);
+    proj(1, 1) = 2.0f / (t - b);  proj(1, 3) = -(t + b) / (t - b);
+    proj(2, 2) = 1.0f / (f - n);  proj(2, 3) = -n / (f - n);
+
+    out.view = view;
+    out.proj = proj;
+    out.eyePos = cam.eyePosition();
+}
+
 void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
 {
     e.rendered = true;
@@ -419,7 +500,12 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
         e.failed = true;
         return;
     }
-    if (!m_thumbTarget.Resize(m_device, kThumbPx, kThumbPx, 1))
+    // Non-square target matching the worker's tight framing (fixed height,
+    // width follows the aspect).
+    const UINT h = kThumbPx;
+    const UINT w = static_cast<UINT>(std::clamp(std::lround(kThumbPx * pt.aspect),
+                                                48L, 512L));
+    if (!m_thumbTarget.Resize(m_device, w, h, 1))
     {
         e.failed = true;
         return;
@@ -430,17 +516,10 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     TextureCache textures(m_textureRepository);
     textures.SetNifDirectory(nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring());
 
-    Camera cam;
-    cam.frame(pt.center, pt.radius);
-    cam.setOrbit(Camera::kDefaultYaw, Camera::kDefaultPitch);
-
     RenderSettings s;
-    s.view = cam.viewMatrix();
-    const float dist = cam.distance();
-    const float nearZ = (std::max)(dist * 0.02f, 1e-4f);
-    const float farZ = dist + pt.radius * 4.0f + 10.0f;
-    s.proj = Camera::projectionMatrix(kFovY, 1.0f, nearZ, farZ);
-    s.eyePos = cam.eyePosition();
+    s.view = pt.view;       // rolled view + tight ortho, computed on the worker
+    s.proj = pt.proj;
+    s.eyePos = pt.eyePos;
     s.brightness = 1.15f;   // thumbnails read a touch brighter than the panes
     s.showGrid = false;
     s.showAxes = false;
@@ -451,7 +530,7 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     // Copy the render into a persistent per-thumbnail texture (the reusable
     // target is about to be overwritten by the next thumbnail).
     const D3D11_TEXTURE2D_DESC td {
-        .Width = kThumbPx, .Height = kThumbPx,
+        .Width = w, .Height = h,
         .MipLevels = 1, .ArraySize = 1,
         .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
         .SampleDesc = { .Count = 1 },
@@ -463,6 +542,7 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     {
         m_context->CopyResource(persistent.Get(), m_thumbTarget.ColorTexture());
         e.tex = std::move(persistent);
+        e.aspect = pt.aspect; // drives this card's width in the layout
     }
     else
     {
@@ -664,34 +744,37 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     }
 
     const float thumb = ThumbSide();
-    const float cardMain = CardMain();
-    const float lead = LeadGutter();
 
     // Card labels are centered under the thumbnail; long names ellipsize (the
     // format carries character-granularity trimming), full path on hover.
     if (m_textFormat)
         m_textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
 
+    // Cards vary in size, so accumulate the offset along the scroll axis.
+    float cursor = LeadGutter() - m_scroll;
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
         Entry& e = m_entries[i];
-        const float off = lead + static_cast<float>(i) * cardMain - m_scroll;
+        const float ext = CardExtent(i);
+        const float pos = cursor;
+        cursor += ext;
 
         D2D1_RECT_F card, thumbRect;
         if (m_horizontal)
         {
-            const float left = r.left + off;
-            if (left + cardMain < r.left || left > r.right)
+            const float left = r.left + pos;
+            if (left + ext < r.left || left > r.right)
                 continue;
-            card = { left, r.top + 1.0f, left + cardMain, r.bottom };
-            thumbRect = { left + kPad, r.top + kPad, left + kPad + thumb, r.top + kPad + thumb };
+            const float thumbW = ext - kPad * 2.0f; // thumb*aspect (square for tiles)
+            card = { left, r.top + 1.0f, left + ext, r.bottom };
+            thumbRect = { left + kPad, r.top + kPad, left + kPad + thumbW, r.top + kPad + thumb };
         }
         else
         {
-            const float top = r.top + off;
-            if (top + cardMain < r.top || top > r.bottom)
+            const float top = r.top + pos;
+            if (top + ext < r.top || top > r.bottom)
                 continue;
-            card = { r.left + 2.0f, top, r.right - 2.0f, top + cardMain };
+            card = { r.left + 2.0f, top, r.right - 2.0f, top + ext };
             thumbRect = { r.left + kPad, top + kPad, r.left + kPad + thumb, top + kPad + thumb };
         }
 
@@ -761,17 +844,25 @@ int ThumbnailStrip::CardAtPoint(const POINT& pt) const
     if (x < r.left || x > r.right || y < r.top || y > r.bottom)
         return -1;
 
+    // Content-space position along the scroll axis (undo the scroll offset).
     float local;
     if (m_horizontal)
-        local = (x - r.left) - LeadGutter() + m_scroll;
+        local = (x - r.left) + m_scroll;
     else
     {
         if (y < r.top + kHeaderH) return -1; // header row
-        local = (y - r.top) - LeadGutter() + m_scroll;
+        local = (y - r.top) + m_scroll;
     }
-    if (local < 0.0f) return -1;
-    const int idx = static_cast<int>(local / CardMain());
-    return (idx >= 0 && idx < static_cast<int>(m_entries.size())) ? idx : -1;
+    // Walk the variable-width cards.
+    float off = LeadGutter();
+    for (std::size_t i = 0; i < m_entries.size(); ++i)
+    {
+        const float ext = CardExtent(i);
+        if (local >= off && local < off + ext)
+            return static_cast<int>(i);
+        off += ext;
+    }
+    return -1;
 }
 
 bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
@@ -790,7 +881,8 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
         if (event.hasPoint && inStrip(event.point))
         {
             // Wheel scrolls the strip's main axis (down/away = later items).
-            m_scroll -= static_cast<float>(event.wheelDelta) / 120.0f * CardMain() * 0.5f;
+            // Scroll ~half a typical card per wheel notch.
+            m_scroll -= static_cast<float>(event.wheelDelta) / 120.0f * (ThumbSide() + kPad * 2.0f) * 0.5f;
             ClampScroll();
             Invalidate();
             return true;
