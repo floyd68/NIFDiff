@@ -39,6 +39,7 @@ public:
     void SetResourceResolver(ResourceResolver* resolver);
     void SetTextureRepository(TextureRepository* repository);
     void SetRenderDevice(RenderDevice* device);
+    void SetResourceManager(ResourceManager* manager) { m_thumbStrip->SetResourceManager(manager); }
     void InvalidateTextureCache();
 
     // This pane's own thumbnail strip (FICture2's ThumbnailPane, one per pane):

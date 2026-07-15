@@ -161,6 +161,8 @@ add_executable(NIFDiff WIN32
     core/Camera.h
     core/ResourceResolver.h
     core/ResourceResolver.cpp
+    core/ResourceManager.h
+    core/ResourceManager.cpp
     render/RenderDevice.h
     render/RenderDevice.cpp
     render/RenderTarget.h

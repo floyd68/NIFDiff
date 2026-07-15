@@ -126,6 +126,9 @@ public:
     // (I toggles the material diff panel, T the texture inspector - see
     // DrawMaterialDiffPanel / DrawTextureInspector.)
     bool OnInputEvent(const FD2D::InputEvent& event) override;
+    // Drains the ResourceManager's completed loads once per frame (before the
+    // pane/strip children render), then propagates the D3D pass to them.
+    void OnRenderD3D(ID3D11DeviceContext* context) override;
 
     // Explorer drag&drop (Backplate's OLE drop target, enabled by the app
     // shell via EnsureDropTargetRegistered), FICture2's drag-controller
@@ -177,6 +180,10 @@ public:
     // The single app-wide render core (shaders/states/IBL), shared by every
     // pane's viewport. Must outlive this view.
     void SetRenderDevice(RenderDevice* device);
+
+    // The shared async load pool (thumbnail parsing off the UI thread). Drained
+    // once per frame in OnRenderD3D. Must outlive this view.
+    void SetResourceManager(ResourceManager* manager);
 
     // Per-pane thumbnail strip master on/off (every pane owns its own strip;
     // this toggle applies to all of them at once), mirrored by the VIEW-group
@@ -296,6 +303,7 @@ private:
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;
     RenderDevice* m_renderDevice = nullptr;
+    ResourceManager* m_resourceManager = nullptr;
 
     std::function<void(NifComparePane&)> m_onPaneOpenRequested;
     std::function<void(const std::wstring&)> m_onFileOpened;

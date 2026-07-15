@@ -43,6 +43,7 @@ namespace nsk
 {
 
 class NifDocument;
+class ResourceManager;
 
 class ThumbnailStrip : public FD2D::Wnd
 {
@@ -63,6 +64,9 @@ public:
     void SetRenderDevice(RenderDevice* device) { m_renderDevice = device; }
     void SetResourceResolver(ResourceResolver* resolver) { m_resolver = resolver; }
     void SetTextureRepository(TextureRepository* repository) { m_textureRepository = repository; }
+    // The shared async load pool (parses/builds off the UI thread). Required
+    // for thumbnails to generate; must outlive the strip.
+    void SetResourceManager(ResourceManager* manager) { m_manager = manager; }
 
     // Follow a pane's open .nif: list its folder (FICture2's ThumbnailPane
     // model) - sibling .nif files as thumbnails, subfolders and an "Up" tile
@@ -150,14 +154,6 @@ private:
         Vector3 eyePos { 0.0f, 0.0f, 0.0f };
         float aspect = 1.0f;
     };
-    // One queued parse job: file path (a copy - the worker never touches
-    // m_entries) tagged with the generation it belongs to.
-    struct ParseJob
-    {
-        std::uint64_t generation = 0;
-        std::size_t index = 0;
-        std::wstring path;
-    };
 
     // Re-list a directory: Up tile (if any parent) + subfolders + *.nif files,
     // with selectPath's file card highlighted. Bumps the generation, drops
@@ -169,22 +165,22 @@ private:
     // Draws a folder / up-arrow glyph inside rc for Folder/Up tiles.
     void DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const;
 
-    // Queues every not-yet-rendered .nif entry for the worker (no-op when the
-    // strip is disabled). Called after a re-list and on re-enable.
+    // Submits every not-yet-rendered .nif entry to the shared ResourceManager
+    // pool (no-op when disabled). Called after a re-list and on re-enable.
     void EnqueuePending();
-    // Background worker: parses + builds queued files, publishes to m_ready,
-    // wakes the UI. EnsureWorker starts it lazily; the dtor stops + joins it.
-    void EnsureWorker();
-    void StopWorker();
-    void WorkerLoop();
-    // Worker thread: pick the thumbnail camera (slight roll) and a tight
+    // Pool thread (STATIC - must not touch a possibly-dead strip): parse +
+    // build + framing for one file, filling `out`.
+    static void BuildParsedThumb(const std::wstring& path, ParsedThumb& out);
+    // Pool thread: pick the thumbnail camera (slight yaw) and a tight
     // orthographic frustum around the non-hidden geometry with equal margins,
     // filling out.view/proj/eyePos/aspect. `minB`/`maxB` are the world bounds.
-    void ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
-                             const Vector3& minB, const Vector3& maxB,
-                             ParsedThumb& out) const;
-    // UI thread: render one background-parsed scene into m_thumbTarget and copy
-    // it into the entry's persistent texture (immediate context).
+    static void ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
+                                    const Vector3& minB, const Vector3& maxB,
+                                    ParsedThumb& out);
+    // UI thread (completion): queue a parsed scene for OnRenderD3D to draw.
+    void AcceptParsed(std::shared_ptr<ParsedThumb> parsed);
+    // UI thread: render one parsed scene into m_thumbTarget and copy it into
+    // the entry's persistent texture (immediate context).
     void RenderParsedThumb(Entry& entry, ParsedThumb& parsed);
     // Builds the D2D bitmap for an entry whose texture exists but bitmap doesn't.
     void EnsureBitmap(Entry& entry);
@@ -206,6 +202,7 @@ private:
     RenderDevice* m_renderDevice = nullptr;
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;
+    ResourceManager* m_manager = nullptr; // shared async load pool
     ID3D11Device* m_device = nullptr;
     ID3D11DeviceContext* m_context = nullptr;
 
@@ -228,19 +225,13 @@ private:
     float m_dragStartExtent = 0.0f; // m_fixedExtent at drag start
     std::function<void(float, bool)> m_onResize;
 
-    // Background parse workers (a small per-strip pool - the WorkerLoop is
-    // safe to run concurrently). m_generation is bumped on every NavigateTo;
-    // jobs/results tagged with an older generation are dropped. m_jobs is the
-    // workers' shared input, m_ready their output; both drained under a mutex.
-    std::vector<std::thread> m_workers;
-    std::mutex m_jobMutex;
-    std::condition_variable m_jobCv;
-    std::deque<ParseJob> m_jobs;
-    std::mutex m_readyMutex;
+    // Async parse via the shared ResourceManager pool. m_gen (the manager's
+    // per-strip generation) is bumped on every NavigateTo / disable; results
+    // tagged with an older generation are dropped by the manager. m_ready is
+    // the UI-side queue of parsed scenes awaiting RenderParsedThumb - it is
+    // only touched on the UI thread (completions + OnRenderD3D), so no lock.
+    std::uint64_t m_gen = 0;
     std::deque<ParsedThumb> m_ready;
-    std::atomic<std::uint64_t> m_generation { 0 };
-    std::atomic<bool> m_workerStop { false };
-    std::shared_ptr<FD2D::AsyncRedrawToken> m_redrawToken; // UI wake from worker
 
     std::function<void(const std::wstring&)> m_onActivated;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_textFormat;

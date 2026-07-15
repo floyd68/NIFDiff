@@ -8,6 +8,7 @@
 #include "../ui/NifCompareView.h"
 #include "../ui/ThumbnailStrip.h"
 #include "../core/NifLog.h"
+#include "../core/ResourceManager.h"
 #include "../core/ResourceResolver.h"
 #include "../core/StartupTrace.h"
 #include "../render/TextureRepository.h"
@@ -708,6 +709,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // lifetime rationale as the texture pool above.
     auto renderDevice = std::make_shared<RenderDevice>();
 
+    // Shared async load pool (design: docs/resource-manager-design.md, phase 1;
+    // currently drives thumbnail parsing). Declared before the backplate scope
+    // so it outlives the panes/strips that submit to it (their destructors call
+    // ResourceManager::Cancel).
+    auto resourceManager = std::make_shared<ResourceManager>();
+    resourceManager->Start();
+
     RECT savedRect {};
     int savedShowCmd = SW_SHOWNORMAL;
     const bool hasSavedPlacement = ReadWindowPlacement(settings, savedRect, savedShowCmd);
@@ -751,6 +759,8 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         compareView->SetResourceResolver(resolver.get());
         compareView->SetTextureRepository(textureRepository.get());
         compareView->SetRenderDevice(renderDevice.get());
+        compareView->SetResourceManager(resourceManager.get());
+        resourceManager->SetRedrawToken(backplate->GetAsyncRedrawToken());
         compareView->SetIpcOpenQueue(ipcQueue);
         ApplyResourcesToUi(*compareView, *resolver);
 
@@ -1018,6 +1028,9 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             StartupTrace::Mark("Entering message loop");
             result = app.RunMessageLoop();
         }
+        // Stop the pool while the panes/strips are still alive, so no worker
+        // posts a completion into a half-torn-down UI.
+        resourceManager->Shutdown();
     }
 
     app.Shutdown();

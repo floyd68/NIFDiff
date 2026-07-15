@@ -1,5 +1,6 @@
 #include "NifCompareView.h"
 #include "../core/NifLog.h"
+#include "../core/ResourceManager.h"
 
 #include <Backplate.h>
 #include <Core.h>
@@ -194,6 +195,10 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     if (m_renderDevice)
     {
         pane->SetRenderDevice(m_renderDevice);
+    }
+    if (m_resourceManager)
+    {
+        pane->SetResourceManager(m_resourceManager);
     }
     pane->Viewport().SetParallaxHeightScale(m_parallaxHeightScale);
     pane->Viewport().SetEnableParallax(m_enableParallax);
@@ -1715,6 +1720,21 @@ void NifCompareView::SetRenderDevice(RenderDevice* device)
     m_renderDevice = device;
     for (auto& p : m_panes)
         p->SetRenderDevice(device);
+}
+
+void NifCompareView::SetResourceManager(ResourceManager* manager)
+{
+    m_resourceManager = manager;
+    for (auto& p : m_panes)
+        p->SetResourceManager(manager);
+}
+
+void NifCompareView::OnRenderD3D(ID3D11DeviceContext* context)
+{
+    // Apply completed async loads before the strips render this frame.
+    if (m_resourceManager)
+        m_resourceManager->DrainCompletions();
+    FD2D::SplitPanel::OnRenderD3D(context); // propagate to panes/strips
 }
 
 void NifCompareView::InvalidateTextureCaches()

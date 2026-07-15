@@ -96,10 +96,10 @@ own copies.
   every pane hosts its own scrollable strip along its bottom edge that lists
   the folder of THAT pane's currently-open .nif - so when comparing files from
   different folders, each pane browses its own. Sibling .nif files appear as
-  3D thumbnails (each parsed + scene-built on a small pool of background
-  worker threads, then rendered headlessly through the shared render core on
-  the UI thread a few per frame, so even a large folder never blocks or
-  stutters the UI). Each thumbnail is framed from a slight 3/4 angle (a small
+  3D thumbnails (each parsed + scene-built on the app-wide background load pool
+  - a shared `ResourceManager`, one bounded thread pool for every strip - then
+  rendered headlessly through the shared render core on the UI thread a few per
+  frame, so even a large folder never blocks or stutters the UI). Each thumbnail is framed from a slight 3/4 angle (a small
   yaw off dead-on frontal) with an orthographic camera fitted tightly to the
   model's non-hidden bounds with equal margins, so cards take the model's own aspect
   ratio - wide meshes get wide cards, tall meshes tall ones - all sized to the
