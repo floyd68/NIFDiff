@@ -818,6 +818,12 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             IniStore::SetString(iniPath, kSectionSession, L"ThumbnailSize",
                                    std::to_wstring(static_cast<int>(extent)));
         });
+        // Persist the bottom control strip's collapse state (the chevron tab).
+        compareView->SetOnControlStripCollapsedChanged([iniPath](bool collapsed)
+        {
+            IniStore::SetString(iniPath, kSectionSession, L"ControlStripCollapsed",
+                                   collapsed ? L"1" : L"0");
+        });
 
         compareView->SetOnContextMenuRequested(
             [weakView, weakBackplate, iniPath](POINT clientPt, NifComparePane* pane)
@@ -1003,6 +1009,8 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             const int savedSize = settings.GetInt(kSectionSession, L"ThumbnailSize",
                                                   static_cast<int>(ThumbnailStrip::kSizeMedium));
             compareView->SetThumbnailStripSize(static_cast<float>(savedSize));
+            compareView->SetControlStripCollapsed(
+                settings.GetInt(kSectionSession, L"ControlStripCollapsed", 0) != 0);
         }
 
         // Show the window BEFORE the several-second initial load so it appears

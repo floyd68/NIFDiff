@@ -195,7 +195,10 @@ documents every control in detail.
   accurate), an **Orthographic** checkbox (mirrors the `Numpad 5` toggle both
   ways), and **Orbit Sel** / **Zoom Cursor** switches for the orbit-around-
   selection and zoom-toward-cursor behaviors. Every setting applies to all
-  panes and is inherited by new ones. Panning **and zooming** also have a
+  panes and is inherited by new ones. The whole bottom strip can be
+  **collapsed/expanded** with the small chevron tab centered on its top edge -
+  collapsed gives the 3D views the full window height, and the state is
+  remembered across sessions. Panning **and zooming** also have a
   **close-up floor**: their step scales with the eye-to-target distance, so at
   extreme close-ups that step would collapse to nothing (freezing the pan and
   making it take dozens of scroll notches to back out) - both are floored at a

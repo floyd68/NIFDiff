@@ -151,6 +151,13 @@ public:
     // to the resulting wrapped height before doing the split, so a narrow window
     // grows the strip into more rows instead of clipping controls off-edge.
     void Arrange(FD2D::Rect finalRect) override;
+
+    // Collapse/expand the bottom control strip (the chevron tab on its top
+    // edge toggles it; collapsed leaves just the tab so the 3D views get the
+    // full height). notify=true fires the changed callback (persistence).
+    void SetControlStripCollapsed(bool collapsed, bool notify = false);
+    bool ControlStripCollapsed() const { return m_controlsCollapsed; }
+    void SetOnControlStripCollapsedChanged(std::function<void(bool)> handler) { m_onControlsCollapsedChanged = std::move(handler); }
     // Drains the ResourceManager's completed loads once per frame (before the
     // pane/strip children render), then propagates the D3D pass to them.
     void OnRenderD3D(ID3D11DeviceContext* context) override;
@@ -443,6 +450,11 @@ private:
     bool m_orbitAroundSelection = true;
     bool m_zoomToCursor = true;
     bool m_syncAnimation = true; // ANIMATION group targets all panes (vs active only)
+    // Control-strip collapse state + the clickable chevron tab's rect (client
+    // coords, captured while drawing the overlay for the input hit-test).
+    bool m_controlsCollapsed = false;
+    D2D1_RECT_F m_collapseTabRect {};
+    std::function<void(bool)> m_onControlsCollapsedChanged;
     bool m_enableTextures = true;        // render-channel toggles, mirrored onto new panes
     bool m_enableVertexColors = true;
     bool m_enableSpecular = true;

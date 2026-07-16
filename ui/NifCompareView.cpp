@@ -714,6 +714,21 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
         HandleTextureInspectorClick(event.point))
         return true;
 
+    // Control-strip collapse tab: toggle on press, and also swallow the release
+    // over the tab so it never falls through to a pane (the viewport picks a
+    // sub-mesh on MouseUp - same lesson as the material panel below).
+    if (event.hasPoint && event.button == FD2D::MouseButton::Left &&
+        FD2D::Util::RectContainsPoint(m_collapseTabRect, event.point))
+    {
+        if (event.type == FD2D::InputEventType::MouseDown)
+        {
+            SetControlStripCollapsed(!m_controlsCollapsed, /*notify=*/true);
+            return true;
+        }
+        if (event.type == FD2D::InputEventType::MouseUp)
+            return true;
+    }
+
     // A material-panel column-width drag in progress owns every mouse event
     // until release.
     if (m_matResizing)
@@ -1860,6 +1875,38 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
     DrawTextureInspector(target);
     DrawSyncBadges(target);
 
+    // Collapse/expand tab for the bottom control strip: a small centered
+    // "drawer handle" sitting on the strip's top edge. Chevron points down
+    // (collapse) while expanded, up (expand) while collapsed. The rect is
+    // remembered for OnInputEvent's hit-test.
+    if (m_controlsScroll)
+    {
+        const D2D1_RECT_F strip = m_controlsScroll->LayoutRect();
+        constexpr float kTabW = 64.0f, kTabH = 15.0f;
+        const float cx = (strip.left + strip.right) * 0.5f;
+        m_collapseTabRect = D2D1::RectF(cx - kTabW * 0.5f, strip.top - kTabH,
+                                        cx + kTabW * 0.5f, strip.top);
+
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.16f, 0.17f, 0.20f, 0.95f), &brush)))
+        {
+            const D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(m_collapseTabRect, 5.0f, 5.0f);
+            target->FillRoundedRectangle(rr, brush.Get());
+            brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f));
+            target->DrawRoundedRectangle(rr, brush.Get(), 1.0f);
+
+            // Chevron glyph (two strokes), pointing down when expanded.
+            brush->SetColor(D2D1::ColorF(0.75f, 0.79f, 0.86f, 1.0f));
+            const float cy = (m_collapseTabRect.top + m_collapseTabRect.bottom) * 0.5f;
+            const float dir = m_controlsCollapsed ? -1.0f : 1.0f; // tip offset from center
+            const D2D1_POINT_2F tip { cx, cy + 2.5f * dir };
+            const D2D1_POINT_2F l { cx - 7.0f, cy - 2.5f * dir };
+            const D2D1_POINT_2F r { cx + 7.0f, cy - 2.5f * dir };
+            target->DrawLine(l, tip, brush.Get(), 2.0f);
+            target->DrawLine(r, tip, brush.Get(), 2.0f);
+        }
+    }
+
     // Active-pane accent border (FICture2's focused-browser highlight) + its
     // sync group. Only meaningful while several panes compete for the
     // pane-context hotkeys; a single pane is trivially the active one.
@@ -2322,18 +2369,41 @@ void NifCompareView::Arrange(FD2D::Rect finalRect)
     // window; past the cap the strip's ScrollView shows a vertical scrollbar.
     if (m_controls)
     {
-        // Narrow window: collapse the multi-column groups to single columns
-        // (decided from the overall width so it stays consistent across the
-        // strip's Measure and Arrange), then size the strip to the result.
-        m_controls->SetCompact(finalRect.w < 900.0f);
-        const float availW = (std::max)(120.0f, finalRect.w - 24.0f);
-        const float stripH = m_controls->Measure({ availW, 1.0e9f }).h;
-        const float cap = (std::max)(140.0f, finalRect.h * 0.55f);
-        const float ext = (std::min)(stripH + 10.0f, cap);
-        SetSecondPaneMinExtent(ext);
-        SetSecondPaneMaxExtent(ext);
+        if (m_controlsCollapsed)
+        {
+            // Collapsed: keep only a sliver for the chevron tab to sit on -
+            // the 3D views get (almost) the full window height.
+            constexpr float kCollapsedExtent = 6.0f;
+            SetSecondPaneMinExtent(kCollapsedExtent);
+            SetSecondPaneMaxExtent(kCollapsedExtent);
+        }
+        else
+        {
+            // Narrow window: collapse the multi-column groups to single columns
+            // (decided from the overall width so it stays consistent across the
+            // strip's Measure and Arrange), then size the strip to the result.
+            m_controls->SetCompact(finalRect.w < 900.0f);
+            const float availW = (std::max)(120.0f, finalRect.w - 24.0f);
+            const float stripH = m_controls->Measure({ availW, 1.0e9f }).h;
+            const float cap = (std::max)(140.0f, finalRect.h * 0.55f);
+            const float ext = (std::min)(stripH + 10.0f, cap);
+            SetSecondPaneMinExtent(ext);
+            SetSecondPaneMaxExtent(ext);
+        }
     }
     FD2D::SplitPanel::Arrange(finalRect);
+}
+
+void NifCompareView::SetControlStripCollapsed(bool collapsed, bool notify)
+{
+    if (m_controlsCollapsed == collapsed)
+        return;
+    m_controlsCollapsed = collapsed;
+    if (notify && m_onControlsCollapsedChanged)
+        m_onControlsCollapsedChanged(collapsed);
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout();
+    Invalidate();
 }
 
 void NifCompareView::ApplyOrientationPreset(int index)
