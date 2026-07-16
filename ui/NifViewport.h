@@ -17,6 +17,7 @@
 
 #include "../core/NifDocument.h"
 #include "../core/SceneBuilder.h"
+#include "../core/AnimController.h"
 #include "../core/Camera.h"
 #include "../core/ResourceResolver.h"
 #include "../render/RenderDevice.h"
@@ -184,6 +185,28 @@ public:
     float FieldOfViewRadians() const { return m_fovY; }
     void SetOrbitAroundSelection(bool on) { m_orbitAroundSelection = on; }
     void SetZoomToCursor(bool on) { m_zoomToCursor = on; }
+
+    // --- Mesh animation playback (NIF-embedded NiTransformControllers) ------
+    // An AnimPlayer is bound at scene load; these expose it to the owner's
+    // ANIMATION controls. SetAnimTime() re-poses the rigid meshes and repaints;
+    // TickAnimation() advances the clock while playing (driven by the owner's
+    // shared per-frame timer, same one the camera tweens use).
+    bool HasAnimations() const { return m_animPlayer.hasAnimations(); }
+    std::size_t AnimSequenceCount() const { return m_animPlayer.sequenceCount(); }
+    const std::string& AnimSequenceName(std::size_t i) const { return m_animPlayer.sequenceName(i); }
+    int AnimSelectedSequence() const { return m_animPlayer.selectedSequence(); }
+    void SelectAnimSequence(int index);
+    float AnimTimeMin() const { return m_animPlayer.timeMin(); }
+    float AnimTimeMax() const { return m_animPlayer.timeMax(); }
+    float AnimTime() const { return m_animTime; }
+    void SetAnimTime(float t); // pose at t (scrub); does not change play state
+    bool AnimPlaying() const { return m_animPlaying; }
+    void SetAnimPlaying(bool playing); // owner must run its anim timer while true
+    float AnimSpeed() const { return m_animSpeed; }
+    void SetAnimSpeed(float speed) { m_animSpeed = speed; }
+    bool AnimLoop() const { return m_animLoop; }
+    void SetAnimLoop(bool loop) { m_animLoop = loop; }
+    bool TickAnimation(unsigned long long nowMs); // true while still playing
 
     // Frame the whole scene's bounds keeping the current orbit orientation
     // (animated), regardless of any selection - "View All".
@@ -365,6 +388,14 @@ private:
     std::array<GizmoNub, 6> m_gizmoNubs {};
     int m_gizmoHover = -1;             // nub index under the cursor, -1 = none
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_gizmoLetterFormat;
+
+    // Mesh-animation playback state (see the HasAnimations/SetAnimTime block).
+    nsk::anim::AnimPlayer m_animPlayer;
+    float m_animTime = 0.0f;
+    bool m_animPlaying = false;
+    bool m_animLoop = true;
+    float m_animSpeed = 1.0f;
+    unsigned long long m_animLastTickMs = 0;
 
     // Camera-animation state (see AnimateCameraTo / TickCameraAnimation).
     bool m_camAnimating = false;

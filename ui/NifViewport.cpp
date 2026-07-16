@@ -276,6 +276,77 @@ void NifViewport::FinishSceneLoad()
     // shifts when the textures land.
     FrameCameraToScene();
     PrefetchSceneTextures();
+
+    // Bind any NIF-embedded transform animations (controller managers /
+    // standalone controllers) and rest at the range start, paused. The owner's
+    // ANIMATION controls decide when to play.
+    m_animPlaying = false;
+    m_animSpeed = 1.0f;
+    m_animLoop = true;
+    if (m_doc != nullptr && m_doc->isValid())
+    {
+        m_animPlayer.bind(*m_doc);
+        m_animTime = m_animPlayer.timeMin();
+    }
+    else
+    {
+        m_animPlayer = anim::AnimPlayer();
+        m_animTime = 0.0f;
+    }
+}
+
+void NifViewport::SelectAnimSequence(int index)
+{
+    m_animPlayer.selectSequence(index);
+    // Re-pose at the (possibly different) range start of the new sequence.
+    m_animTime = std::clamp(m_animTime, m_animPlayer.timeMin(), m_animPlayer.timeMax());
+    SetAnimTime(m_animPlayer.timeMin());
+}
+
+void NifViewport::SetAnimTime(float t)
+{
+    if (!m_animPlayer.hasAnimations())
+        return;
+    m_animTime = t;
+    m_animPlayer.update(t, m_meshes);
+    Invalidate();
+}
+
+void NifViewport::SetAnimPlaying(bool playing)
+{
+    if (m_animPlaying == playing)
+        return;
+    m_animPlaying = playing && m_animPlayer.hasAnimations();
+    m_animLastTickMs = 0; // next tick starts a fresh dt
+}
+
+bool NifViewport::TickAnimation(unsigned long long nowMs)
+{
+    if (!m_animPlaying)
+        return false;
+    if (m_animLastTickMs == 0)
+    {
+        m_animLastTickMs = nowMs;
+        return true;
+    }
+    const float dt = static_cast<float>(nowMs - m_animLastTickMs) * 0.001f * m_animSpeed;
+    m_animLastTickMs = nowMs;
+
+    const float tMin = m_animPlayer.timeMin();
+    const float tMax = m_animPlayer.timeMax();
+    float t = m_animTime + dt;
+    if (t > tMax)
+    {
+        if (m_animLoop && tMax > tMin)
+            t = tMin + std::fmod(t - tMin, tMax - tMin); // wrap the scene clock
+        else
+        {
+            t = tMax;
+            m_animPlaying = false; // one-shot: hold the last pose
+        }
+    }
+    SetAnimTime(t);
+    return m_animPlaying;
 }
 
 void NifViewport::ResetCamera()
