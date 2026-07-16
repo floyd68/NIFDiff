@@ -205,6 +205,18 @@ documents every control in detail.
   eye reaches the target it keeps flying forward (past the origin / axis gizmo,
   e.g. into a model's interior) instead of stopping, bounded to a few scene
   radii so it never runs away - Reset View reframes if you overshoot.
+- **Animation playback** (ANIMATION group): NIF-embedded transform animations -
+  the animated statics of the game world (water wheels, windmills, traps,
+  animated doors) that carry `NiControllerManager` sequences or standalone
+  `NiTransformController`s - play back in the viewer: Play/Pause, a sequence
+  dropdown ("Idle", "Open", ...), a scrubbable Time slider, Loop and Speed
+  (0.25-2x). **Sync Anim** (default on) keeps every pane on the same clock, so
+  two mods' versions of the same animated mesh run side by side in phase.
+  Playback rides the same on-demand ~60fps timer as the camera tweens - idle
+  CPU stays at zero when nothing plays. Rigid node animations only: actor
+  skeletal animations live in external Havok `.hkx` behavior graphs (not in
+  the NIF; NifSkope cannot play them either), and skinned meshes hold their
+  bind pose.
 - Orientation presets, Center/Reset view, wireframe/grid/axes toggles
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a
@@ -574,9 +586,11 @@ control strip, two-row equal-width pane grid via
 persistence for up to 8 files, Win32 file dialogs, single-instance IPC)
 hosts one `NifCompareView`.
 
-Not yet ported/implemented: skinning/morphs/particles/controllers (out of
-scope per `SceneBuilder.h`'s documented scope note - static bind-pose
-comparison only) and a `.ico`/app icon.
+Not yet ported/implemented: skeletal (bone) animation with per-frame
+re-skinning, morphs, particles, and property controllers (rigid NIF-embedded
+transform animations DO play - see the ANIMATION group under Features; actor
+animations are external Havok .hkx, unplayable even in NifSkope), and a
+`.ico`/app icon.
 
 ## Next steps
 

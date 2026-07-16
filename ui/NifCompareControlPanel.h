@@ -88,6 +88,21 @@ public:
     void SetOnOrbitSelectionChanged(std::function<void(bool)> handler);
     void SetOnZoomToCursorChanged(std::function<void(bool)> handler);
 
+    // ANIMATION group: playback of NIF-embedded transform animations (animated
+    // statics). The owner (NifCompareView) drives the actual per-pane AnimPlayer
+    // state; these controls only surface it. Refresh setters never notify.
+    void SetOnAnimPlayClicked(std::function<void()> handler);
+    void SetOnAnimSequenceChanged(std::function<void(int)> handler);
+    void SetOnAnimTimeChanged(std::function<void(float)> handler);
+    void SetOnAnimLoopChanged(std::function<void(bool)> handler);
+    void SetOnAnimSpeedChanged(std::function<void(float)> handler);
+    void SetOnSyncAnimationChanged(std::function<void(bool)> handler);
+    void SetAnimSequences(const std::vector<std::wstring>& names, int selected);
+    void SetAnimTimeRange(float tMin, float tMax);
+    void SetAnimTimeValue(float t);           // slider follows playback (no notify)
+    void SetAnimPlayingDisplay(bool playing); // play button label
+    void SetAnimEnabled(bool enabled);        // gray the group while no animation is loaded
+
     void SetOnBrightnessChanged(std::function<void(float)> handler);
     void SetOnAmbientChanged(std::function<void(float)> handler);
     void SetOnDeclinationChanged(std::function<void(float)> handler);
@@ -156,6 +171,12 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_orthoChk;
     std::shared_ptr<FD2D::CheckBox> m_orbitSelChk;
     std::shared_ptr<FD2D::CheckBox> m_zoomCursorChk;
+    std::shared_ptr<FD2D::Button> m_animPlayBtn;
+    std::shared_ptr<FD2D::ComboBox> m_animSeqCombo;
+    std::shared_ptr<FD2D::Slider> m_animTimeSlider;
+    std::shared_ptr<FD2D::Slider> m_animSpeedSlider;
+    std::shared_ptr<FD2D::CheckBox> m_animLoopChk;
+    std::shared_ptr<FD2D::CheckBox> m_syncAnimChk;
     std::shared_ptr<FD2D::CheckBox> m_frontalLightChk;
     std::shared_ptr<FD2D::CheckBox> m_showGridChk;
     std::shared_ptr<FD2D::CheckBox> m_showAxesChk;

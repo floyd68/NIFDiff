@@ -252,6 +252,14 @@ private:
     // Grays out the "Parallax Height" slider and the three extended-material
     // toggles unless some loaded pane carries material each control affects.
     void RefreshExtendedMaterialControls();
+    // Sync the ANIMATION group with the active pane's AnimPlayer (sequence
+    // list, time range/value, enabled state). Called on document changes and
+    // active-pane switches, like RefreshExtendedMaterialControls.
+    void RefreshAnimationControls();
+    // Apply an ANIMATION-group action to the animation targets: every pane
+    // when Sync Anim is on, else just the active pane.
+    template <typename Fn> void ForEachAnimTarget(Fn&& fn);
+    void ToggleAnimPlayback();
     // Application-wide shortcuts - see OnInputEvent's comment for the map.
     bool HandleShortcutKey(const FD2D::InputEvent& event);
     NifComparePane* PaneAt(const POINT& clientPt) const;
@@ -434,6 +442,7 @@ private:
     float m_fovRadians = 0.9f;            // vertical FOV (~51.6 deg); NifViewport default
     bool m_orbitAroundSelection = true;
     bool m_zoomToCursor = true;
+    bool m_syncAnimation = true; // ANIMATION group targets all panes (vs active only)
     bool m_enableTextures = true;        // render-channel toggles, mirrored onto new panes
     bool m_enableVertexColors = true;
     bool m_enableSpecular = true;

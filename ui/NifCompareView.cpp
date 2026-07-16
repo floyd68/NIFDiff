@@ -91,6 +91,31 @@ NifCompareView::NifCompareView(const std::wstring& name)
         for (auto& p : m_panes) p->Viewport().SetZoomToCursor(on);
     });
 
+    // ANIMATION group: playback of NIF-embedded transform animations. Actions
+    // hit every pane while Sync Anim is on (compare two variants in phase),
+    // else just the active pane.
+    m_controls->SetOnAnimPlayClicked([this]() { ToggleAnimPlayback(); });
+    m_controls->SetOnAnimSequenceChanged([this](int idx)
+    {
+        ForEachAnimTarget([idx](NifViewport& v) { v.SelectAnimSequence(idx); });
+        RefreshAnimationControls();
+    });
+    m_controls->SetOnAnimTimeChanged([this](float t)
+    {
+        // Scrubbing pauses playback and poses at the dragged time (live).
+        ForEachAnimTarget([t](NifViewport& v) { v.SetAnimPlaying(false); v.SetAnimTime(t); });
+        m_controls->SetAnimPlayingDisplay(false);
+    });
+    m_controls->SetOnAnimLoopChanged([this](bool on)
+    {
+        ForEachAnimTarget([on](NifViewport& v) { v.SetAnimLoop(on); });
+    });
+    m_controls->SetOnAnimSpeedChanged([this](float v)
+    {
+        ForEachAnimTarget([v](NifViewport& vp) { vp.SetAnimSpeed(v); });
+    });
+    m_controls->SetOnSyncAnimationChanged([this](bool on) { m_syncAnimation = on; });
+
     m_controls->SetOnFrontalLightChanged([this](bool on)
     {
         for (auto& p : m_panes) p->Viewport().SetFrontalLight(on);
@@ -297,6 +322,7 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     pane->SetOnDocumentChanged([this]()
     {
         RefreshExtendedMaterialControls();
+        RefreshAnimationControls();
         UpdateIpcOpenSnapshot();
     });
     pane->SetOnFileOpened([this](const std::wstring& path)
@@ -650,6 +676,7 @@ void NifCompareView::SetActivePane(NifComparePane* pane)
     if (m_activePane == pane)
         return;
     m_activePane = pane;
+    RefreshAnimationControls(); // ANIMATION group mirrors the active pane's player
     Invalidate();
 }
 
@@ -2372,6 +2399,56 @@ void NifCompareView::TimerThunk(HWND hwnd, UINT /*msg*/, UINT_PTR idEvent, DWORD
     self->ProcessPendingCloses();
 }
 
+template <typename Fn>
+void NifCompareView::ForEachAnimTarget(Fn&& fn)
+{
+    if (m_syncAnimation)
+    {
+        for (auto& p : m_panes)
+            if (p)
+                fn(p->Viewport());
+    }
+    else if (NifComparePane* active = ActivePane())
+    {
+        fn(active->Viewport());
+    }
+}
+
+void NifCompareView::ToggleAnimPlayback()
+{
+    NifComparePane* active = ActivePane();
+    if (!active || !active->Viewport().HasAnimations())
+        return;
+    const bool play = !active->Viewport().AnimPlaying();
+    ForEachAnimTarget([play](NifViewport& v) { v.SetAnimPlaying(play); });
+    if (play)
+        EnsureCameraAnimTimer(); // playback rides the shared ~60fps stepper
+    m_controls->SetAnimPlayingDisplay(active->Viewport().AnimPlaying());
+}
+
+void NifCompareView::RefreshAnimationControls()
+{
+    NifComparePane* active = ActivePane();
+    NifViewport* v = active ? &active->Viewport() : nullptr;
+    const bool has = (v != nullptr) && v->HasAnimations();
+    m_controls->SetAnimEnabled(has);
+
+    std::vector<std::wstring> names;
+    int selected = 0;
+    if (has)
+    {
+        for (std::size_t i = 0; i < v->AnimSequenceCount(); ++i)
+            names.push_back(Utf8ToWideStr(v->AnimSequenceName(i)));
+        if (names.empty())
+            names.push_back(L"(always)"); // standalone controllers only
+        selected = (std::max)(0, v->AnimSelectedSequence());
+        m_controls->SetAnimTimeRange(v->AnimTimeMin(), v->AnimTimeMax());
+        m_controls->SetAnimTimeValue(v->AnimTime());
+        m_controls->SetAnimPlayingDisplay(v->AnimPlaying());
+    }
+    m_controls->SetAnimSequences(names, selected);
+}
+
 void NifCompareView::EnsureCameraAnimTimer()
 {
     if (m_cameraAnimTimerRunning)
@@ -2391,11 +2468,26 @@ void NifCompareView::CameraAnimThunk(HWND /*hwnd*/, UINT /*msg*/, UINT_PTR idEve
 
 void NifCompareView::TickCameraAnimations()
 {
+    // Shared ~60fps stepper: camera tweens AND mesh-animation playback ride the
+    // same on-demand timer; it stops the moment neither has work left.
     const unsigned long long now = GetTickCount64();
     bool any = false;
     for (auto& p : m_panes)
-        if (p && p->Viewport().TickCameraAnimation(now))
+    {
+        if (!p)
+            continue;
+        if (p->Viewport().TickCameraAnimation(now))
             any = true;
+        if (p->Viewport().TickAnimation(now))
+            any = true;
+    }
+    // Follow the active pane's clock on the Time slider while playing (also
+    // flips the Play button back when a one-shot clip reaches its end).
+    if (NifComparePane* active = ActivePane(); active && active->Viewport().HasAnimations())
+    {
+        m_controls->SetAnimTimeValue(active->Viewport().AnimTime());
+        m_controls->SetAnimPlayingDisplay(active->Viewport().AnimPlaying());
+    }
     if (any)
         return;
     // All tweens finished: stop the timer until the next animation is requested.

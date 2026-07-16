@@ -152,6 +152,53 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
 
     navigation->AddChild(navRow);
 
+    // --- ANIMATION: NIF-embedded controller playback ---------------------
+    // Disabled until a loaded NIF actually carries transform animations (see
+    // NifCompareView::RefreshAnimationControls). Playback state itself lives
+    // on each pane's viewport; this is just the shared control surface.
+    auto animation = makeGroup(L"Animation", L"ANIMATION");
+    auto animRow = makeRow(name + L"_AnimRow", 14.0f);
+
+    auto animCol1 = makeColumn(name + L"_AnimCol1", 4.0f);
+    m_animPlayBtn = std::make_shared<FD2D::Button>(L"AnimPlay");
+    m_animPlayBtn->SetLabel(L"▶ Play");
+    animCol1->AddChild(m_animPlayBtn);
+
+    m_animSeqCombo = std::make_shared<FD2D::ComboBox>(L"AnimSequence");
+    m_animSeqCombo->SetItems({ L"(none)" });
+    m_animSeqCombo->SetSelectedIndex(0);
+    animCol1->AddChild(m_animSeqCombo);
+
+    m_syncAnimChk = std::make_shared<FD2D::CheckBox>(L"SyncAnimation");
+    m_syncAnimChk->SetLabel(L"Sync Anim");
+    m_syncAnimChk->SetChecked(true);
+    animCol1->AddChild(m_syncAnimChk);
+    animRow->AddChild(animCol1);
+
+    auto animCol2 = makeColumn(name + L"_AnimCol2", 4.0f);
+    m_animTimeSlider = std::make_shared<FD2D::Slider>(L"AnimTime");
+    m_animTimeSlider->SetLabel(L"Time");
+    m_animTimeSlider->SetRange(0.0f, 1.0f);
+    m_animTimeSlider->SetValue(0.0f);
+    m_animTimeSlider->SetEnabled(false);
+    animCol2->AddChild(m_animTimeSlider);
+
+    m_animSpeedSlider = std::make_shared<FD2D::Slider>(L"AnimSpeed");
+    m_animSpeedSlider->SetLabel(L"Speed");
+    m_animSpeedSlider->SetRange(0.25f, 2.0f);
+    m_animSpeedSlider->SetValue(1.0f);
+    m_animSpeedSlider->SetEnabled(false);
+    animCol2->AddChild(m_animSpeedSlider);
+
+    m_animLoopChk = std::make_shared<FD2D::CheckBox>(L"AnimLoop");
+    m_animLoopChk->SetLabel(L"Loop");
+    m_animLoopChk->SetChecked(true);
+    m_animLoopChk->SetEnabled(false);
+    animCol2->AddChild(m_animLoopChk);
+    animRow->AddChild(animCol2);
+
+    animation->AddChild(animRow);
+
     // --- DISPLAY: scene decorations ------------------------------------
     auto display = makeGroup(L"Display", L"DISPLAY");
 
@@ -436,6 +483,40 @@ void NifCompareControlPanel::SetOrthographicChecked(bool checked, bool notify) {
 void NifCompareControlPanel::ToggleOrthographic() { m_orthoChk->SetChecked(!m_orthoChk->Checked(), /*notify=*/true); }
 void NifCompareControlPanel::SetOnOrbitSelectionChanged(std::function<void(bool)> handler) { m_orbitSelChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnZoomToCursorChanged(std::function<void(bool)> handler) { m_zoomCursorChk->OnCheckedChanged(std::move(handler)); }
+
+void NifCompareControlPanel::SetOnAnimPlayClicked(std::function<void()> handler) { m_animPlayBtn->OnClick(std::move(handler)); }
+void NifCompareControlPanel::SetOnAnimSequenceChanged(std::function<void(int)> handler) { m_animSeqCombo->OnSelectionChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnAnimTimeChanged(std::function<void(float)> handler) { m_animTimeSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnAnimLoopChanged(std::function<void(bool)> handler) { m_animLoopChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnAnimSpeedChanged(std::function<void(float)> handler) { m_animSpeedSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnSyncAnimationChanged(std::function<void(bool)> handler) { m_syncAnimChk->OnCheckedChanged(std::move(handler)); }
+
+void NifCompareControlPanel::SetAnimSequences(const std::vector<std::wstring>& names, int selected)
+{
+    if (names.empty())
+    {
+        m_animSeqCombo->SetItems({ L"(none)" });
+        m_animSeqCombo->SetSelectedIndex(0);
+        return;
+    }
+    m_animSeqCombo->SetItems(names);
+    m_animSeqCombo->SetSelectedIndex(std::clamp(selected, 0, static_cast<int>(names.size()) - 1));
+}
+
+void NifCompareControlPanel::SetAnimTimeRange(float tMin, float tMax)
+{
+    m_animTimeSlider->SetRange(tMin, (std::max)(tMax, tMin + 0.001f));
+}
+
+void NifCompareControlPanel::SetAnimTimeValue(float t) { m_animTimeSlider->SetValue(t, /*notify=*/false); }
+void NifCompareControlPanel::SetAnimPlayingDisplay(bool playing) { m_animPlayBtn->SetLabel(playing ? L"⏸ Pause" : L"▶ Play"); }
+
+void NifCompareControlPanel::SetAnimEnabled(bool enabled)
+{
+    m_animTimeSlider->SetEnabled(enabled);
+    m_animSpeedSlider->SetEnabled(enabled);
+    m_animLoopChk->SetEnabled(enabled);
+}
 
 void NifCompareControlPanel::SetOnBrightnessChanged(std::function<void(float)> handler) { m_brightnessSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnAmbientChanged(std::function<void(float)> handler) { m_ambientSlider->OnValueChanged(std::move(handler)); }
