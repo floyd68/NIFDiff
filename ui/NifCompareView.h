@@ -339,6 +339,36 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_matPanelText; // lazy, device-independent
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_syncBadgeText; // lazy, centered badge label
 
+    // A material-panel texture cell captured during the last draw: its client
+    // rect plus the full relative path and resolved source, for hover-tooltip
+    // and right-click-copy (see DrawMaterialTooltip / HandleMaterialPanelCopy).
+    struct MatTexCell
+    {
+        D2D1_RECT_F rect {};
+        std::wstring fullPath;   // untruncated relative texture path (copied on right-click)
+        std::wstring resolved;   // loose absolute path / "archive -> entry", shown in the tooltip
+    };
+    bool m_matPanelLive = false;
+    D2D1_RECT_F m_matPanelRect {};
+    std::vector<MatTexCell> m_matTexCells;
+    int m_matHoverCell = -1; // index into m_matTexCells under the cursor, -1 = none
+
+    // Collapse + column-width resize state for the material panel.
+    bool m_matPanelCollapsed = false;      // header-only when true (click header to toggle)
+    float m_matColW = 208.0f;              // value-column width, adjustable via the grip
+    int m_matColCount = 1;                 // columns drawn last frame (for grip drag scaling)
+    D2D1_RECT_F m_matHeaderRect {};        // header row hit rect (collapse toggle)
+    D2D1_RECT_F m_matResizeGrip {};        // bottom-left grip hit rect (width drag)
+    bool m_matResizing = false;            // a grip drag is in progress
+    LONG m_matResizeStartX = 0;            // cursor x at drag start
+    float m_matColWStart = 208.0f;         // m_matColW at drag start
+
+    void DrawMaterialTooltip(ID2D1RenderTarget* target, const MatTexCell& cell,
+                             const D2D1_POINT_2F& cursor);
+    bool HandleMaterialPanelCopy(const POINT& pt);
+    bool HandleMaterialPanelMouseDown(const POINT& pt); // header toggle / grip drag / swallow
+    void UpdateMaterialHover(const POINT& pt); // repaints when the hovered cell changes
+
     // Texture inspector state (see DrawTextureInspector).
     bool m_showTextureInspector = false; // 'T' toggles
     int m_texInspectorRow = 0;           // which listed slot is previewed

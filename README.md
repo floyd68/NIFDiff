@@ -224,7 +224,12 @@ own copies.
   panes resolving the same path to different sources light up),
   specular/emissive/alpha/UV values, alpha and depth state - side by
   side with the same-named mesh in every other loaded pane,
-  highlighting exactly which values differ.
+  highlighting exactly which values differ. Hover a texture cell for a
+  tooltip with its full relative path and resolved source (loose
+  absolute path or `archive -> entry`); **right-click** a texture cell
+  to copy that path to the clipboard. Click the header row to
+  **collapse/expand** the panel (the `▾`/`▸` chevron), and drag the
+  bottom-left grip to widen or narrow the value columns.
 - **Texture inspector** (`T` to toggle): lists the selected sub-mesh's
   bound texture slots with resolution, pixel format, mip count and the
   resolved source (loose file path vs BSA archive - mod-conflict

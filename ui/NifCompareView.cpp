@@ -625,6 +625,55 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
         HandleTextureInspectorClick(event.point))
         return true;
 
+    // A material-panel column-width drag in progress owns every mouse event
+    // until release.
+    if (m_matResizing)
+    {
+        if (event.type == FD2D::InputEventType::MouseMove && event.hasPoint)
+        {
+            const int cols = (std::max)(m_matColCount, 1);
+            const float delta = static_cast<float>(m_matResizeStartX - event.point.x) / cols;
+            m_matColW = (std::clamp)(m_matColWStart + delta, 130.0f, 380.0f);
+            Invalidate();
+            return true;
+        }
+        if (event.type == FD2D::InputEventType::MouseUp)
+        {
+            m_matResizing = false;
+            ReleaseCapture();
+            return true;
+        }
+        return true; // swallow anything else mid-drag
+    }
+
+    // Track the hovered material-panel texture cell so the tooltip repaints as
+    // the cursor moves across cells (mouse-move alone triggers no redraw).
+    if (event.type == FD2D::InputEventType::MouseMove && event.hasPoint)
+        UpdateMaterialHover(event.point);
+
+    // Right-click on a material-panel texture cell copies its full relative
+    // path (and swallows the event so no pane context menu appears).
+    if (event.type == FD2D::InputEventType::MouseUp &&
+        event.button == FD2D::MouseButton::Right &&
+        event.hasPoint &&
+        HandleMaterialPanelCopy(event.point))
+        return true;
+
+    // A press over the material panel belongs to IT: header toggles collapse, a
+    // corner grip starts a width drag, and everything else is swallowed so the
+    // pane behind the overlay doesn't become active or start an orbit drag.
+    if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint &&
+        HandleMaterialPanelMouseDown(event.point))
+        return true;
+
+    // The overlay is drawn, not a child window, so a release over it would
+    // otherwise fall through to the pane behind - and the viewport picks a
+    // sub-mesh on MouseUp. Swallow every release over the live panel so a
+    // header collapse/expand click never selects the mesh underneath.
+    if (event.type == FD2D::InputEventType::MouseUp && event.hasPoint &&
+        m_matPanelLive && FD2D::Util::RectContainsPoint(m_matPanelRect, event.point))
+        return true;
+
     // Any click inside a pane makes it the active one (FICture2's focused
     // browser), BEFORE the children consume the event - a viewport orbit
     // drag or a path-label click both count as "working in this pane".
@@ -817,6 +866,8 @@ namespace
 
 void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
 {
+    m_matPanelLive = false;   // recomputed below; stale hit rects must not linger
+    m_matTexCells.clear();
     if (!m_showMaterialPanel)
         return;
     NifComparePane* active = ActivePane();
@@ -826,7 +877,7 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     if (sel == nullptr)
         return;
 
-    // Columns: every loaded pane in order (up to 4), the active pane's
+    // Columns: every loaded pane in order (up to kMaxPanes), the active pane's
     // selection matched into the others by node name, then by index.
     struct Column
     {
@@ -872,7 +923,7 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         }
         col.header = L"Pane " + std::to_wstring(paneNo) + (p.get() == active ? L" ●" : L"");
         cols.push_back(col);
-        if (cols.size() == 4)
+        if (cols.size() == kMaxPanes)
             break;
     }
     if (cols.empty())
@@ -885,6 +936,9 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         std::wstring label;
         std::vector<std::wstring> vals;
         bool differs = false;
+        bool isTexture = false;                   // texture-slot rows get hover/copy
+        std::vector<std::wstring> fullPaths;      // untruncated relative path per column
+        std::vector<std::wstring> resolvedPaths;  // resolved source per column (loose abs / bsa)
     };
     std::vector<Row> rows;
     const auto addRow = [&rows, &cols](const std::wstring& label, auto&& format, bool skipWhenAllEmpty = false)
@@ -921,6 +975,51 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         }
         return v;
     };
+    // Human-readable resolved source for a texture, mirrored into the tooltip:
+    // "file:<abs>" -> the loose absolute path; "bsa:<archive>|<entry>" -> the
+    // archive and entry it was extracted from.
+    const auto texResolved = [](const std::string& sourceKey) -> std::wstring
+    {
+        if (sourceKey.rfind("file:", 0) == 0)
+            return Utf8ToWideStr(sourceKey.substr(5));
+        if (sourceKey.rfind("bsa:", 0) == 0)
+        {
+            const std::string body = sourceKey.substr(4);
+            const std::size_t bar = body.find('|');
+            if (bar != std::string::npos)
+                return Utf8ToWideStr(body.substr(0, bar)) + L"  →  " + Utf8ToWideStr(body.substr(bar + 1));
+            return Utf8ToWideStr(body);
+        }
+        return std::wstring();
+    };
+    // Texture rows stash the untruncated relative path and resolved source per
+    // column so the panel can offer a hover tooltip and right-click-to-copy on
+    // each texture cell (see m_matTexCells / HandleMaterialPanelCopy).
+    const auto addTexRow = [&](const std::wstring& label, auto&& field)
+    {
+        Row r;
+        r.label = label;
+        r.isTexture = true;
+        bool anyContent = false;
+        for (const Column& c : cols)
+        {
+            std::string rel = c.mesh != nullptr ? field(*c.mesh) : std::string();
+            std::wstring disp = c.mesh != nullptr ? tex(rel, *c.pane) : std::wstring(L"-");
+            std::wstring resolved;
+            if (!rel.empty())
+                if (TextureRepository::Entry* e = c.pane->Viewport().TextureEntry(rel))
+                    resolved = texResolved(e->sourceKey);
+            anyContent = anyContent || !rel.empty();
+            r.vals.push_back(std::move(disp));
+            r.fullPaths.push_back(Utf8ToWideStr(rel));
+            r.resolvedPaths.push_back(std::move(resolved));
+        }
+        if (!anyContent)
+            return;
+        for (const std::wstring& v : r.vals)
+            r.differs = r.differs || v != r.vals.front();
+        rows.push_back(std::move(r));
+    };
 
     addRow(L"Mesh",        [](const RenderMesh& m, NifComparePane&) { return Utf8ToWideStr(m.nodeName); });
     addRow(L"Triangles",   [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.geometry ? m.geometry->triangles.size() : 0); });
@@ -928,14 +1027,14 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     addRow(L"Shader Type", [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.material.shaderType); });
     addRow(L"SLSF1",       [](const RenderMesh& m, NifComparePane&) { return Hex32(m.material.shaderFlags1); });
     addRow(L"SLSF2",       [](const RenderMesh& m, NifComparePane&) { return Hex32(m.material.shaderFlags2); });
-    addRow(L"Diffuse",     [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.diffuseTexture, p); }, true);
-    addRow(L"Normal",      [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.normalTexture, p); }, true);
-    addRow(L"Glow/Mask",   [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.glowTexture, p); }, true);
-    addRow(L"Height",      [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.heightTexture, p); }, true);
-    addRow(L"Cube Map",    [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.cubeTexture, p); }, true);
-    addRow(L"Env Mask",    [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.envMaskTexture, p); }, true);
-    addRow(L"Inner/Tint",  [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.innerTexture, p); }, true);
-    addRow(L"Backlight",   [&](const RenderMesh& m, NifComparePane& p) { return tex(m.material.backlightTexture, p); }, true);
+    addTexRow(L"Diffuse",     [](const RenderMesh& m) -> const std::string& { return m.material.diffuseTexture; });
+    addTexRow(L"Normal",      [](const RenderMesh& m) -> const std::string& { return m.material.normalTexture; });
+    addTexRow(L"Glow/Mask",   [](const RenderMesh& m) -> const std::string& { return m.material.glowTexture; });
+    addTexRow(L"Height",      [](const RenderMesh& m) -> const std::string& { return m.material.heightTexture; });
+    addTexRow(L"Cube Map",    [](const RenderMesh& m) -> const std::string& { return m.material.cubeTexture; });
+    addTexRow(L"Env Mask",    [](const RenderMesh& m) -> const std::string& { return m.material.envMaskTexture; });
+    addTexRow(L"Inner/Tint",  [](const RenderMesh& m) -> const std::string& { return m.material.innerTexture; });
+    addTexRow(L"Backlight",   [](const RenderMesh& m) -> const std::string& { return m.material.backlightTexture; });
     addRow(L"Spec Color",  [](const RenderMesh& m, NifComparePane&) { return Col3Str(m.material.specularColor); });
     addRow(L"Spec Strength", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.specularStrength); });
     addRow(L"Glossiness",  [](const RenderMesh& m, NifComparePane&) { return F2(m.material.glossiness); });
@@ -974,12 +1073,19 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
 
     constexpr float kRowH = 17.0f;
     constexpr float kLabelW = 108.0f;
-    constexpr float kColW = 208.0f;
     constexpr float kPad = 8.0f;
-    const float panelW = kLabelW + kColW * cols.size() + kPad * 2.0f;
-    const float panelH = kRowH * (rows.size() + 1) + kPad * 2.0f;
-
     const D2D1_RECT_F view = LayoutRect();
+    m_matColCount = static_cast<int>(cols.size());
+    // The desired column width (grip-adjustable) is capped so the whole table -
+    // up to kMaxPanes columns - still fits between the view's side margins; with
+    // many panes the columns auto-shrink rather than run off the left edge.
+    const float availW = (view.right - view.left) - 24.0f - kLabelW - kPad * 2.0f;
+    const float fitColW = availW > 0.0f ? availW / static_cast<float>(cols.size()) : m_matColW;
+    const float colW = (std::max)(70.0f, (std::min)(m_matColW, fitColW));
+    const float panelW = kLabelW + colW * cols.size() + kPad * 2.0f;
+    const std::size_t bodyRows = m_matPanelCollapsed ? 0 : rows.size();
+    const float panelH = kRowH * (bodyRows + 1) + kPad * 2.0f; // +1 = header row
+
     D2D1_RECT_F panel {
         view.right - panelW - 12.0f,
         view.top + 34.0f,
@@ -1007,11 +1113,28 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     const D2D1_COLOR_F kDiffCol   = D2D1::ColorF(1.00f, 0.62f, 0.25f);
     const D2D1_COLOR_F kHeaderCol = D2D1::ColorF(0.52f, 0.56f, 0.61f);
 
+    // Header row: title (+ per-pane headers when expanded) and a collapse
+    // chevron on the right; clicking anywhere on the row toggles collapse.
     float y = panel.top + kPad;
     drawCell(L"MATERIAL DIFF (I)", panel.left + kPad, y, kLabelW, kHeaderCol);
-    for (std::size_t c = 0; c < cols.size(); ++c)
-        drawCell(cols[c].header, panel.left + kPad + kLabelW + kColW * c, y, kColW, kHeaderCol);
+    if (!m_matPanelCollapsed)
+        for (std::size_t c = 0; c < cols.size(); ++c)
+            drawCell(cols[c].header, panel.left + kPad + kLabelW + colW * c, y, colW, kHeaderCol);
+    {
+        const D2D1_RECT_F cr { panel.right - kPad - 16.0f, y, panel.right - kPad, y + kRowH };
+        brush->SetColor(kHeaderCol);
+        target->DrawTextW(m_matPanelCollapsed ? L"▸" : L"▾", 1, m_matPanelText.Get(), cr, brush.Get(),
+                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    m_matHeaderRect = { panel.left, panel.top, panel.right, y + kRowH };
     y += kRowH;
+
+    m_matPanelRect = panel;
+    m_matPanelLive = true;
+    m_matResizeGrip = {};
+    if (m_matPanelCollapsed)
+        return; // header only - body, grip, and tooltip are all suppressed
+
     brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f));
     target->DrawLine({ panel.left + kPad, y }, { panel.right - kPad, y }, brush.Get(), 1.0f);
 
@@ -1020,11 +1143,111 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         drawCell(row.label, panel.left + kPad, y, kLabelW, kLabelCol);
         for (std::size_t c = 0; c < row.vals.size(); ++c)
         {
+            const float cx = panel.left + kPad + kLabelW + colW * c;
             const bool highlight = row.differs && (c == 0 || row.vals[c] != row.vals.front());
-            drawCell(row.vals[c], panel.left + kPad + kLabelW + kColW * c, y, kColW,
-                     highlight ? kDiffCol : kValueCol);
+            drawCell(row.vals[c], cx, y, colW, highlight ? kDiffCol : kValueCol);
+            // Remember non-empty texture cells for hover/copy hit-testing.
+            if (row.isTexture && c < row.fullPaths.size() && !row.fullPaths[c].empty())
+                m_matTexCells.push_back({ { cx, y, cx + colW - 6.0f, y + kRowH },
+                                          row.fullPaths[c], row.resolvedPaths[c] });
         }
         y += kRowH;
+    }
+
+    // Resize grip in the bottom-left corner: dragging it left/right widens or
+    // narrows the value columns (the right edge stays pinned).
+    const D2D1_RECT_F grip { panel.left, panel.bottom - 14.0f, panel.left + 14.0f, panel.bottom };
+    m_matResizeGrip = grip;
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f));
+    for (int i = 0; i < 3; ++i)
+    {
+        const float o = 4.0f + i * 4.0f;
+        target->DrawLine({ grip.left + 2.0f, grip.bottom - o }, { grip.left + o, grip.bottom - 2.0f },
+                         brush.Get(), 1.0f);
+    }
+
+    // Hover tooltip: when the cursor rests on a texture cell, expand the
+    // truncated path to its full relative path plus resolved source.
+    FD2D::Backplate* bp = BackplateRef();
+    POINT cur {};
+    if (bp && bp->Window() && GetCursorPos(&cur) && ScreenToClient(bp->Window(), &cur))
+    {
+        const D2D1_POINT_2F cp { static_cast<float>(cur.x), static_cast<float>(cur.y) };
+        for (const MatTexCell& cell : m_matTexCells)
+        {
+            if (cp.x < cell.rect.left || cp.x > cell.rect.right ||
+                cp.y < cell.rect.top  || cp.y > cell.rect.bottom)
+                continue;
+            DrawMaterialTooltip(target, cell, cp);
+            break;
+        }
+    }
+}
+
+// Small floating tooltip anchored just below the hovered texture cell,
+// showing the full relative path and (if resolved) the loose/bsa source.
+void NifCompareView::DrawMaterialTooltip(ID2D1RenderTarget* target,
+                                         const MatTexCell& cell,
+                                         const D2D1_POINT_2F& cursor)
+{
+    if (!m_matPanelText)
+        return;
+
+    std::vector<std::wstring> lines;
+    lines.push_back(cell.fullPath);
+    if (!cell.resolved.empty())
+        lines.push_back(L"→  " + cell.resolved);
+    lines.push_back(L"우클릭: 경로 복사");
+
+    // Measure the widest line to size the box.
+    float textW = 0.0f;
+    for (const std::wstring& s : lines)
+    {
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(FD2D::Core::DWriteFactory()->CreateTextLayout(
+                s.c_str(), static_cast<UINT32>(s.size()), m_matPanelText.Get(),
+                4000.0f, 40.0f, &layout)))
+        {
+            DWRITE_TEXT_METRICS tm {};
+            layout->GetMetrics(&tm);
+            textW = (std::max)(textW, tm.width);
+        }
+    }
+
+    constexpr float kPad = 7.0f;
+    constexpr float kLineH = 17.0f;
+    const float boxW = textW + kPad * 2.0f;
+    const float boxH = kLineH * lines.size() + kPad * 2.0f;
+
+    const D2D1_RECT_F view = LayoutRect();
+    float bx = cursor.x + 14.0f;
+    float by = cell.rect.bottom + 4.0f;
+    if (bx + boxW > view.right - 6.0f) bx = view.right - 6.0f - boxW;
+    if (by + boxH > view.bottom - 6.0f) by = cell.rect.top - 4.0f - boxH;
+    if (bx < view.left + 6.0f) bx = view.left + 6.0f;
+    if (by < view.top + 6.0f)  by = view.top + 6.0f;
+    const D2D1_RECT_F box { bx, by, bx + boxW, by + boxH };
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.11f, 0.13f, 0.97f), &brush)))
+        return;
+    const D2D1_ROUNDED_RECT rr { box, 4.0f, 4.0f };
+    target->FillRoundedRectangle(rr, brush.Get());
+    brush->SetColor(D2D1::ColorF(1.0f, 0.62f, 0.25f, 0.55f));
+    target->DrawRoundedRectangle(rr, brush.Get(), 1.0f);
+
+    float ty = box.top + kPad;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        const bool hint = (i + 1 == lines.size());
+        const bool resolved = (i == 1 && !cell.resolved.empty());
+        brush->SetColor(hint ? D2D1::ColorF(0.55f, 0.58f, 0.62f)
+                      : resolved ? D2D1::ColorF(0.62f, 0.80f, 0.98f)
+                                 : D2D1::ColorF(0.92f, 0.92f, 0.94f));
+        const D2D1_RECT_F rc { box.left + kPad, ty, box.right - kPad, ty + kLineH };
+        target->DrawTextW(lines[i].c_str(), static_cast<UINT32>(lines[i].size()),
+                          m_matPanelText.Get(), rc, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        ty += kLineH;
     }
 }
 
@@ -1338,6 +1561,69 @@ bool NifCompareView::HandleTextureInspectorClick(const POINT& pt)
         }
     }
     return true; // swallow clicks anywhere else on the panel
+}
+
+bool NifCompareView::HandleMaterialPanelMouseDown(const POINT& pt)
+{
+    if (!m_matPanelLive)
+        return false;
+
+    // Bottom-left grip: begin a column-width drag (captured until mouse-up).
+    if (!m_matPanelCollapsed && FD2D::Util::RectContainsPoint(m_matResizeGrip, pt))
+    {
+        m_matResizing = true;
+        m_matResizeStartX = pt.x;
+        m_matColWStart = m_matColW;
+        if (FD2D::Backplate* bp = BackplateRef())
+            if (bp->Window())
+                SetCapture(bp->Window());
+        return true;
+    }
+    // Header row: toggle collapse/expand.
+    if (FD2D::Util::RectContainsPoint(m_matHeaderRect, pt))
+    {
+        m_matPanelCollapsed = !m_matPanelCollapsed;
+        Invalidate();
+        return true;
+    }
+    // Any other press on the panel is swallowed so the pane behind it doesn't
+    // become active (which, with no selection, would hide the panel) or orbit.
+    return FD2D::Util::RectContainsPoint(m_matPanelRect, pt);
+}
+
+void NifCompareView::UpdateMaterialHover(const POINT& pt)
+{
+    int hover = -1;
+    if (m_matPanelLive)
+    {
+        for (std::size_t i = 0; i < m_matTexCells.size(); ++i)
+            if (FD2D::Util::RectContainsPoint(m_matTexCells[i].rect, pt))
+            {
+                hover = static_cast<int>(i);
+                break;
+            }
+    }
+    if (hover != m_matHoverCell)
+    {
+        m_matHoverCell = hover;
+        Invalidate(); // the overlay reads the cursor at draw time to place the tooltip
+    }
+}
+
+bool NifCompareView::HandleMaterialPanelCopy(const POINT& pt)
+{
+    if (!m_matPanelLive)
+        return false;
+    for (const MatTexCell& cell : m_matTexCells)
+    {
+        if (!FD2D::Util::RectContainsPoint(cell.rect, pt))
+            continue;
+        if (FD2D::Backplate* bp = BackplateRef())
+            if (bp->CopyTextToClipboard(cell.fullPath))
+                bp->ShowToast(L"텍스처 경로 복사됨");
+        return true; // consumed even if the copy failed
+    }
+    return false;
 }
 
 namespace
