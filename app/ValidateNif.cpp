@@ -99,6 +99,15 @@ namespace
                     "                  -> node \"{}\" ctrlType={} interp={} ctrl={} prio={}\n",
                     cb.nodeName, cb.controllerType, cb.interpolatorRef, cb.controllerRef, cb.priority);
         }
+        if (!doc.floatInterpolators().empty() || !doc.boolInterpolators().empty())
+            std::cout << std::format("  anim scalars  : floatInterp={} floatData={} boolInterp={} boolData={}\n",
+                doc.floatInterpolators().size(), doc.floatData().size(),
+                doc.boolInterpolators().size(), doc.boolData().size());
+        for (const auto& [blockIdx, fd] : doc.floatData())
+            std::cout << std::format("  float data    : block {} keys={} (type {})\n",
+                blockIdx, fd.keys.size(), static_cast<unsigned>(fd.keyType));
+        for (const auto& [blockIdx, bd] : doc.boolData())
+            std::cout << std::format("  bool data     : block {} keys={}\n", blockIdx, bd.keys.size());
         for (const auto& [blockIdx, ti] : doc.transformInterpolators())
         {
             std::cout << std::format(

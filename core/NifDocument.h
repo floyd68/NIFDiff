@@ -267,6 +267,18 @@ struct NifTransformInterpolator
     bool scaleValid() const { return validComponent(scale); }
 };
 
+// NiFloatInterpolator / NiBoolInterpolator (nif.xml lines 3246 / 3285): scalar
+// samplers used by property controllers (BSLightingShaderProperty*Controller,
+// NiPSysEmitterCtlr inside sequences, ...) and - for bool - NiVisController
+// visibility tracks. Bool key values are stored as float 0/1 for a uniform
+// sampling path; `value` is the pose fallback (-FLT_MAX = invalid, same
+// sentinel convention as NifTransformInterpolator).
+struct NifScalarInterpolator
+{
+    float value = 0.0f;
+    std::int32_t dataRef = kNoRef; // -> NiFloatData / NiBoolData (a float key group)
+};
+
 // One NiTimeController-derived block (nif.xml line 3604): the common timing
 // header shared by every controller, plus the fields of the concrete types
 // this parser understands (NiTransformController's interpolator ref,
@@ -425,6 +437,12 @@ public:
     const std::unordered_map<std::int32_t, NifTimeController>& timeControllers() const { return m_timeControllers; }
     // NiControllerSequence blocks, keyed by block index.
     const std::unordered_map<std::int32_t, NifControllerSequence>& controllerSequences() const { return m_controllerSequences; }
+    // NiFloat/NiBoolInterpolator blocks and their key data (bool keys as 0/1
+    // floats), keyed by block index.
+    const std::unordered_map<std::int32_t, NifScalarInterpolator>& floatInterpolators() const { return m_floatInterpolators; }
+    const std::unordered_map<std::int32_t, NifScalarInterpolator>& boolInterpolators() const { return m_boolInterpolators; }
+    const std::unordered_map<std::int32_t, NifKeyGroup<float>>& floatData() const { return m_floatData; }
+    const std::unordered_map<std::int32_t, NifKeyGroup<float>>& boolData() const { return m_boolData; }
     const std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>>& skinPartitionWeights() const { return m_skinPartitionWeights; }
     // Resolves a raw block index (e.g. from skinInstanceBones()) to an index
     // into nodes(), or kNoRef if that block wasn't parsed into a scene node.
@@ -487,6 +505,10 @@ private:
         bool hasInterpolator, bool hasExtraTargets);
     NifTimeController readTimeControllerHeader(class NifIStream& in, const std::string& typeName);
     void parseNiControllerManager(class NifIStream& in, int blockIndex);
+    void parseNiFloatInterpolator(class NifIStream& in, int blockIndex);
+    void parseNiBoolInterpolator(class NifIStream& in, int blockIndex);
+    void parseNiFloatData(class NifIStream& in, int blockIndex);
+    void parseNiBoolData(class NifIStream& in, int blockIndex);
     void parseNiControllerSequence(class NifIStream& in, int blockIndex);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
     // this parser): holds the actual rest-pose vertex/triangle/bone-weight
@@ -562,6 +584,10 @@ private:
     std::unordered_map<std::int32_t, NifTransformInterpolator> m_transformInterpolators;   // NiTransformInterpolator block index -> pose + data ref
     std::unordered_map<std::int32_t, NifTimeController> m_timeControllers;                 // controller block index -> timing header + type fields
     std::unordered_map<std::int32_t, NifControllerSequence> m_controllerSequences;         // NiControllerSequence block index -> named animation
+    std::unordered_map<std::int32_t, NifScalarInterpolator> m_floatInterpolators;          // NiFloatInterpolator block index -> pose + data ref
+    std::unordered_map<std::int32_t, NifScalarInterpolator> m_boolInterpolators;           // NiBoolInterpolator block index -> pose + data ref
+    std::unordered_map<std::int32_t, NifKeyGroup<float>> m_floatData;                      // NiFloatData block index -> float keys
+    std::unordered_map<std::int32_t, NifKeyGroup<float>> m_boolData;                       // NiBoolData block index -> bool keys (0/1 floats)
 
     std::unique_ptr<NifItem> m_blockTree;
     std::string m_lastError;

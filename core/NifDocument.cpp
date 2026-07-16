@@ -366,6 +366,16 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiControllerManager(in, i);
         else if (t == "NiControllerSequence")
             parseNiControllerSequence(in, i);
+        else if (t == "NiVisController")
+            parseTimeController(in, i, t, /*hasInterpolator=*/true, /*hasExtraTargets=*/false);
+        else if (t == "NiFloatInterpolator")
+            parseNiFloatInterpolator(in, i);
+        else if (t == "NiBoolInterpolator")
+            parseNiBoolInterpolator(in, i);
+        else if (t == "NiFloatData")
+            parseNiFloatData(in, i);
+        else if (t == "NiBoolData")
+            parseNiBoolData(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -1002,6 +1012,39 @@ void NifDocument::parseNiControllerManager(NifIStream& in, int blockIndex)
         ctrl.sequenceRefs.push_back(in.i32());    // Controller Sequences (Ref[])
     ctrl.objectPaletteRef = in.i32();             // Object Palette (Ref)
     m_timeControllers[blockIndex] = std::move(ctrl);
+}
+
+void NifDocument::parseNiFloatInterpolator(NifIStream& in, int blockIndex)
+{
+    // nif.xml line 3246: pose float (may be the -FLT_MAX invalid sentinel) +
+    // NiFloatData ref.
+    NifScalarInterpolator interp;
+    interp.value = in.f32();   // Value
+    interp.dataRef = in.i32(); // Data (Ref -> NiFloatData)
+    m_floatInterpolators[blockIndex] = interp;
+}
+
+void NifDocument::parseNiBoolInterpolator(NifIStream& in, int blockIndex)
+{
+    // nif.xml line 3285: pose bool + NiBoolData ref.
+    NifScalarInterpolator interp;
+    interp.value = in.boolean() ? 1.0f : 0.0f; // Value
+    interp.dataRef = in.i32();                 // Data (Ref -> NiBoolData)
+    m_boolInterpolators[blockIndex] = interp;
+}
+
+void NifDocument::parseNiFloatData(NifIStream& in, int blockIndex)
+{
+    // nif.xml line 4263: one KeyGroup<float>.
+    m_floatData[blockIndex] = readKeyGroup<float>(in, [](NifIStream& s) { return s.f32(); });
+}
+
+void NifDocument::parseNiBoolData(NifIStream& in, int blockIndex)
+{
+    // nif.xml line 4097: one KeyGroup<byte>; widened to 0/1 floats here so the
+    // sampling path (AnimController's sampleKeys) is shared. Byte keys are
+    // always Linear per nif.xml's Key note, so no byte-typed tangents exist.
+    m_boolData[blockIndex] = readKeyGroup<float>(in, [](NifIStream& s) { return static_cast<float>(s.u8()); });
 }
 
 void NifDocument::parseNiControllerSequence(NifIStream& in, int blockIndex)
