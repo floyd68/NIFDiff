@@ -46,6 +46,13 @@ struct RenderMesh
 {
     std::string nodeName;
     Matrix4 worldTransform;
+    // Index of this shape's node in the owning NifDocument::nodes() array, so
+    // an animation runtime can recompute worldTransform per frame from the
+    // (animated) node hierarchy. -1 only if a mesh is constructed outside
+    // build(). Note: skinned meshes (ownedGeometry set) bake their pose into
+    // the vertices and ignore the node world - a rigid animation pass must
+    // skip those (bind pose until Phase 4 per-frame re-skinning).
+    int sourceNodeIndex = -1;
     const NifGeometry* geometry = nullptr; // borrowed pointer into the owning NifDocument, or into ownedGeometry below
     // Set only for skinned shapes (see applySkinning()): geometry with
     // world-space-skinned positions can't be shared with the NifDocument's

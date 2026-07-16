@@ -255,6 +255,7 @@ std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool include
 
         RenderMesh mesh;
         mesh.nodeName = node.name;
+        mesh.sourceNodeIndex = static_cast<int>(i);
         mesh.geometry = geo;
 
         if (node.hasSkinWeights)

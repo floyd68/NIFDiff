@@ -111,8 +111,8 @@ namespace
             const auto& m = meshes[i];
             const std::size_t nv = m.geometry ? m.geometry->positions.size() : 0;
             const std::size_t nt = m.geometry ? m.geometry->triangles.size() : 0;
-            std::cout << std::format("    [{}] {:<32} verts={:<6} tris={:<6} diffuse={} skinned={}\n",
-                i, m.nodeName, nv, nt,
+            std::cout << std::format("    [{}] {:<32} node={:<3} verts={:<6} tris={:<6} diffuse={} skinned={}\n",
+                i, m.nodeName, m.sourceNodeIndex, nv, nt,
                 m.material.diffuseTexture.empty() ? "(none)" : m.material.diffuseTexture,
                 m.ownedGeometry ? "yes" : "no");
 
