@@ -292,6 +292,9 @@ private:
     // Numpad 5: flip orthographic/perspective on every pane (kept uniform so a
     // side-by-side compare uses the same projection); new panes inherit it.
     void ToggleProjection();
+    // Set orthographic on every pane and keep the NAVIGATION checkbox in sync;
+    // the single path used by both the checkbox and the Numpad-5 toggle.
+    void ApplyOrthographic(bool on);
 
     // Deferred pane removal: a pane's own Close button cannot safely destroy
     // its owning NifComparePane synchronously from inside its own click
@@ -415,6 +418,13 @@ private:
     bool m_showTangents = false;
     bool m_msaaEnabled = true;           // 4x MSAA toggle, mirrored onto new panes
     bool m_orthographic = false;         // ortho/persp projection, mirrored onto new panes
+    // NAVIGATION group state, mirrored onto new panes (see WireNavigationControls).
+    float m_navMoveSensitivity = 1.0f;
+    float m_navZoomSensitivity = 1.0f;
+    float m_navRotateSensitivity = 1.0f;
+    float m_fovRadians = 0.9f;            // vertical FOV (~51.6 deg); NifViewport default
+    bool m_orbitAroundSelection = true;
+    bool m_zoomToCursor = true;
     bool m_enableTextures = true;        // render-channel toggles, mirrored onto new panes
     bool m_enableVertexColors = true;
     bool m_enableSpecular = true;

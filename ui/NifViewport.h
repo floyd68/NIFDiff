@@ -172,6 +172,19 @@ public:
     void SetOrthographic(bool on) { if (m_orthographic != on) { m_orthographic = on; Invalidate(); } }
     bool IsOrthographic() const { return m_orthographic; }
 
+    // Navigation tuning (NAVIGATION control group). Sensitivity multipliers
+    // scale the drag/wheel gestures (1.0 = the built-in feel); the FOV drives
+    // both the perspective projection and the pick ray (kept in lock-step so a
+    // click still hits the pixel under the cursor); and two behavior toggles
+    // expose the orbit-around-selection and zoom-to-cursor defaults.
+    void SetOrbitSensitivity(float m) { m_orbitSensitivity = m; }
+    void SetPanSensitivity(float m)   { m_panSensitivity = m; }
+    void SetZoomSensitivity(float m)  { m_zoomSensitivity = m; }
+    void SetFieldOfViewRadians(float radians) { m_fovY = radians; Invalidate(); }
+    float FieldOfViewRadians() const { return m_fovY; }
+    void SetOrbitAroundSelection(bool on) { m_orbitAroundSelection = on; }
+    void SetZoomToCursor(bool on) { m_zoomToCursor = on; }
+
     // Frame the whole scene's bounds keeping the current orbit orientation
     // (animated), regardless of any selection - "View All".
     void FrameScene();
@@ -227,6 +240,30 @@ private:
     // World-space bbox center of the selected sub-mesh, or the current orbit
     // target when nothing is selected - the pivot an orbit revolves around.
     Vector3 SelectionCenterOrTarget() const;
+    // World-space bounding radius of what the user is focused on (the selected
+    // sub-mesh, else the whole scene) - the scale reference for the close-up
+    // navigation floor.
+    float NavFocusRadius() const;
+    // Eye-to-target distance used to scale panning, floored at a fraction of
+    // NavFocusRadius so pan never collapses to nothing at extreme close-ups
+    // (where the raw distance approaches zero and even max sensitivity freezes).
+    float NavReferenceDistance() const;
+    // Raw new camera distance for a zoom step: the exponential (scale-
+    // independent) target `distance * relFactor`, but with its step magnitude
+    // floored at `minStep` so zooming never collapses at extreme close-ups (the
+    // zoom analogue of NavReferenceDistance's pan floor). May be below the min
+    // distance - even negative - which ApplyZoomDistance turns into a
+    // fly-through; it does not clamp here.
+    float FlooredZoomDistance(float relFactor, float minStep) const;
+    // Smallest eye-to-target distance a zoom keeps before it flies *through* the
+    // pivot instead of stopping (scaled to the focus radius, small so close
+    // inspection still works).
+    float ZoomMinDistance() const;
+    // Apply a raw target distance from a zoom step. At/above ZoomMinDistance it
+    // just sets the distance; below it, the distance holds at the minimum and
+    // the orbit target is pushed forward along the view, dollying the whole rig
+    // through the pivot (past the origin / axis gizmo) instead of walling there.
+    void ApplyZoomDistance(float rawNewDistance);
     // Rigidly rotate the whole camera rig (eye + look-at) around m_orbitPivot
     // by the turntable delta, so orbiting a selected sub-mesh keeps it fixed
     // on screen instead of re-aiming the view (reduces to a plain orbit when
@@ -258,6 +295,15 @@ private:
     bool m_frontalLight = false;
     bool m_showHiddenNodes = false;
     bool m_orthographic = false; // Numpad 5 toggles ortho/perspective projection
+    // Navigation tuning (see the Set* accessors above). m_fovY is the vertical
+    // field of view in radians, shared by the render projection and the pick
+    // ray; 0.9 rad (~51.6 deg) is the original fixed value.
+    float m_orbitSensitivity = 1.0f;
+    float m_panSensitivity = 1.0f;
+    float m_zoomSensitivity = 1.0f;
+    float m_fovY = 0.9f;
+    bool m_orbitAroundSelection = true;
+    bool m_zoomToCursor = true;
     bool m_msaaEnabled = true;
     bool m_loading = false; // draw the "Loading..." overlay
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_loadingFormat;

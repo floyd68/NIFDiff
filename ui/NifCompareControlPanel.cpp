@@ -91,6 +91,60 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_thumbnailStripChk->SetChecked(true);
     view->AddChild(m_thumbnailStripChk);
 
+    // --- NAVIGATION: camera-feel tuning + projection/behavior toggles ---
+    // Two columns like LIGHTING: sensitivity sliders on the left, FOV + the
+    // projection/behavior checkboxes on the right. Global (applied to every
+    // pane) to match the rest of this strip.
+    auto navigation = makeGroup(L"Navigation", L"NAVIGATION");
+    auto navRow = makeRow(name + L"_NavRow", 14.0f);
+
+    auto navCol1 = makeColumn(name + L"_NavCol1", 4.0f);
+    // 0.2-5.0 (default 1.0): the wide top end gives headroom for fast traversal
+    // and for close-up work (paired with NifViewport's close-up pan floor).
+    m_moveSensSlider = std::make_shared<FD2D::Slider>(L"MoveSensitivity");
+    m_moveSensSlider->SetLabel(L"Move");
+    m_moveSensSlider->SetRange(0.2f, 5.0f);
+    m_moveSensSlider->SetValue(1.0f);
+    navCol1->AddChild(m_moveSensSlider);
+
+    m_zoomSensSlider = std::make_shared<FD2D::Slider>(L"ZoomSensitivity");
+    m_zoomSensSlider->SetLabel(L"Zoom");
+    m_zoomSensSlider->SetRange(0.2f, 5.0f);
+    m_zoomSensSlider->SetValue(1.0f);
+    navCol1->AddChild(m_zoomSensSlider);
+
+    m_rotateSensSlider = std::make_shared<FD2D::Slider>(L"RotateSensitivity");
+    m_rotateSensSlider->SetLabel(L"Rotate");
+    m_rotateSensSlider->SetRange(0.2f, 5.0f);
+    m_rotateSensSlider->SetValue(1.0f);
+    navCol1->AddChild(m_rotateSensSlider);
+    navRow->AddChild(navCol1);
+
+    auto navCol2 = makeColumn(name + L"_NavCol2", 4.0f);
+    // Default matches NifViewport's 0.9 rad vertical FOV (~51.6 deg).
+    m_fovSlider = std::make_shared<FD2D::Slider>(L"FieldOfView");
+    m_fovSlider->SetLabel(L"FOV");
+    m_fovSlider->SetRange(20.0f, 90.0f);
+    m_fovSlider->SetValue(51.6f);
+    navCol2->AddChild(m_fovSlider);
+
+    m_orthoChk = std::make_shared<FD2D::CheckBox>(L"Orthographic");
+    m_orthoChk->SetLabel(L"Orthographic");
+    navCol2->AddChild(m_orthoChk);
+
+    m_orbitSelChk = std::make_shared<FD2D::CheckBox>(L"OrbitSelection");
+    m_orbitSelChk->SetLabel(L"Orbit Sel");
+    m_orbitSelChk->SetChecked(true);
+    navCol2->AddChild(m_orbitSelChk);
+
+    m_zoomCursorChk = std::make_shared<FD2D::CheckBox>(L"ZoomToCursor");
+    m_zoomCursorChk->SetLabel(L"Zoom Cursor");
+    m_zoomCursorChk->SetChecked(true);
+    navCol2->AddChild(m_zoomCursorChk);
+    navRow->AddChild(navCol2);
+
+    navigation->AddChild(navRow);
+
     // --- DISPLAY: scene decorations ------------------------------------
     auto display = makeGroup(L"Display", L"DISPLAY");
 
@@ -352,6 +406,16 @@ void NifCompareControlPanel::SetOrientation(int index)
     // (and the combo label stays in sync with the actual view).
     m_orientationCombo->SetSelectedIndex(index, /*notify=*/true);
 }
+
+void NifCompareControlPanel::SetOnMoveSensitivityChanged(std::function<void(float)> handler) { m_moveSensSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnZoomSensitivityChanged(std::function<void(float)> handler) { m_zoomSensSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnRotateSensitivityChanged(std::function<void(float)> handler) { m_rotateSensSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnFovChanged(std::function<void(float)> handler) { m_fovSlider->OnValueChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnOrthographicChanged(std::function<void(bool)> handler) { m_orthoChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOrthographicChecked(bool checked, bool notify) { m_orthoChk->SetChecked(checked, notify); }
+void NifCompareControlPanel::ToggleOrthographic() { m_orthoChk->SetChecked(!m_orthoChk->Checked(), /*notify=*/true); }
+void NifCompareControlPanel::SetOnOrbitSelectionChanged(std::function<void(bool)> handler) { m_orbitSelChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnZoomToCursorChanged(std::function<void(bool)> handler) { m_zoomCursorChk->OnCheckedChanged(std::move(handler)); }
 
 void NifCompareControlPanel::SetOnBrightnessChanged(std::function<void(float)> handler) { m_brightnessSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnAmbientChanged(std::function<void(float)> handler) { m_ambientSlider->OnValueChanged(std::move(handler)); }

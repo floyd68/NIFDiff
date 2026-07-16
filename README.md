@@ -71,6 +71,22 @@ own copies.
   an axis nub** to animation-snap to that view (e.g. the `Y` nub → top-down),
   matching the orientation presets; the snap mirrors across Sync-View panes and
   never selects the mesh behind the widget.
+- **NAVIGATION control group**: tune the camera feel from the bottom strip -
+  **Move / Zoom / Rotate** sensitivity multipliers, an **FOV** slider (the
+  perspective field of view, kept in lock-step with the pick ray so clicks stay
+  accurate), an **Orthographic** checkbox (mirrors the `Numpad 5` toggle both
+  ways), and **Orbit Sel** / **Zoom Cursor** switches for the orbit-around-
+  selection and zoom-toward-cursor behaviors. Every setting applies to all
+  panes and is inherited by new ones. Panning **and zooming** also have a
+  **close-up floor**: their step scales with the eye-to-target distance, so at
+  extreme close-ups that step would collapse to nothing (freezing the pan and
+  making it take dozens of scroll notches to back out) - both are floored at a
+  fraction of the focus radius (the selected sub-mesh's, or the whole scene's)
+  so close-up navigation stays usable. Select the sub-mesh you're inspecting to
+  scale the floor to it. Zooming can also **dolly through the pivot**: once the
+  eye reaches the target it keeps flying forward (past the origin / axis gizmo,
+  e.g. into a model's interior) instead of stopping, bounded to a few scene
+  radii so it never runs away - Reset View reframes if you overshoot.
 - Orientation presets, Center/Reset view, wireframe/grid/axes toggles
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a

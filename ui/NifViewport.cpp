@@ -13,11 +13,25 @@ namespace nsk
 
 namespace
 {
-    // Vertical field of view of the perspective projection - shared between
-    // the render pass (OnRenderD3D's projectionMatrix call) and the pick
-    // ray construction (PickMeshAt), which must agree exactly for the ray
-    // to pass through the clicked pixel.
-    constexpr float kFovY = 0.9f;
+    // Close-up navigation floor: once the eye is within this fraction of the
+    // focus radius, panning stops using the (now near-zero) raw distance and
+    // holds at focusRadius * this, so a drag keeps moving a usable amount. 0.2
+    // means "a drag near the floor pans ~20% of the focus radius" - enough to
+    // reposition, small enough that a few drags cross the focused object.
+    constexpr float kNavCloseFloorFrac = 0.2f;
+
+    // Minimum zoom step at extreme close-ups, as a fraction of the focus radius
+    // (times the notch/pixel count). The exponential step wins at normal range;
+    // this only takes over once the eye is close enough that a distance-
+    // proportional step would collapse. Per wheel notch vs per dolly pixel.
+    constexpr float kWheelCloseFloorFrac = 0.05f;
+    constexpr float kDollyCloseFloorFrac = 0.004f;
+
+    // Fly-through bound: the dolly-through-pivot advance can push the orbit
+    // target forward at most this many scene radii from the scene center, so
+    // runaway input can't send coordinates to infinity (numerically unsafe) or
+    // lose the model beyond any recovery.
+    constexpr float kFlyThroughLimit = 3.0f;
 
     // Rotate v about the world +Y axis by `a`, matching Camera::forwardVector's
     // yaw convention (yaw 0 = +Z, increasing yaw turns toward +X).
@@ -340,13 +354,13 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
         // View height matched to the perspective frustum at the target plane
         // (same on-screen size when toggling); a wide symmetric depth range
         // around the target keeps the scene + grid unclipped.
-        const float orthoH = 2.0f * dist * std::tan(kFovY * 0.5f);
+        const float orthoH = 2.0f * dist * std::tan(m_fovY * 0.5f);
         const float margin = (std::max)(sceneR * 4.0f, 600.0f);
         m_settings.proj = Camera::orthographicMatrix(orthoH, aspect, dist - margin, dist + margin);
     }
     else
     {
-        m_settings.proj = Camera::projectionMatrix(kFovY, aspect, nearZ, farZ);
+        m_settings.proj = Camera::projectionMatrix(m_fovY, aspect, nearZ, farZ);
     }
     m_settings.eyePos = m_camera.eyePosition();
     m_settings.selectedMesh = m_selectedMesh;
@@ -480,7 +494,9 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         {
             m_dragging = true; m_dragMoved = false; m_dragAlt = event.modifiers.alt;
             m_dragDownPt = event.point; m_lastMousePt = event.point;
-            m_orbitPivot = SelectionCenterOrTarget(); // pivot fixed for this gesture
+            // Pivot fixed for this gesture: the selection center when orbit-on-
+            // selection is enabled, else the plain orbit target (scene center).
+            m_orbitPivot = m_orbitAroundSelection ? SelectionCenterOrTarget() : m_camera.target();
             RequestFocus(); return true;
         }
         // MMB (and Alt+MMB) pan.
@@ -570,7 +586,8 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
             }
             if (m_dragMoved)
             {
-                OrbitAroundPivot(dx * 0.01f, dy * 0.01f); // pivots on the selection
+                const float k = 0.01f * m_orbitSensitivity;
+                OrbitAroundPivot(dx * k, dy * k); // pivots on the selection
                 if (m_onCameraChanged) m_onCameraChanged(m_camera);
                 Invalidate();
             }
@@ -584,7 +601,7 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
             {
                 m_panMoved = true;
             }
-            float scale = m_camera.distance() * 0.0015f;
+            float scale = NavReferenceDistance() * 0.0015f * m_panSensitivity;
             m_camera.pan(-dx * scale, dy * scale);
             m_lastMousePt = event.point;
             if (m_onCameraChanged) m_onCameraChanged(m_camera);
@@ -597,7 +614,9 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
             // distance about the target (right = closer). Exponential per
             // pixel keeps the feel scale-independent; Shift is finer.
             const float perPixel = event.modifiers.shift ? 0.9985f : 0.994f;
-            m_camera.setDistance(m_camera.distance() * std::pow(perPixel, dx));
+            const float dd = dx * m_zoomSensitivity;
+            ApplyZoomDistance(FlooredZoomDistance(std::pow(perPixel, dd),
+                                                  NavFocusRadius() * kDollyCloseFloorFrac * std::abs(dd)));
             m_lastMousePt = event.point;
             if (m_onCameraChanged) m_onCameraChanged(m_camera);
             Invalidate();
@@ -618,12 +637,19 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // for precise framing.
         m_camAnimating = false; // a manual zoom cancels any camera tween
         const float perNotch = event.modifiers.shift ? 0.95f : 0.8f;
-        const float delta = static_cast<float>(event.wheelDelta) / 120.0f;
+        const float delta = static_cast<float>(event.wheelDelta) / 120.0f * m_zoomSensitivity;
         const float d = m_camera.distance();
-        const float dNew = (std::max)(d * std::pow(perNotch, delta), 0.001f);
+        // Exponential step, but floored at close-ups so zoom (in or out) never
+        // collapses to nothing near the model (same idea as the pan floor).
+        const float dNew = FlooredZoomDistance(std::pow(perNotch, delta),
+                                               NavFocusRadius() * kWheelCloseFloorFrac * std::abs(delta));
 
         Vector3 origin, dir;
-        if (event.hasPoint && RayThroughPoint(event.point, origin, dir))
+        // Recenter toward the cursor only while still approaching the pivot; once
+        // the step would carry us through it (dNew below the min), the fly-through
+        // in ApplyZoomDistance drives the target instead.
+        if (m_zoomToCursor && dNew >= ZoomMinDistance() && event.hasPoint &&
+            RayThroughPoint(event.point, origin, dir))
         {
             Vector3 fwd = m_camera.forwardVector();
             fwd.normalize();
@@ -635,7 +661,7 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
                 m_camera.setTarget(pivot + (t - pivot) * (dNew / d));
             }
         }
-        m_camera.setDistance(dNew);
+        ApplyZoomDistance(dNew);
         if (m_onCameraChanged) m_onCameraChanged(m_camera);
         Invalidate();
         return true;
@@ -839,7 +865,7 @@ bool NifViewport::RayThroughPoint(POINT pt, Vector3& outOrigin, Vector3& outDir)
     // (ndcX * tan(fov/2) * aspect, ndcY * tan(fov/2), 1).
     const float ndcX = 2.0f * (static_cast<float>(pt.x) - rect.left) / w - 1.0f;
     const float ndcY = 1.0f - 2.0f * (static_cast<float>(pt.y) - rect.top) / h;
-    const float tanHalf = std::tan(kFovY * 0.5f);
+    const float tanHalf = std::tan(m_fovY * 0.5f);
     const float aspect = w / h;
 
     Vector3 forward = m_camera.forwardVector();
@@ -928,6 +954,71 @@ Vector3 NifViewport::SelectionCenterOrTarget() const
             return (minB + maxB) * 0.5f;
     }
     return m_camera.target();
+}
+
+float NifViewport::NavFocusRadius() const
+{
+    if (const RenderMesh* sel = SelectedMesh(); sel && sel->geometry)
+    {
+        Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
+        bool any = false;
+        for (const Vector3& p : sel->geometry->positions)
+        {
+            Vector3 wp = sel->worldTransform * p;
+            minB.boundMin(wp);
+            maxB.boundMax(wp);
+            any = true;
+        }
+        if (any)
+            return (std::max)((maxB - minB).length() * 0.5f, 1e-3f);
+    }
+    return (std::max)(m_sceneRadius, 1.0f);
+}
+
+float NifViewport::NavReferenceDistance() const
+{
+    return (std::max)(m_camera.distance(), NavFocusRadius() * kNavCloseFloorFrac);
+}
+
+float NifViewport::FlooredZoomDistance(float relFactor, float minStep) const
+{
+    const float d = m_camera.distance();
+    float step = d - d * relFactor; // signed: >0 zooms in (closer), <0 out (farther)
+    if (std::abs(step) < minStep)
+        step = (step < 0.0f) ? -minStep : minStep;
+    return d - step; // raw (may be < ZoomMinDistance / negative); ApplyZoomDistance handles it
+}
+
+float NifViewport::ZoomMinDistance() const
+{
+    return (std::max)(0.02f, NavFocusRadius() * 0.001f);
+}
+
+void NifViewport::ApplyZoomDistance(float rawNewDistance)
+{
+    const float minD = ZoomMinDistance();
+    if (rawNewDistance < minD)
+    {
+        // Would cross the pivot: hold the distance at the floor and advance the
+        // target forward instead, so the rig dollies through the pivot rather
+        // than walling at the origin (lets zoom continue past the axis gizmo).
+        Vector3 fwd = m_camera.forwardVector();
+        fwd.normalize();
+        Vector3 newTarget = m_camera.target() + fwd * (minD - rawNewDistance);
+        // Bound the advance so runaway input can't push the pivot to infinity
+        // (unsafe) or lose the model: keep it within a few scene radii of center.
+        const float limit = (std::max)(m_sceneRadius, 1.0f) * kFlyThroughLimit;
+        Vector3 off = newTarget - m_sceneCenter;
+        const float len = off.length();
+        if (len > limit)
+            newTarget = m_sceneCenter + off * (limit / len);
+        m_camera.setTarget(newTarget);
+        m_camera.setDistance(minD);
+    }
+    else
+    {
+        m_camera.setDistance(rawNewDistance);
+    }
 }
 
 void NifViewport::OrbitAroundPivot(float deltaYawRad, float deltaPitchRad)

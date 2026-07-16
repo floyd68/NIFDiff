@@ -45,6 +45,40 @@ NifCompareView::NifCompareView(const std::wstring& name)
     m_controls->SetOnSyncFilesChanged([this](bool on) { m_syncThumbnails = on; });
     m_controls->SetOnOrientationChanged([this](int idx) { ApplyOrientationPreset(idx); });
 
+    // NAVIGATION group: global camera-feel tuning, broadcast to every pane and
+    // remembered so new panes inherit it (see CreatePane).
+    m_controls->SetOnMoveSensitivityChanged([this](float v)
+    {
+        m_navMoveSensitivity = v;
+        for (auto& p : m_panes) p->Viewport().SetPanSensitivity(v);
+    });
+    m_controls->SetOnZoomSensitivityChanged([this](float v)
+    {
+        m_navZoomSensitivity = v;
+        for (auto& p : m_panes) p->Viewport().SetZoomSensitivity(v);
+    });
+    m_controls->SetOnRotateSensitivityChanged([this](float v)
+    {
+        m_navRotateSensitivity = v;
+        for (auto& p : m_panes) p->Viewport().SetOrbitSensitivity(v);
+    });
+    m_controls->SetOnFovChanged([this](float deg)
+    {
+        m_fovRadians = deg * (NSK_PI / 180.0f);
+        for (auto& p : m_panes) p->Viewport().SetFieldOfViewRadians(m_fovRadians);
+    });
+    m_controls->SetOnOrthographicChanged([this](bool on) { ApplyOrthographic(on); });
+    m_controls->SetOnOrbitSelectionChanged([this](bool on)
+    {
+        m_orbitAroundSelection = on;
+        for (auto& p : m_panes) p->Viewport().SetOrbitAroundSelection(on);
+    });
+    m_controls->SetOnZoomToCursorChanged([this](bool on)
+    {
+        m_zoomToCursor = on;
+        for (auto& p : m_panes) p->Viewport().SetZoomToCursor(on);
+    });
+
     m_controls->SetOnFrontalLightChanged([this](bool on)
     {
         for (auto& p : m_panes) p->Viewport().SetFrontalLight(on);
@@ -209,6 +243,12 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetShowTangents(m_showTangents);
     pane->Viewport().SetMsaaEnabled(m_msaaEnabled);
     pane->Viewport().SetOrthographic(m_orthographic);
+    pane->Viewport().SetPanSensitivity(m_navMoveSensitivity);
+    pane->Viewport().SetZoomSensitivity(m_navZoomSensitivity);
+    pane->Viewport().SetOrbitSensitivity(m_navRotateSensitivity);
+    pane->Viewport().SetFieldOfViewRadians(m_fovRadians);
+    pane->Viewport().SetOrbitAroundSelection(m_orbitAroundSelection);
+    pane->Viewport().SetZoomToCursor(m_zoomToCursor);
     pane->Viewport().SetEnableTextures(m_enableTextures);
     pane->Viewport().SetEnableVertexColors(m_enableVertexColors);
     pane->Viewport().SetEnableSpecular(m_enableSpecular);
@@ -2184,9 +2224,17 @@ void NifCompareView::ApplyOrientationPreset(int index)
 
 void NifCompareView::ToggleProjection()
 {
-    m_orthographic = !m_orthographic;
+    ApplyOrthographic(!m_orthographic);
+}
+
+void NifCompareView::ApplyOrthographic(bool on)
+{
+    m_orthographic = on;
     for (auto& p : m_panes)
-        p->Viewport().SetOrthographic(m_orthographic);
+        p->Viewport().SetOrthographic(on);
+    // Reflect the state in the NAVIGATION checkbox (notify=false: this IS the
+    // handler's side, and Numpad 5 must not re-enter the checkbox callback).
+    m_controls->SetOrthographicChecked(on, /*notify=*/false);
 }
 
 void NifCompareView::QueueClosePane(const std::wstring& paneName)

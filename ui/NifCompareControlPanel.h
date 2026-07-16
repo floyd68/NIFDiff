@@ -71,6 +71,22 @@ public:
     void CycleOrientation(int delta);
     void SetOrientation(int index); // absolute preset (keyboard/numpad), syncs the combo label
 
+    // NAVIGATION group: camera-navigation tuning, applied to every pane and
+    // inherited by new panes (like the other global controls). Sensitivities
+    // scale the drag/wheel feel; FOV (degrees) drives the perspective view;
+    // the Orthographic checkbox mirrors the Numpad-5 toggle; and two behavior
+    // switches expose orbit-around-selection and zoom-to-cursor.
+    void SetOnMoveSensitivityChanged(std::function<void(float)> handler);
+    void SetOnZoomSensitivityChanged(std::function<void(float)> handler);
+    void SetOnRotateSensitivityChanged(std::function<void(float)> handler);
+    void SetOnFovChanged(std::function<void(float)> handler); // degrees
+    void SetOnOrthographicChanged(std::function<void(bool)> handler);
+    // Keep the checkbox in sync when ortho is toggled elsewhere (Numpad 5).
+    void SetOrthographicChecked(bool checked, bool notify = false);
+    void ToggleOrthographic();
+    void SetOnOrbitSelectionChanged(std::function<void(bool)> handler);
+    void SetOnZoomToCursorChanged(std::function<void(bool)> handler);
+
     void SetOnBrightnessChanged(std::function<void(float)> handler);
     void SetOnAmbientChanged(std::function<void(float)> handler);
     void SetOnDeclinationChanged(std::function<void(float)> handler);
@@ -126,6 +142,13 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_syncFilesChk;
     std::shared_ptr<FD2D::CheckBox> m_thumbnailStripChk;
     std::shared_ptr<FD2D::ComboBox> m_orientationCombo;
+    std::shared_ptr<FD2D::Slider> m_moveSensSlider;
+    std::shared_ptr<FD2D::Slider> m_zoomSensSlider;
+    std::shared_ptr<FD2D::Slider> m_rotateSensSlider;
+    std::shared_ptr<FD2D::Slider> m_fovSlider;
+    std::shared_ptr<FD2D::CheckBox> m_orthoChk;
+    std::shared_ptr<FD2D::CheckBox> m_orbitSelChk;
+    std::shared_ptr<FD2D::CheckBox> m_zoomCursorChk;
     std::shared_ptr<FD2D::CheckBox> m_frontalLightChk;
     std::shared_ptr<FD2D::CheckBox> m_showGridChk;
     std::shared_ptr<FD2D::CheckBox> m_showAxesChk;
