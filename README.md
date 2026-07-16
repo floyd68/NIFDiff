@@ -134,6 +134,7 @@ documents every control in detail.
 | `Ctrl+W` (`Ctrl+F4`) / `Del` | Close the active pane / clear its document |
 | `←`/`→` (`,`/`.`), `Home`/`End` | Thumbnail strip: previous/next tile, first/last tile |
 | `Enter` / `Backspace` (`Ctrl+Up`) | Enter the selected folder / jump to the parent folder |
+| Type a name (strip focused) | Type-to-select: jump to the matching tile; repeat the key to cycle |
 | `Ctrl+E` / `F12` | Show active pane's file in Explorer / save its screenshot |
 
 > Numpad view keys need NumLock on. Thumbnail-strip navigation acts on the
@@ -248,7 +249,11 @@ documents every control in detail.
   (or `,`/`.`) step the selection through every tile and `Home`/`End` jump to
   the first/last - landing on a sibling .nif loads it, while a subfolder or the
   ".." tile is only **selected** (highlighted) until `Enter` navigates into it
-  (`Backspace` / `Ctrl+Up` still jump straight to the parent);
+  (`Backspace` / `Ctrl+Up` still jump straight to the parent). While the strip
+  holds keyboard focus (after a click or any of those keys), **type-to-select**
+  is active: typing a name prefix jumps the selection to the next matching tile
+  (files and folders), and repeating the key cycles through the matches - the
+  letter shortcuts below resume once you click back into the 3D view.
   `I` toggles the material diff panel and `T` the texture inspector.
 - **Per-pane context menu**: open/close the pane, reopen a **recent file**
   into it (an MRU submenu of the last dozen opened .nifs, most-recent

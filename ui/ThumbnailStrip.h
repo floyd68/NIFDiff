@@ -121,6 +121,13 @@ public:
     std::wstring EdgeSelection(bool last);
     bool ActivateSelection();
 
+    // Type-to-select: a printable character moves the selection to the next tile
+    // whose name starts with the accumulated query (files AND folders/".."). The
+    // query resets after a short idle gap; pressing the same single key again
+    // cycles through matches. Returns the .nif path to LOAD when the matched tile
+    // is a file (empty for a folder/no match), same convention as StepSelection.
+    std::wstring TypeToSelect(wchar_t ch);
+
     // Fires when a thumbnail is clicked, with its full .nif path.
     void SetOnActivated(std::function<void(const std::wstring&)> handler) { m_onActivated = std::move(handler); }
 
@@ -237,6 +244,8 @@ private:
     std::wstring m_currentFile;  // active pane's .nif, highlighted when present
     std::vector<Entry> m_entries;
     int m_selected = -1;         // keyboard selection cursor into m_entries (any tile kind), -1 = none
+    std::wstring m_typeQuery;             // accumulated type-to-select prefix
+    unsigned long long m_typeLastMs = 0;  // last type-to-select keystroke (for the idle reset)
     bool m_enabled = true;          // master on/off (see SetEnabled)
     bool m_active = false;          // pane is named -> reserve strip space (see SetActive)
     float m_fixedExtent = kSizeMedium; // strip thickness (see SetFixedExtent)

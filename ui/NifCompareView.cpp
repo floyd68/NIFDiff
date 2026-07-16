@@ -319,13 +319,19 @@ void NifCompareView::ApplyThumbnailPick(NifComparePane* active, const std::wstri
 void NifCompareView::StepActiveThumbnail(int delta)
 {
     if (NifComparePane* active = ActivePane())
+    {
+        active->FocusThumbnailStrip(); // keyboard browsing keeps the strip focused (enables type-to-select)
         ApplyThumbnailPick(active, active->StepThumbnailFile(delta));
+    }
 }
 
 void NifCompareView::LoadEdgeThumbnail(bool last)
 {
     if (NifComparePane* active = ActivePane())
+    {
+        active->FocusThumbnailStrip();
         ApplyThumbnailPick(active, active->EdgeThumbnailFile(last));
+    }
 }
 
 void NifCompareView::SyncThumbnailSelection(NifComparePane* source, const std::wstring& path)
@@ -763,6 +769,33 @@ namespace
         for (wchar_t& c : ext)
             c = static_cast<wchar_t>(std::towlower(c));
         return ext == L".nif";
+    }
+
+    // Translate a KeyDown into the printable character it would type on the
+    // current keyboard layout (for thumbnail type-to-select). Returns false for
+    // navigation/control keys (arrows, Enter, F-keys, ...) which ToUnicode maps
+    // to nothing or a control char. Clears any pending dead-key state so it
+    // never leaves a diacritic half-composed.
+    bool TryGetPrintableChar(const FD2D::InputEvent& event, wchar_t& out)
+    {
+        BYTE keyState[256] {};
+        if (!GetKeyboardState(keyState))
+            return false;
+        wchar_t buf[8] {};
+        const int n = ToUnicode(event.keyCode, event.scanCode, keyState, buf, 8, 0);
+        if (n < 0) // dead key: run once more to flush its state, then decline
+        {
+            wchar_t flush[8] {};
+            (void)ToUnicode(event.keyCode, event.scanCode, keyState, flush, 8, 0);
+            return false;
+        }
+        if (n == 0)
+            return false;
+        const wchar_t ch = buf[0];
+        if (!std::iswprint(ch) || std::iswspace(ch))
+            return false; // letters/digits/punctuation only
+        out = ch;
+        return true;
     }
 }
 
@@ -1850,6 +1883,25 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     // Backplate fills InputModifiers for mouse messages only; query the
     // live key state for the Ctrl chord here.
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+
+    // Type-to-select: while the active pane's thumbnail strip holds keyboard
+    // focus (clicked into, or browsed with the arrow keys), a plain printable
+    // key jumps the strip's selection to the next name-matching tile instead of
+    // firing a single-letter display shortcut (G/X/W/...). Focus falls back to
+    // the 3D view on the next viewport click, restoring the shortcuts.
+    if (!ctrl && !alt)
+    {
+        if (NifComparePane* active = ActivePane(); active && active->ThumbnailStripHasFocus())
+        {
+            wchar_t ch = 0;
+            if (TryGetPrintableChar(event, ch))
+            {
+                ApplyThumbnailPick(active, active->TypeToSelectThumbnail(ch));
+                return true; // consume: browsing the strip suspends letter shortcuts
+            }
+        }
+    }
 
     switch (event.keyCode)
     {
@@ -1987,14 +2039,20 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
                     // files immediately; folders are only selected until Enter)
     {
         if (NifComparePane* active = ActivePane())
+        {
+            active->FocusThumbnailStrip();
             if (active->ActivateThumbnailSelection())
                 return true;
+        }
         return false;
     }
 
     case VK_BACK: // Backspace: browse the active pane's strip to the parent
         if (NifComparePane* active = ActivePane())
+        {
+            active->FocusThumbnailStrip();
             active->NavigateThumbnailUp();
+        }
         return true;
 
     case VK_UP: // Ctrl+Up: same as Backspace (browse to the parent folder)

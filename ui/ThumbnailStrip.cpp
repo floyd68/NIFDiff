@@ -181,6 +181,7 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
     m_scroll = 0.0f;
     m_hoverCard = -1;
     m_selected = -1; // the listing changed; drop the keyboard selection cursor
+    m_typeQuery.clear(); // and any in-progress type-to-select query
     m_folder = folder;
     m_currentFile = selectPath;
     m_thumbCache.Clear();
@@ -368,6 +369,52 @@ bool ThumbnailStrip::ActivateSelection()
     std::wstring target = e.path;
     NavigateTo(std::move(target), m_currentFile);
     return true;
+}
+
+std::wstring ThumbnailStrip::TypeToSelect(wchar_t ch)
+{
+    if (m_entries.empty())
+        return std::wstring();
+
+    constexpr unsigned long long kTypeResetMs = 800;
+    const unsigned long long now = GetTickCount64();
+    if (now - m_typeLastMs > kTypeResetMs)
+        m_typeQuery.clear(); // idle gap -> start a fresh query
+    m_typeLastMs = now;
+
+    const wchar_t lower = static_cast<wchar_t>(std::towlower(ch));
+    // Same single key pressed again cycles to the next match; any other key
+    // extends the prefix and matches from the current selection.
+    const bool cycle = (m_typeQuery.size() == 1 && m_typeQuery[0] == lower);
+    if (!cycle)
+        m_typeQuery.push_back(lower);
+
+    auto matches = [](const std::wstring& name, const std::wstring& q)
+    {
+        if (q.size() > name.size())
+            return false;
+        for (std::size_t i = 0; i < q.size(); ++i)
+            if (static_cast<wchar_t>(std::towlower(name[i])) != q[i])
+                return false;
+        return true;
+    };
+
+    const int n = static_cast<int>(m_entries.size());
+    const int base = (m_selected >= 0) ? m_selected : -1;
+    const int from = cycle ? (base + 1) : (base < 0 ? 0 : base);
+    for (int i = 0; i < n; ++i)
+    {
+        const int idx = ((from + i) % n + n) % n;
+        if (matches(m_entries[static_cast<std::size_t>(idx)].name, m_typeQuery))
+        {
+            m_selected = idx;
+            CenterEntry(idx);
+            Invalidate();
+            const Entry& e = m_entries[static_cast<std::size_t>(idx)];
+            return (e.kind == EntryKind::File) ? e.path : std::wstring();
+        }
+    }
+    return std::wstring(); // no match: keep the query + current selection
 }
 
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)

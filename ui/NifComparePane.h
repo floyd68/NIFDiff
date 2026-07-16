@@ -108,6 +108,13 @@ public:
     bool ActivateThumbnailSelection() { return m_thumbStrip->ActivateSelection(); }
     void NavigateThumbnailUp() { m_thumbStrip->NavigateUp(); }
 
+    // Type-to-select support (owner routes printable keys here while the strip
+    // is focused). FocusThumbnailStrip keeps the strip the keyboard context
+    // through keyboard browsing so type-to-select stays active.
+    bool ThumbnailStripHasFocus() const { return m_thumbStrip->HasFocus(); }
+    std::wstring TypeToSelectThumbnail(wchar_t ch) { return m_thumbStrip->TypeToSelect(ch); }
+    void FocusThumbnailStrip() { m_thumbStrip->RequestFocus(); }
+
     // Fires after Load/Clear changed this pane's document - NifCompareView
     // uses it to refresh document-dependent control state (e.g. whether the
     // Parallax Height slider applies to anything currently loaded).
