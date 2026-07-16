@@ -356,6 +356,8 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiSkinData(in, i);
         else if (t == "NiTransformData")
             parseNiTransformData(in, i);
+        else if (t == "NiTransformInterpolator")
+            parseNiTransformInterpolator(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -937,6 +939,18 @@ void NifDocument::parseNiTransformData(NifIStream& in, int blockIndex)
     data.scales = readKeyGroup<float>(in, [](NifIStream& s) { return s.f32(); });
 
     m_transformData[blockIndex] = std::move(data);
+}
+
+void NifDocument::parseNiTransformInterpolator(NifIStream& in, int blockIndex)
+{
+    // nif.xml line 3252: NiQuatTransform (translation, quat rotation, scale -
+    // the "TRS Valid" bools are until=10.1.0.109, absent in 20.2.0.7) + Data ref.
+    NifTransformInterpolator interp;
+    interp.translation = in.vector3();  // Transform.Translation
+    interp.rotation = in.quatWXYZ();    // Transform.Rotation
+    interp.scale = in.f32();            // Transform.Scale
+    interp.dataRef = in.i32();          // Data (Ref -> NiTransformData)
+    m_transformInterpolators[blockIndex] = interp;
 }
 
 // --- NiSkinPartition (BS_SSE) ------------------------------------------------

@@ -47,6 +47,13 @@ namespace
         std::cout << std::format("  geometries    : {}\n", doc.geometries().size());
         std::cout << std::format("  materials     : {}\n", doc.materials().size());
         std::cout << std::format("  texture sets  : {}\n", doc.textureSets().size());
+        for (const auto& [blockIdx, ti] : doc.transformInterpolators())
+        {
+            std::cout << std::format(
+                "  anim interp   : block {} dataRef={} poseValid(t/r/s)={}/{}/{}\n",
+                blockIdx, ti.dataRef,
+                ti.translationValid(), ti.rotationValid(), ti.scaleValid());
+        }
         // Animation keyframe channels (NiTransformData): per-block key counts,
         // so a parsed animated static can be sanity-checked against NifSkope.
         for (const auto& [blockIdx, td] : doc.transformData())

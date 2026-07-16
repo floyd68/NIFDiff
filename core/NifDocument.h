@@ -243,6 +243,30 @@ struct NifTransformData
     }
 };
 
+// NiTransformInterpolator (nif.xml line 3252): the sampler between a
+// NiTransformController and its NiTransformData. Carries a default pose
+// (NiQuatTransform) used for any channel the data block has no keys for, and
+// the Data ref (kNoRef for a static/pose-only interpolator - common inside
+// NiControllerSequences, where some controlled blocks just hold a pose).
+//
+// Sentinel note: since 10.1.0.109 the NiQuatTransform's per-component "TRS
+// Valid" bools are gone from the file; an INVALID component is written as
+// -FLT_MAX instead (Bethesda exports do this routinely - verified on real
+// Skyrim SE animated statics). Sample the node's own bind-pose local for any
+// component whose *Valid() helper below is false.
+struct NifTransformInterpolator
+{
+    Vector3 translation;
+    Quat rotation;
+    float scale = 1.0f;
+    std::int32_t dataRef = kNoRef; // -> NiTransformData
+
+    static bool validComponent(float v) { return v > -3.0e38f; }
+    bool translationValid() const { return validComponent(translation[0]); }
+    bool rotationValid() const { return validComponent(rotation[0]); }
+    bool scaleValid() const { return validComponent(scale); }
+};
+
 // One renderable node in the scene graph: either a plain NiNode (no geometry,
 // just a transform + children) or a shape (NiTriShape/NiTriStrips/BSTriShape
 // family) that additionally owns geometry + a material.
@@ -330,6 +354,8 @@ public:
     const std::unordered_map<std::int32_t, NifSkinData>& skinData() const { return m_skinData; }
     // NiTransformData blocks, keyed by block index (see NifTransformData).
     const std::unordered_map<std::int32_t, NifTransformData>& transformData() const { return m_transformData; }
+    // NiTransformInterpolator blocks, keyed by block index.
+    const std::unordered_map<std::int32_t, NifTransformInterpolator>& transformInterpolators() const { return m_transformInterpolators; }
     const std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>>& skinPartitionWeights() const { return m_skinPartitionWeights; }
     // Resolves a raw block index (e.g. from skinInstanceBones()) to an index
     // into nodes(), or kNoRef if that block wasn't parsed into a scene node.
@@ -385,6 +411,7 @@ private:
     // skinned shape's vertices - see NifSkinData's own comment.
     void parseNiSkinData(class NifIStream& in, int blockIndex);
     void parseNiTransformData(class NifIStream& in, int blockIndex);
+    void parseNiTransformInterpolator(class NifIStream& in, int blockIndex);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
     // this parser): holds the actual rest-pose vertex/triangle/bone-weight
     // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer
@@ -454,6 +481,7 @@ private:
     std::unordered_map<std::int32_t, std::vector<std::int32_t>> m_skinInstanceBones;       // NiSkinInstance block index -> Bones[] (NiNode block indices, in NifVertexSkinWeights::boneIndex order)
     std::unordered_map<std::int32_t, NifSkinData> m_skinData;                              // NiSkinData block index -> bind-pose offsets
     std::unordered_map<std::int32_t, NifTransformData> m_transformData;                    // NiTransformData block index -> keyframe channels
+    std::unordered_map<std::int32_t, NifTransformInterpolator> m_transformInterpolators;   // NiTransformInterpolator block index -> pose + data ref
 
     std::unique_ptr<NifItem> m_blockTree;
     std::string m_lastError;
