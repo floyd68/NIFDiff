@@ -26,7 +26,119 @@ Third-party submodules (`FD2D`, `Floar`, `external/DirectXTex`,
 references into the local `D:\Works\Ficture2` checkout - this repo owns its
 own copies.
 
-## Features
+## Using NIFDiff
+
+NIFDiff opens one to eight NIF models side by side and keeps their cameras,
+lighting, and file selection in sync, so you can see exactly how two versions
+of a mesh differ - a modded parallax/PBR mesh vs. vanilla, two mods' takes on
+the same asset, or a before/after of your own edit. This section is a
+task-oriented walkthrough; the [Feature reference](#feature-reference) below
+documents every control in detail.
+
+### 1. Open some models
+
+- **Launch** `NIFDiff.exe`. It restores your last session (pane count, files,
+  splitter layout) if you have one, otherwise it opens with two empty panes.
+- **Point Game Data** at your Skyrim/Fallout `Data` folder once, via the
+  RESOURCES group (**Detect** to auto-find it, or **Browse**), so textures that
+  live inside BSA/BA2 archives resolve. Add **override folders** there for loose
+  texture mods that should win over Game Data.
+- **Load a file** into a pane: drag a `.nif` from Explorer onto it, use the
+  pane's Open button / right-click → Open, or `Ctrl+O`. Dropping onto the left
+  ~75% of a pane *replaces* it; the right ~25% *inserts* a new pane.
+- **Compare the same mesh across mods**: opening a `.nif` whose *name* matches
+  one already open lands in a new pane of the same window (single-instance
+  forwarding) - the core "compare two mods' version of one mesh" flow. Dropping
+  several same-named `.nif`s at once lines them up in equal-width panes.
+
+### 2. Read the screen
+
+- **Panes** fill the window in an equal-width grid (1-4 in a row, 5-8 in two
+  rows). Each pane shows its file path on top, the 3D view, a status line
+  (shader kinds + triangle counts), and its own **thumbnail strip** browsing
+  that file's folder along the bottom.
+- The **bottom control strip** is grouped left to right: **PANES** (add / reset
+  view), **VIEW** (orientation preset + the Sync toggles), **NAVIGATION**
+  (camera feel), **DISPLAY** (grid / axes / wireframe / normals / … overlays),
+  **LIGHTING**, **MATERIALS** and **CHANNELS** (shader toggles), and
+  **RESOURCES** (Game Data + override folders).
+- The **active pane** (the last one you clicked) carries an accent border;
+  pane-specific keys and the right-click context menu act on it.
+
+### 3. Navigate a model
+
+- **Orbit** = left-drag, **pan** = middle/right-drag, **zoom** = mouse wheel
+  (toward the cursor). The same gestures are also on **Alt chords** (Alt+left /
+  Alt+middle / Alt+right-drag) for Maya/Blender muscle memory.
+- **Jump to a view**: pick Front/Back/… from the VIEW dropdown, click an axis
+  nub on the top-left **XYZ gizmo**, or use the numpad (`1/3/7` = Front/Right/
+  Top, add `Ctrl` for the opposite face). Snaps animate smoothly.
+- **Frame** what matters: double-click a sub-mesh to select *and* frame it,
+  `Numpad .` frames the current selection, `Numpad 0` frames the whole scene,
+  and `F` (Reset View) returns to the default framing.
+- **Tune the feel** in the NAVIGATION group: Move / Zoom / Rotate sensitivity,
+  an FOV slider, an **Orthographic** toggle (ideal for lining up two
+  silhouettes), and **Orbit Sel** / **Zoom Cursor** switches. Close-up stays
+  usable - pan and zoom don't freeze as you approach - and zoom can dolly
+  *through* the pivot into a model's interior.
+- With **Sync Views** on (the default) every one of these moves mirrors to all
+  panes at once.
+
+### 4. Compare
+
+- Keep **Sync Views / Sync Lighting / Sync Files** on to move, light, and step
+  through files in lockstep; turn one off to hold the other panes still for an
+  isolated before/after.
+- **Corner badges** flag the odd one out - "SYNCED" (another pane holds the
+  same-named file) vs "UNIQUE" - and the panes sharing the active pane's file
+  name get a green glow, so a mod that's missing a mesh stands out at a glance.
+- **Select a sub-mesh** (left click) to compare it directly: the **Material
+  diff panel** (`I`) tables its shader / texture-slot / material values against
+  the same-named mesh in every other pane and highlights what differs (with
+  loose-vs-BSA source markers); the **Texture inspector** (`T`) shows each bound
+  texture's format / size / source and previews its channels.
+- **Isolate a difference** with the CHANNELS toggles (Diffuse / Vertex Colors /
+  Specular / Emissive / Lighting) - switch one input off at a time to find which
+  one makes two panes look different - and the MATERIALS toggles (Parallax /
+  Complex Mat / True PBR) to view a mesh with vs. without each extended path.
+
+### 5. Typical workflows
+
+- **"Does this mod's mesh actually change anything vs vanilla?"** Open both
+  (same name → same window), Sync Views on, orbit around; select a shared
+  sub-mesh and open the Material diff panel to see texture-slot / flag / value
+  differences, including when the two resolve the same path to different sources
+  (loose vs BSA).
+- **"Why does one look darker / shinier?"** Use the CHANNELS toggles to isolate
+  the channel, the Texture inspector to check the actual `_m` / `_rmaos` data,
+  and the MATERIALS toggles to confirm which shading path each mesh is taking.
+- **"Step through a whole set."** Sync Files on, then `←`/`→` (or clicking the
+  thumbnail strip) walks every pane through its folder's siblings together.
+
+### Keyboard reference
+
+| Keys | Action |
+|---|---|
+| Left / Middle-Right drag / Wheel | Orbit / Pan / Zoom-to-cursor |
+| `Alt`+Left / `Alt`+Middle / `Alt`+Right drag | Orbit / Pan / Dolly (DCC chords) |
+| `PgUp` / `PgDn` | Cycle orientation preset |
+| `Numpad 1/3/7` (`Ctrl+` = opposite face) | Front / Right / Top (Back / Left / Bottom) |
+| `Numpad 5` | Orthographic ↔ perspective |
+| `Numpad .` / `Numpad 0` | Frame selection / whole scene |
+| `F` / `R` | Reset all views / active pane's view |
+| `C` | Focus the active pane's selected sub-mesh |
+| `G` `X` `W` `H` `N` `Shift+N` `M` | Grid / Axes / Wireframe / Hidden / Normals / Tangents / MSAA |
+| `I` / `T` | Material diff panel / Texture inspector |
+| `1`-`8` / `Tab` / `Shift+Tab` | Select the active pane |
+| `Ctrl+O` / `Ctrl+Shift+O` | Open a file into the active pane / a new pane |
+| `Ctrl+W` (`Ctrl+F4`) / `Del` | Close the active pane / clear its document |
+| `←`/`→` (`,`/`.`), `Home`/`End`, `Backspace` (`Ctrl+Up`) | Thumbnail strip: prev/next, first/last, parent folder |
+| `Ctrl+E` / `F12` | Show active pane's file in Explorer / save its screenshot |
+
+> Numpad view keys need NumLock on. Thumbnail-strip navigation acts on the
+> active pane and, with Sync Files on, mirrors each pick into the others.
+
+## Feature reference
 
 ### Side-by-side comparison
 
