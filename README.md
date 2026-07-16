@@ -525,7 +525,7 @@ included (ENB, Community Shaders, PBRNifPatcher).
 
 ```
 app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
-                   AppSettings.h (INI persistence), AppIpc.h/.cpp (single-instance
+                   IniStore.h (INI persistence), AppIpc.h/.cpp (single-instance
                    forwarding), FileDialog.h/.cpp,
                    ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests
 core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera /

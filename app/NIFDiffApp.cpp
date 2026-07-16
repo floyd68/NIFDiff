@@ -1,7 +1,7 @@
-#include "NIFDiffApp.h"
+﻿#include "NIFDiffApp.h"
 
 #include "AppIpc.h"
-#include "AppSettings.h"
+#include "IniStore.h"
 #include "AppSetup.h"
 #include "FileDialog.h"
 #include "../ui/IpcOpenRequest.h"
@@ -296,12 +296,12 @@ namespace
             if (registered)
             {
                 if (AppSetup::UnregisterFileAssociations(hwnd))
-                    AppSettings::SetInt(iniPath, kSectionGeneral, L"AssociationsEnabled", 0);
+                    IniStore::SetInt(iniPath, kSectionGeneral, L"AssociationsEnabled", 0);
             }
             else
             {
                 if (AppSetup::RegisterFileAssociations(hwnd))
-                    AppSettings::SetInt(iniPath, kSectionGeneral, L"AssociationsEnabled", 1);
+                    IniStore::SetInt(iniPath, kSectionGeneral, L"AssociationsEnabled", 1);
             }
             break;
 
@@ -321,43 +321,13 @@ namespace
         return (std::filesystem::path(exePath).parent_path() / kIniFileName).wstring();
     }
 
-    std::vector<std::wstring> SplitPipeList(std::wstring_view s)
-    {
-        std::vector<std::wstring> out;
-        std::size_t start = 0;
-        while (start < s.size())
-        {
-            std::size_t bar = s.find(L'|', start);
-            if (bar == std::wstring_view::npos)
-                bar = s.size();
-            std::wstring_view part = s.substr(start, bar - start);
-            while (!part.empty() && iswspace(part.front())) part.remove_prefix(1);
-            while (!part.empty() && iswspace(part.back())) part.remove_suffix(1);
-            if (!part.empty())
-                out.emplace_back(part);
-            start = bar + 1;
-        }
-        return out;
-    }
-
-    std::wstring JoinPipeList(const std::vector<std::wstring>& parts)
-    {
-        std::wstring out;
-        for (std::size_t i = 0; i < parts.size(); ++i)
-        {
-            if (i > 0) out += L'|';
-            out += parts[i];
-        }
-        return out;
-    }
-
     // Recent-files (MRU) list, persisted pipe-joined under [Session].
     // Read fresh from the INI each time: the list changes at runtime (every
-    // open appends to it), so the startup AppSettings snapshot goes stale.
+    // open appends to it), so the startup IniStore snapshot goes stale.
     std::vector<std::wstring> LoadRecentFiles(const std::wstring& iniPath)
     {
-        const AppSettings s = AppSettings::Load(iniPath);
-        std::vector<std::wstring> out = SplitPipeList(s.GetString(kSectionSession, L"RecentFiles"));
+        const IniStore s = IniStore::Load(iniPath);
+        std::vector<std::wstring> out = IniStore::SplitPipeList(s.GetString(kSectionSession, L"RecentFiles"));
         if (out.size() > kMaxRecentFiles)
             out.resize(kMaxRecentFiles);
         return out;
@@ -376,12 +346,12 @@ namespace
         files.insert(files.begin(), path);
         if (files.size() > kMaxRecentFiles)
             files.resize(kMaxRecentFiles);
-        AppSettings::SetString(iniPath, kSectionSession, L"RecentFiles", JoinPipeList(files));
+        IniStore::SetString(iniPath, kSectionSession, L"RecentFiles", IniStore::JoinPipeList(files));
     }
 
     void ClearRecentFiles(const std::wstring& iniPath)
     {
-        AppSettings::SetString(iniPath, kSectionSession, L"RecentFiles", L"");
+        IniStore::SetString(iniPath, kSectionSession, L"RecentFiles", L"");
     }
 
     void ApplyResourcesToUi(NifCompareView& view, const ResourceResolver& resolver)
@@ -392,14 +362,14 @@ namespace
 
     void SaveResources(const std::wstring& iniPath, const ResourceResolver& resolver)
     {
-        AppSettings::SetString(iniPath, kSectionResources, L"GameData", resolver.GameData());
-        AppSettings::SetString(iniPath, kSectionResources, L"OverrideFolders",
-                               JoinPipeList(resolver.OverrideFolders()));
-        AppSettings::SetInt(iniPath, kSectionResources, L"AutoLoadArchives",
+        IniStore::SetString(iniPath, kSectionResources, L"GameData", resolver.GameData());
+        IniStore::SetString(iniPath, kSectionResources, L"OverrideFolders",
+                               IniStore::JoinPipeList(resolver.OverrideFolders()));
+        IniStore::SetInt(iniPath, kSectionResources, L"AutoLoadArchives",
                             resolver.AutoLoadArchives() ? 1 : 0);
     }
 
-    void ConfigureResolverFromSettings(ResourceResolver& resolver, const AppSettings& settings)
+    void ConfigureResolverFromSettings(ResourceResolver& resolver, const IniStore& settings)
     {
         resolver.SetAutoLoadArchives(settings.GetInt(kSectionResources, L"AutoLoadArchives", 1) != 0);
 
@@ -410,14 +380,14 @@ namespace
             if (!detected.empty())
                 gameData = detected.front();
         }
-        resolver.SetOverrideFolders(SplitPipeList(settings.GetString(kSectionResources, L"OverrideFolders")));
+        resolver.SetOverrideFolders(IniStore::SplitPipeList(settings.GetString(kSectionResources, L"OverrideFolders")));
         resolver.SetGameData(gameData); // triggers ReloadArchives
     }
 
     // The .nif paths the initial view should hold: the command-line/association
     // files if any, else the last session's still-existing files. Empty means a
     // single blank pane (first run, or every remembered file has vanished).
-    std::vector<std::wstring> GatherInitialPaths(const AppSettings& settings,
+    std::vector<std::wstring> GatherInitialPaths(const IniStore& settings,
                                                  const std::vector<std::wstring>& cmdFiles)
     {
         if (!cmdFiles.empty())
@@ -438,7 +408,7 @@ namespace
     // the right pane count and labels instead of the constructor's blank
     // two-pane default. The models load later (SubmitInitialLoads). Safe at
     // startup before any load (see SetPaneCount's synchronous-removal comment).
-    void CreateNamedPanes(NifCompareView& view, const AppSettings& settings,
+    void CreateNamedPanes(NifCompareView& view, const IniStore& settings,
                           const std::vector<std::wstring>& paths, bool restoreSplit)
     {
         if (paths.empty())
@@ -504,7 +474,7 @@ namespace
         rc.bottom = y + h;
     }
 
-    bool ReadWindowPlacement(const AppSettings& settings, RECT& outRect, int& outShowCmd)
+    bool ReadWindowPlacement(const IniStore& settings, RECT& outRect, int& outShowCmd)
     {
         if (!settings.IsLoaded())
             return false;
@@ -534,11 +504,11 @@ namespace
             return;
 
         const RECT& r = wp.rcNormalPosition;
-        AppSettings::SetInt(iniPath, kSectionWindow, L"X", r.left);
-        AppSettings::SetInt(iniPath, kSectionWindow, L"Y", r.top);
-        AppSettings::SetInt(iniPath, kSectionWindow, L"Width", r.right - r.left);
-        AppSettings::SetInt(iniPath, kSectionWindow, L"Height", r.bottom - r.top);
-        AppSettings::SetInt(iniPath, kSectionWindow, L"ShowCmd",
+        IniStore::SetInt(iniPath, kSectionWindow, L"X", r.left);
+        IniStore::SetInt(iniPath, kSectionWindow, L"Y", r.top);
+        IniStore::SetInt(iniPath, kSectionWindow, L"Width", r.right - r.left);
+        IniStore::SetInt(iniPath, kSectionWindow, L"Height", r.bottom - r.top);
+        IniStore::SetInt(iniPath, kSectionWindow, L"ShowCmd",
             wp.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
     }
 
@@ -550,7 +520,7 @@ namespace
             std::wstring path;
             if (i < view.PaneCount())
                 path = view.Pane(i).CurrentPath(); // pending path too, if still loading
-            AppSettings::SetString(iniPath, kSectionSession, key, path);
+            IniStore::SetString(iniPath, kSectionSession, key, path);
         }
 
         // Dragged splitter positions, comma-joined in the view's pre-order
@@ -562,7 +532,7 @@ namespace
                 ratios += L",";
             ratios += std::format(L"{:.4f}", r);
         }
-        AppSettings::SetString(iniPath, kSectionSession, L"SplitRatios", ratios);
+        IniStore::SetString(iniPath, kSectionSession, L"SplitRatios", ratios);
     }
 
     // Up to NifCompareView::kMaxPanes positional .nif paths from the command line.
@@ -711,10 +681,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         AppSetup::RunFirstRunAssociationPromptIfNeeded(iniPath);
     }
 
-    AppSettings settings;
+    IniStore settings;
     {
-        StartupTrace::Phase p("AppSettings::Load (INI)");
-        settings = AppSettings::Load(iniPath);
+        StartupTrace::Phase p("IniStore::Load (INI)");
+        settings = IniStore::Load(iniPath);
     }
 
     auto resolver = std::make_shared<ResourceResolver>();
@@ -817,13 +787,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         // global on/off toggle here.
         compareView->SetOnThumbnailStripEnabledChanged([iniPath](bool on)
         {
-            AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailStripEnabled",
+            IniStore::SetString(iniPath, kSectionSession, L"ThumbnailStripEnabled",
                                    on ? L"1" : L"0");
         });
         // Persist the final size after a drag-resize (or a size-menu pick).
         compareView->SetOnThumbnailStripSizeChanged([iniPath](float extent)
         {
-            AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailSize",
+            IniStore::SetString(iniPath, kSectionSession, L"ThumbnailSize",
                                    std::to_wstring(static_cast<int>(extent)));
         });
 
@@ -853,7 +823,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 auto bp2 = weakBackplate.lock();
                 if (!v || !bp2) return;
                 v->SetThumbnailStripSize(ext);
-                AppSettings::SetString(iniPath, kSectionSession, L"ThumbnailSize",
+                IniStore::SetString(iniPath, kSectionSession, L"ThumbnailSize",
                                        std::to_wstring(static_cast<int>(ext)));
                 bp2->Render();
             };
@@ -1106,3 +1076,4 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
 }
 
 } // namespace nsk
+

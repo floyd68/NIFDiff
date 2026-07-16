@@ -140,7 +140,7 @@ add_executable(NIFDiff WIN32
     ${NIFDIFF_COMPILED_SHADER_HEADERS}
     app/AppIpc.h
     app/AppIpc.cpp
-    app/AppSettings.h
+    app/IniStore.h
     app/AppSetup.h
     app/AppSetup.cpp
     app/FileDialog.h

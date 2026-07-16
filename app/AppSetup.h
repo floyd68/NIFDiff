@@ -1,6 +1,6 @@
 // AppSetup.h - per-user (HKCU) .nif file association registration, ported
 // from FICture2's AppSetup. Window placement persistence is NOT here - the
-// app shell already owns that via AppSettings (see NIFDiffApp.cpp) - and
+// app shell already owns that via IniStore (see NIFDiffApp.cpp) - and
 // FICture2's Explorer thumbnail-provider registration has no NIF
 // counterpart, so only the association half is ported.
 #pragma once

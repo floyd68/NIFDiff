@@ -1,10 +1,10 @@
-// AppSetup.cpp - ported from FICture2's AppSetup.cpp standalone-flavor path
+﻿// AppSetup.cpp - ported from FICture2's AppSetup.cpp standalone-flavor path
 // (NIFDiff has no Store/Winget flavor, so the build-flavor branches
 // collapse): HKCU-only ProgID + modern Capabilities model (for the Windows
 // Default Apps UI) + legacy Applications/OpenWithProgids metadata + a
 // best-effort direct extension mapping, followed by SHChangeNotify.
 #include "AppSetup.h"
-#include "AppSettings.h"
+#include "IniStore.h"
 #include "../core/NifLog.h"
 
 #ifndef NOMINMAX
@@ -192,14 +192,14 @@ namespace nsk::AppSetup
         if (iniPath.empty())
             return;
 
-        const AppSettings settings = ::nsk::AppSettings::Load(iniPath);
+        const IniStore settings = IniStore::Load(iniPath);
         if (settings.GetInt(kSectionGeneral, L"AskedAssociations", 0) != 0)
             return;
 
         const bool enabled = RegisterFileAssociations(nullptr);
 
-        ::nsk::AppSettings::SetInt(iniPath, kSectionGeneral, L"AskedAssociations", 1);
-        ::nsk::AppSettings::SetInt(iniPath, kSectionGeneral, L"AssociationsEnabled", enabled ? 1 : 0);
+        IniStore::SetInt(iniPath, kSectionGeneral, L"AskedAssociations", 1);
+        IniStore::SetInt(iniPath, kSectionGeneral, L"AssociationsEnabled", enabled ? 1 : 0);
     }
 
     bool RegisterFileAssociations(HWND owner)
@@ -242,3 +242,4 @@ namespace nsk::AppSetup
         return true;
     }
 }
+
