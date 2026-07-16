@@ -267,6 +267,30 @@ struct NifTransformInterpolator
     bool scaleValid() const { return validComponent(scale); }
 };
 
+// One NiTimeController-derived block (nif.xml line 3604): the common timing
+// header shared by every controller, plus the fields of the concrete types
+// this parser understands (NiTransformController's interpolator ref,
+// NiMultiTargetTransformController's extra-target list). `typeName` carries
+// the block type so a consumer can tell them apart.
+struct NifTimeController
+{
+    std::string typeName;
+    std::int32_t nextControllerRef = kNoRef; // chain to the node's next controller
+    std::uint16_t flags = 0;                 // TimeControllerFlags (nif.xml line 1547)
+    float frequency = 1.0f;
+    float phase = 0.0f;
+    float startTime = 0.0f;
+    float stopTime = 0.0f;
+    std::int32_t targetRef = kNoRef;         // Ptr -> the controlled NiObjectNET
+    std::int32_t interpolatorRef = kNoRef;   // NiSingleInterpController only (else kNoRef)
+    std::vector<std::int32_t> extraTargets;  // NiMultiTargetTransformController only
+
+    enum class Cycle : std::uint16_t { Loop = 0, Reverse = 1, Clamp = 2 };
+    Cycle cycleType() const { return static_cast<Cycle>((flags >> 1) & 3); }
+    bool active() const { return (flags & 0x0008) != 0; }
+    bool managerControlled() const { return (flags & 0x0020) != 0; }
+};
+
 // One renderable node in the scene graph: either a plain NiNode (no geometry,
 // just a transform + children) or a shape (NiTriShape/NiTriStrips/BSTriShape
 // family) that additionally owns geometry + a material.
@@ -276,6 +300,9 @@ struct NifSceneNode
     std::int32_t blockIndex = kNoRef;
     std::int32_t parentIndex = kNoRef;
     Transform localTransform;
+    // NiObjectNET Controller ref: head of this node's NiTimeController chain
+    // (kNoRef when the node isn't animated) - see timeControllers().
+    std::int32_t controllerRef = kNoRef;
 
     bool isShape = false;
     // NiAVObject Flags bit 0 ("Hidden"/App_Culled): the engine never draws
@@ -356,6 +383,10 @@ public:
     const std::unordered_map<std::int32_t, NifTransformData>& transformData() const { return m_transformData; }
     // NiTransformInterpolator blocks, keyed by block index.
     const std::unordered_map<std::int32_t, NifTransformInterpolator>& transformInterpolators() const { return m_transformInterpolators; }
+    // Parsed NiTimeController-derived blocks (transform / multi-target so far),
+    // keyed by block index. Walk a node's chain via NifSceneNode::controllerRef
+    // -> nextControllerRef.
+    const std::unordered_map<std::int32_t, NifTimeController>& timeControllers() const { return m_timeControllers; }
     const std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>>& skinPartitionWeights() const { return m_skinPartitionWeights; }
     // Resolves a raw block index (e.g. from skinInstanceBones()) to an index
     // into nodes(), or kNoRef if that block wasn't parsed into a scene node.
@@ -412,6 +443,10 @@ private:
     void parseNiSkinData(class NifIStream& in, int blockIndex);
     void parseNiTransformData(class NifIStream& in, int blockIndex);
     void parseNiTransformInterpolator(class NifIStream& in, int blockIndex);
+    // Parses the NiTimeController common header (+ the interpolator ref when
+    // hasInterpolator, + the extra-targets list when hasExtraTargets).
+    void parseTimeController(class NifIStream& in, int blockIndex, const std::string& typeName,
+        bool hasInterpolator, bool hasExtraTargets);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
     // this parser): holds the actual rest-pose vertex/triangle/bone-weight
     // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer
@@ -440,12 +475,14 @@ private:
         Transform transform;
         std::uint32_t flags = 0; // NiAVObject Flags (bit 0 = Hidden)
         std::int32_t collisionObjectRef = kNoRef;
+        std::int32_t controllerRef = kNoRef; // NiObjectNET Controller (first in the chain)
     };
     // outShaderType, when non-null and isBSLightingShaderProperty is set,
     // receives the leading "Shader Type" u32 (SkyrimShaderType) that
     // BSLightingShaderProperty stores BEFORE the NiObjectNET name.
+    // outControllerRef, when non-null, receives the NiObjectNET Controller ref.
     std::string readObjectNetName(class NifIStream& in, bool isBSLightingShaderProperty,
-        std::uint32_t* outShaderType = nullptr);
+        std::uint32_t* outShaderType = nullptr, std::int32_t* outControllerRef = nullptr);
     AvObjectHeader readAvObjectHeader(class NifIStream& in, bool isBSLightingShaderProperty = false);
     std::vector<std::int32_t> readRefArray(class NifIStream& in, std::uint32_t count);
     std::string resolveString(std::int32_t index) const;
@@ -482,6 +519,7 @@ private:
     std::unordered_map<std::int32_t, NifSkinData> m_skinData;                              // NiSkinData block index -> bind-pose offsets
     std::unordered_map<std::int32_t, NifTransformData> m_transformData;                    // NiTransformData block index -> keyframe channels
     std::unordered_map<std::int32_t, NifTransformInterpolator> m_transformInterpolators;   // NiTransformInterpolator block index -> pose + data ref
+    std::unordered_map<std::int32_t, NifTimeController> m_timeControllers;                 // controller block index -> timing header + type fields
 
     std::unique_ptr<NifItem> m_blockTree;
     std::string m_lastError;

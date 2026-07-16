@@ -47,6 +47,15 @@ namespace
         std::cout << std::format("  geometries    : {}\n", doc.geometries().size());
         std::cout << std::format("  materials     : {}\n", doc.materials().size());
         std::cout << std::format("  texture sets  : {}\n", doc.textureSets().size());
+        for (const auto& [blockIdx, tc] : doc.timeControllers())
+        {
+            std::cout << std::format(
+                "  anim ctrl     : block {} {} next={} target={} interp={} extraTargets={} "
+                "cycle={} active={} freq={:.2f} time=[{:.2f},{:.2f}]\n",
+                blockIdx, tc.typeName, tc.nextControllerRef, tc.targetRef, tc.interpolatorRef,
+                tc.extraTargets.size(), static_cast<unsigned>(tc.cycleType()), tc.active(),
+                tc.frequency, tc.startTime, tc.stopTime);
+        }
         for (const auto& [blockIdx, ti] : doc.transformInterpolators())
         {
             std::cout << std::format(

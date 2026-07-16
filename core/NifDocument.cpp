@@ -358,6 +358,10 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiTransformData(in, i);
         else if (t == "NiTransformInterpolator")
             parseNiTransformInterpolator(in, i);
+        else if (t == "NiTransformController")
+            parseTimeController(in, i, t, /*hasInterpolator=*/true, /*hasExtraTargets=*/false);
+        else if (t == "NiMultiTargetTransformController")
+            parseTimeController(in, i, t, /*hasInterpolator=*/false, /*hasExtraTargets=*/true);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -381,7 +385,7 @@ void NifDocument::parseBlocks(NifIStream& in)
 
 // --- Shared NiObjectNET / NiAVObject header reader --------------------------
 std::string NifDocument::readObjectNetName(NifIStream& in, bool isBSLightingShaderProperty,
-    std::uint32_t* outShaderType)
+    std::uint32_t* outShaderType, std::int32_t* outControllerRef)
 {
     // nif.xml lines 3363-3372.
     if (isBSLightingShaderProperty)
@@ -395,7 +399,9 @@ std::string NifDocument::readObjectNetName(NifIStream& in, bool isBSLightingShad
     std::uint32_t numExtra = in.u32();              // Num Extra Data List, line 3369
     for (std::uint32_t i = 0; i < numExtra; ++i)
         in.i32();                                   // Extra Data List (Ref[]), line 3370
-    in.i32();                                        // Controller (Ref), line 3371
+    std::int32_t controllerRef = in.i32();          // Controller (Ref), line 3371
+    if (outControllerRef)
+        *outControllerRef = controllerRef;
 
     return resolveString(nameIdx);
 }
@@ -403,7 +409,7 @@ std::string NifDocument::readObjectNetName(NifIStream& in, bool isBSLightingShad
 NifDocument::AvObjectHeader NifDocument::readAvObjectHeader(NifIStream& in, bool isBSLightingShaderProperty)
 {
     AvObjectHeader hdr;
-    hdr.name = readObjectNetName(in, isBSLightingShaderProperty);
+    hdr.name = readObjectNetName(in, isBSLightingShaderProperty, nullptr, &hdr.controllerRef);
 
     // nif.xml lines 3444-3499. BSVER (83/100/130) is always > 26, so the
     // 32-bit Flags variant (line 3446) applies, never the legacy ushort one.
@@ -438,6 +444,7 @@ void NifDocument::parseNiNode(NifIStream& in, int blockIndex, bool /*isFadeNodeL
     node.name = hdr.name;
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
+    node.controllerRef = hdr.controllerRef;
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = false;
 
@@ -466,6 +473,7 @@ void NifDocument::parseNiTriShapeOrStrips(NifIStream& in, int blockIndex, bool /
     node.name = hdr.name;
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
+    node.controllerRef = hdr.controllerRef;
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
 
@@ -627,6 +635,7 @@ void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex)
     node.name = hdr.name;
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
+    node.controllerRef = hdr.controllerRef;
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
     node.geometryBlockIndex = kNoRef; // inline geometry, not a separate *Data block
@@ -939,6 +948,36 @@ void NifDocument::parseNiTransformData(NifIStream& in, int blockIndex)
     data.scales = readKeyGroup<float>(in, [](NifIStream& s) { return s.f32(); });
 
     m_transformData[blockIndex] = std::move(data);
+}
+
+void NifDocument::parseTimeController(NifIStream& in, int blockIndex, const std::string& typeName,
+    bool hasInterpolator, bool hasExtraTargets)
+{
+    // NiTimeController common header (nif.xml line 3604). The "Unknown
+    // Integer" tail is until=3.1 - absent in 20.2.0.7.
+    NifTimeController ctrl;
+    ctrl.typeName = typeName;
+    ctrl.nextControllerRef = in.i32();  // Next Controller (Ref)
+    ctrl.flags = in.u16();              // Flags (TimeControllerFlags)
+    ctrl.frequency = in.f32();          // Frequency
+    ctrl.phase = in.f32();              // Phase
+    ctrl.startTime = in.f32();          // Start Time
+    ctrl.stopTime = in.f32();           // Stop Time
+    ctrl.targetRef = in.i32();          // Target (Ptr)
+
+    if (hasInterpolator)
+        ctrl.interpolatorRef = in.i32(); // NiSingleInterpController::Interpolator (Ref), since 10.1.0.104
+
+    if (hasExtraTargets)
+    {
+        // NiMultiTargetTransformController (nif.xml line 3622).
+        const std::uint16_t numExtra = in.u16(); // Num Extra Targets
+        ctrl.extraTargets.reserve(numExtra);
+        for (std::uint16_t i = 0; i < numExtra; ++i)
+            ctrl.extraTargets.push_back(in.i32()); // Extra Targets (Ptr[])
+    }
+
+    m_timeControllers[blockIndex] = std::move(ctrl);
 }
 
 void NifDocument::parseNiTransformInterpolator(NifIStream& in, int blockIndex)
