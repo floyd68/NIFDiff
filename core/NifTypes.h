@@ -15,6 +15,7 @@
 #include <string>
 #include <algorithm>
 #include <numbers>
+#include <vector>
 
 namespace nsk
 {
@@ -484,6 +485,42 @@ public:
     bool operator==(const BSVertexDesc& v) const = default;
 
     u64 desc = 0;
+};
+
+// ---------------------------------------------------------------------------
+// Animation key data (the value types NiTransformData / NiFloatData / ... are
+// built from - nif.xml's Key<T>/KeyGroup<T>). Numeric values match the NIF
+// on-disk KeyType enum so the parser can store the field verbatim.
+// ---------------------------------------------------------------------------
+
+enum class NifKeyType : std::uint32_t
+{
+    Linear = 1,      // straight lerp between keys
+    Quadratic = 2,   // Hermite with per-key forward/backward tangents
+    Tbc = 3,         // Tension/Bias/Continuity (Kochanek-Bartels)
+    XyzRotation = 4, // rotation stored as three per-axis float key groups
+    Const = 5,       // step function (hold previous key's value)
+};
+
+// One key. Tangents are read only for Quadratic keys and the TBC triple only
+// for Tbc keys; both stay default-initialized otherwise.
+template <typename T>
+struct NifKey
+{
+    float time = 0.0f;
+    T value {};
+    T forward {};  // Quadratic: outgoing tangent of this key
+    T backward {}; // Quadratic: incoming tangent of the next segment
+    float tension = 0.0f, bias = 0.0f, continuity = 0.0f; // Tbc
+};
+
+template <typename T>
+struct NifKeyGroup
+{
+    NifKeyType keyType = NifKeyType::Linear;
+    std::vector<NifKey<T>> keys;
+
+    bool empty() const { return keys.empty(); }
 };
 
 } // namespace nsk
