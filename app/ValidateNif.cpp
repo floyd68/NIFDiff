@@ -47,6 +47,17 @@ namespace
         std::cout << std::format("  geometries    : {}\n", doc.geometries().size());
         std::cout << std::format("  materials     : {}\n", doc.materials().size());
         std::cout << std::format("  texture sets  : {}\n", doc.textureSets().size());
+        // Animation keyframe channels (NiTransformData): per-block key counts,
+        // so a parsed animated static can be sanity-checked against NifSkope.
+        for (const auto& [blockIdx, td] : doc.transformData())
+        {
+            std::cout << std::format(
+                "  anim data     : block {} rotType={} quatKeys={} xyzKeys={}/{}/{} transKeys={}(type {}) scaleKeys={}\n",
+                blockIdx, static_cast<unsigned>(td.rotationType), td.quatKeys.size(),
+                td.xyzRotations[0].keys.size(), td.xyzRotations[1].keys.size(), td.xyzRotations[2].keys.size(),
+                td.translations.keys.size(), static_cast<unsigned>(td.translations.keyType),
+                td.scales.keys.size());
+        }
 
         auto meshes = SceneBuilder::build(doc);
         std::cout << std::format("  render meshes : {}\n", meshes.size());

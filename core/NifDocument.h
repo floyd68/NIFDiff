@@ -223,6 +223,26 @@ struct NifSkinData
     std::vector<Transform> boneOffsets; // parallel to the owning NiSkinInstance's bones()
 };
 
+// NiTransformData (nif.xml's NiKeyframeData, renamed in 10.2): the keyframe
+// channels a transform animation samples - rotation as quaternion keys (or,
+// when rotationType == XyzRotation, three per-axis float key groups), plus
+// translation and uniform-scale key groups. Attached to a node via
+// NiTransformController -> NiTransformInterpolator -> this block.
+struct NifTransformData
+{
+    NifKeyType rotationType = NifKeyType::Linear;
+    std::vector<NifKey<Quat>> quatKeys;   // rotationType != XyzRotation (quat keys never carry tangents)
+    NifKeyGroup<float> xyzRotations[3];   // rotationType == XyzRotation: per-axis Euler channels
+    NifKeyGroup<Vector3> translations;
+    NifKeyGroup<float> scales;
+
+    bool empty() const
+    {
+        return quatKeys.empty() && xyzRotations[0].empty() && xyzRotations[1].empty() &&
+               xyzRotations[2].empty() && translations.empty() && scales.empty();
+    }
+};
+
 // One renderable node in the scene graph: either a plain NiNode (no geometry,
 // just a transform + children) or a shape (NiTriShape/NiTriStrips/BSTriShape
 // family) that additionally owns geometry + a material.
@@ -308,6 +328,8 @@ public:
     const std::unordered_map<std::int32_t, std::vector<std::int32_t>>& skinInstanceBones() const { return m_skinInstanceBones; }
     const std::unordered_map<std::int32_t, std::int32_t>& skinInstanceToDataRef() const { return m_skinInstanceToDataRef; }
     const std::unordered_map<std::int32_t, NifSkinData>& skinData() const { return m_skinData; }
+    // NiTransformData blocks, keyed by block index (see NifTransformData).
+    const std::unordered_map<std::int32_t, NifTransformData>& transformData() const { return m_transformData; }
     const std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>>& skinPartitionWeights() const { return m_skinPartitionWeights; }
     // Resolves a raw block index (e.g. from skinInstanceBones()) to an index
     // into nodes(), or kNoRef if that block wasn't parsed into a scene node.
@@ -362,6 +384,7 @@ private:
     // NiSkinData: per-bone bind-pose offsets needed to correctly place a
     // skinned shape's vertices - see NifSkinData's own comment.
     void parseNiSkinData(class NifIStream& in, int blockIndex);
+    void parseNiTransformData(class NifIStream& in, int blockIndex);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
     // this parser): holds the actual rest-pose vertex/triangle/bone-weight
     // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer
@@ -430,6 +453,7 @@ private:
     std::unordered_map<std::int32_t, std::int32_t> m_skinInstanceToDataRef;                // NiSkinInstance block index -> NiSkinData block index
     std::unordered_map<std::int32_t, std::vector<std::int32_t>> m_skinInstanceBones;       // NiSkinInstance block index -> Bones[] (NiNode block indices, in NifVertexSkinWeights::boneIndex order)
     std::unordered_map<std::int32_t, NifSkinData> m_skinData;                              // NiSkinData block index -> bind-pose offsets
+    std::unordered_map<std::int32_t, NifTransformData> m_transformData;                    // NiTransformData block index -> keyframe channels
 
     std::unique_ptr<NifItem> m_blockTree;
     std::string m_lastError;

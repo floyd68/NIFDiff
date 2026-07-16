@@ -354,6 +354,8 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiSkinInstance(in, i);
         else if (t == "NiSkinData")
             parseNiSkinData(in, i);
+        else if (t == "NiTransformData")
+            parseNiTransformData(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -851,6 +853,90 @@ void NifDocument::parseNiSkinData(NifIStream& in, int blockIndex)
     }
 
     m_skinData[blockIndex] = std::move(data);
+}
+
+// --- NiTransformData ---------------------------------------------------------
+namespace
+{
+    // nif.xml's KeyGroup<T> (lines 2011-2016): count, interpolation (only when
+    // count != 0), then Key<T>s whose layout depends on that interpolation -
+    // Quadratic adds forward/backward tangents, Tbc a tension/bias/continuity
+    // triple. `readValue` reads one T from the stream.
+    template <typename T, typename ReadFn>
+    NifKeyGroup<T> readKeyGroup(NifIStream& in, ReadFn readValue)
+    {
+        NifKeyGroup<T> group;
+        const std::uint32_t numKeys = in.u32();       // Num Keys
+        if (numKeys == 0)
+            return group;
+        group.keyType = static_cast<NifKeyType>(in.u32()); // Interpolation
+        group.keys.reserve(numKeys);
+        for (std::uint32_t i = 0; i < numKeys; ++i)
+        {
+            NifKey<T> key;
+            key.time = in.f32();                       // Time
+            key.value = readValue(in);                 // Value
+            if (group.keyType == NifKeyType::Quadratic)
+            {
+                key.forward = readValue(in);           // Forward tangent
+                key.backward = readValue(in);          // Backward tangent
+            }
+            else if (group.keyType == NifKeyType::Tbc)
+            {
+                key.tension = in.f32();
+                key.bias = in.f32();
+                key.continuity = in.f32();
+            }
+            group.keys.push_back(std::move(key));
+        }
+        return group;
+    }
+}
+
+void NifDocument::parseNiTransformData(NifIStream& in, int blockIndex)
+{
+    // nif.xml's NiKeyframeData (lines 4331-4341; renamed NiTransformData in
+    // 10.2). Rotation is either quaternion keys or - when Rotation Type == 4
+    // (XyzRotation) - three per-axis float key groups; then translation and
+    // scale key groups follow unconditionally.
+    NifTransformData data;
+
+    const std::uint32_t numRotKeys = in.u32();        // Num Rotation Keys
+    if (numRotKeys != 0)
+    {
+        data.rotationType = static_cast<NifKeyType>(in.u32()); // Rotation Type
+        if (data.rotationType != NifKeyType::XyzRotation)
+        {
+            // QuatKey (nif.xml lines 2018-2024): time + quat, TBC triple only
+            // for Tbc keys, NEVER tangents ("Never has tangents").
+            data.quatKeys.reserve(numRotKeys);
+            for (std::uint32_t i = 0; i < numRotKeys; ++i)
+            {
+                NifKey<Quat> key;
+                key.time = in.f32();                  // Time
+                key.value = in.quatWXYZ();            // Value (w, x, y, z)
+                if (data.rotationType == NifKeyType::Tbc)
+                {
+                    key.tension = in.f32();
+                    key.bias = in.f32();
+                    key.continuity = in.f32();
+                }
+                data.quatKeys.push_back(std::move(key));
+            }
+        }
+        else
+        {
+            // XYZ Rotations: KeyGroup<float>[3]. (The version-gated "Order"
+            // float before it is until=10.1.0.0 - absent in 20.2.0.7.)
+            for (int axis = 0; axis < 3; ++axis)
+                data.xyzRotations[axis] = readKeyGroup<float>(in, [](NifIStream& s) { return s.f32(); });
+        }
+    }
+
+    data.translations = readKeyGroup<Vector3>(in, [](NifIStream& s) { return s.vector3(); });
+    data.scales = readKeyGroup<float>(in, [](NifIStream& s) { return s.f32(); });
+
+    m_transformData[blockIndex] = std::move(data);
 }
 
 // --- NiSkinPartition (BS_SSE) ------------------------------------------------
