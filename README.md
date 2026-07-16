@@ -61,7 +61,11 @@ documents every control in detail.
   view), **VIEW** (orientation preset + the Sync toggles), **NAVIGATION**
   (camera feel), **DISPLAY** (grid / axes / wireframe / normals / … overlays),
   **LIGHTING**, **MATERIALS** and **CHANNELS** (shader toggles), and
-  **RESOURCES** (Game Data + override folders).
+  **RESOURCES** (Game Data + override folders). The strip is **responsive**:
+  as the window narrows the groups wrap onto additional rows, the multi-column
+  groups (NAVIGATION, LIGHTING, ...) collapse to a single column, and a
+  vertical scrollbar appears only as a last resort - every control stays
+  reachable at any window size.
 - The **active pane** (the last one you clicked) carries an accent border;
   pane-specific keys and the right-click context menu act on it.
 
