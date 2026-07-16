@@ -295,6 +295,38 @@ struct NifTimeController
     bool managerControlled() const { return (flags & 0x0020) != 0; }
 };
 
+// One entry of a NiControllerSequence's Controlled Blocks array (nif.xml line
+// 1923, the since-20.1.0.1 direct-string layout): which object the sequence
+// animates (by node name), through which interpolator.
+struct NifControlledBlock
+{
+    std::int32_t interpolatorRef = kNoRef; // -> NiInterpolator (NiTransformInterpolator for transforms)
+    std::int32_t controllerRef = kNoRef;   // -> the controller this entry drives through
+    std::uint8_t priority = 0;
+    std::string nodeName;                  // name of the animated NiAVObject
+    std::string propertyType;              // RTTI of the controlled NiProperty (empty for node transforms)
+    std::string controllerType;            // RTTI of the controller, e.g. "NiTransformController"
+    std::string controllerId;
+    std::string interpolatorId;
+};
+
+// NiControllerSequence (nif.xml line 4218): one named animation ("Open",
+// "Idle", ...) grouping the interpolator-per-target bindings plus its own
+// time range / cycle / frequency.
+struct NifControllerSequence
+{
+    std::string name;
+    std::vector<NifControlledBlock> controlledBlocks;
+    float weight = 1.0f;
+    std::int32_t textKeysRef = kNoRef;     // -> NiTextKeyExtraData
+    std::uint32_t cycleType = 2;           // CycleType: 0 = loop, 1 = reverse, 2 = clamp
+    float frequency = 1.0f;
+    float startTime = 0.0f;
+    float stopTime = 0.0f;
+    std::int32_t managerRef = kNoRef;      // Ptr -> owning NiControllerManager
+    std::string accumRootName;
+};
+
 // One renderable node in the scene graph: either a plain NiNode (no geometry,
 // just a transform + children) or a shape (NiTriShape/NiTriStrips/BSTriShape
 // family) that additionally owns geometry + a material.
@@ -391,6 +423,8 @@ public:
     // keyed by block index. Walk a node's chain via NifSceneNode::controllerRef
     // -> nextControllerRef.
     const std::unordered_map<std::int32_t, NifTimeController>& timeControllers() const { return m_timeControllers; }
+    // NiControllerSequence blocks, keyed by block index.
+    const std::unordered_map<std::int32_t, NifControllerSequence>& controllerSequences() const { return m_controllerSequences; }
     const std::unordered_map<std::int32_t, std::vector<NifVertexSkinWeights>>& skinPartitionWeights() const { return m_skinPartitionWeights; }
     // Resolves a raw block index (e.g. from skinInstanceBones()) to an index
     // into nodes(), or kNoRef if that block wasn't parsed into a scene node.
@@ -453,6 +487,7 @@ private:
         bool hasInterpolator, bool hasExtraTargets);
     NifTimeController readTimeControllerHeader(class NifIStream& in, const std::string& typeName);
     void parseNiControllerManager(class NifIStream& in, int blockIndex);
+    void parseNiControllerSequence(class NifIStream& in, int blockIndex);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
     // this parser): holds the actual rest-pose vertex/triangle/bone-weight
     // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer
@@ -526,6 +561,7 @@ private:
     std::unordered_map<std::int32_t, NifTransformData> m_transformData;                    // NiTransformData block index -> keyframe channels
     std::unordered_map<std::int32_t, NifTransformInterpolator> m_transformInterpolators;   // NiTransformInterpolator block index -> pose + data ref
     std::unordered_map<std::int32_t, NifTimeController> m_timeControllers;                 // controller block index -> timing header + type fields
+    std::unordered_map<std::int32_t, NifControllerSequence> m_controllerSequences;         // NiControllerSequence block index -> named animation
 
     std::unique_ptr<NifItem> m_blockTree;
     std::string m_lastError;

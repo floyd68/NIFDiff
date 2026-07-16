@@ -364,6 +364,8 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseTimeController(in, i, t, /*hasInterpolator=*/false, /*hasExtraTargets=*/true);
         else if (t == "NiControllerManager")
             parseNiControllerManager(in, i);
+        else if (t == "NiControllerSequence")
+            parseNiControllerSequence(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -1000,6 +1002,46 @@ void NifDocument::parseNiControllerManager(NifIStream& in, int blockIndex)
         ctrl.sequenceRefs.push_back(in.i32());    // Controller Sequences (Ref[])
     ctrl.objectPaletteRef = in.i32();             // Object Palette (Ref)
     m_timeControllers[blockIndex] = std::move(ctrl);
+}
+
+void NifDocument::parseNiControllerSequence(NifIStream& in, int blockIndex)
+{
+    // NiSequence (nif.xml line 4205) + NiControllerSequence tail (line 4218),
+    // 20.2.0.7/BSVER>=83 layout: direct string refs everywhere (the string-
+    // palette offsets are until=20.1, Phase until=10.4.0.1, Accum Flags since
+    // 20.3.0.8 - all absent). Trailing BSVER>28 anim-note refs are not needed
+    // and left unread (the block-size table bounds the next block anyway).
+    NifControllerSequence seq;
+    seq.name = resolveString(in.i32());          // Name
+    const std::uint32_t numBlocks = in.u32();    // Num Controlled Blocks
+    in.u32();                                     // Array Grow By
+
+    seq.controlledBlocks.reserve(numBlocks);
+    for (std::uint32_t i = 0; i < numBlocks; ++i)
+    {
+        // ControlledBlock (nif.xml line 1923, since-20.1.0.1 branch).
+        NifControlledBlock cb;
+        cb.interpolatorRef = in.i32();           // Interpolator (Ref)
+        cb.controllerRef = in.i32();             // Controller (Ref)
+        cb.priority = in.u8();                   // Priority (BSSTREAM)
+        cb.nodeName = resolveString(in.i32());   // Node Name
+        cb.propertyType = resolveString(in.i32()); // Property Type
+        cb.controllerType = resolveString(in.i32()); // Controller Type
+        cb.controllerId = resolveString(in.i32());   // Controller ID
+        cb.interpolatorId = resolveString(in.i32()); // Interpolator ID
+        seq.controlledBlocks.push_back(std::move(cb));
+    }
+
+    seq.weight = in.f32();                       // Weight
+    seq.textKeysRef = in.i32();                  // Text Keys (Ref)
+    seq.cycleType = in.u32();                    // Cycle Type
+    seq.frequency = in.f32();                    // Frequency
+    seq.startTime = in.f32();                    // Start Time
+    seq.stopTime = in.f32();                     // Stop Time
+    seq.managerRef = in.i32();                   // Manager (Ptr)
+    seq.accumRootName = resolveString(in.i32()); // Accum Root Name
+
+    m_controllerSequences[blockIndex] = std::move(seq);
 }
 
 void NifDocument::parseNiTransformInterpolator(NifIStream& in, int blockIndex)

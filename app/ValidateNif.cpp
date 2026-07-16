@@ -63,6 +63,16 @@ namespace
                 std::cout << std::format("  palette={}\n", tc.objectPaletteRef);
             }
         }
+        for (const auto& [blockIdx, sq] : doc.controllerSequences())
+        {
+            std::cout << std::format(
+                "  anim sequence : block {} \"{}\" time=[{:.2f},{:.2f}] cycle={} freq={:.2f} accumRoot=\"{}\"\n",
+                blockIdx, sq.name, sq.startTime, sq.stopTime, sq.cycleType, sq.frequency, sq.accumRootName);
+            for (const auto& cb : sq.controlledBlocks)
+                std::cout << std::format(
+                    "                  -> node \"{}\" ctrlType={} interp={} ctrl={} prio={}\n",
+                    cb.nodeName, cb.controllerType, cb.interpolatorRef, cb.controllerRef, cb.priority);
+        }
         for (const auto& [blockIdx, ti] : doc.transformInterpolators())
         {
             std::cout << std::format(
