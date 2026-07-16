@@ -15,6 +15,7 @@
 // already applies to "all panes", never hardcoded to a Left/Right pair).
 #pragma once
 
+#include <DynamicPanel.h>
 #include <StackPanel.h>
 #include <functional>
 #include <memory>
@@ -26,7 +27,7 @@ namespace FD2D { class Button; class Slider; class CheckBox; class ComboBox; cla
 namespace nsk
 {
 
-class NifCompareControlPanel : public FD2D::StackPanel
+class NifCompareControlPanel : public FD2D::DynamicPanel
 {
 public:
     explicit NifCompareControlPanel(const std::wstring& name);
@@ -127,6 +128,11 @@ public:
     void SetGameDataLabel(const std::wstring& text);
     void SetOverrideCountLabel(std::size_t count);
 
+    // Collapse every multi-column group (NAVIGATION, LIGHTING, ...) to a single
+    // column when true - driven by NifCompareView from the window width so a
+    // narrow layout stacks the columns instead of forcing wide rows.
+    void SetCompact(bool compact);
+
     // Draws the group separator hairlines + the strip's top border, then
     // renders the children as usual.
     void OnRender(ID2D1RenderTarget* target) override;
@@ -135,6 +141,7 @@ private:
     static constexpr float kGroupGap = 14.0f;
 
     std::vector<std::shared_ptr<FD2D::StackPanel>> m_groups; // for separator placement
+    std::vector<std::shared_ptr<FD2D::DynamicPanel>> m_columnRows; // 2-column group rows, collapsed by SetCompact
     std::shared_ptr<FD2D::Button> m_addPaneBtn;
     std::shared_ptr<FD2D::Button> m_resetBtn;
     std::shared_ptr<FD2D::CheckBox> m_syncViewsChk;

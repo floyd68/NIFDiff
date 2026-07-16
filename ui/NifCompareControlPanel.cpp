@@ -13,9 +13,9 @@ namespace nsk
 {
 
 NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
-    : FD2D::StackPanel(name, FD2D::Orientation::Horizontal)
+    : DynamicPanel(name) // flex-wrap: groups wrap to new rows when the window narrows
 {
-    SetSpacing(kGroupGap);
+    SetGaps(kGroupGap, 10.0f);
     SetPadding(8.0f);
 
     // One labeled ribbon group: dim uppercase header over a vertical stack
@@ -34,10 +34,17 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
         m_groups.push_back(group);
         return group;
     };
-    auto makeRow = [](const std::wstring& rowName, float spacing)
+    // A row of columns inside a group is itself flex-wrap, so a 2-column group
+    // (NAVIGATION, LIGHTING, ...) collapses to a single column when the group is
+    // handed a narrow width.
+    auto makeRow = [this](const std::wstring& rowName, float spacing)
     {
-        auto row = std::make_shared<FD2D::StackPanel>(rowName, FD2D::Orientation::Horizontal);
-        row->SetSpacing(spacing);
+        auto row = std::make_shared<FD2D::DynamicPanel>(rowName);
+        row->SetGaps(spacing, 5.0f);
+        // Registered so SetCompact() can collapse every multi-column group to a
+        // single column at once when the window gets narrow (e.g. NAVIGATION
+        // 2-column -> 1-column), decided from the top by the overall width.
+        m_columnRows.push_back(row);
         return row;
     };
     auto makeColumn = [](const std::wstring& colName, float spacing)
@@ -344,6 +351,13 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     resources->AddChild(resRow);
 }
 
+void NifCompareControlPanel::SetCompact(bool compact)
+{
+    for (const auto& row : m_columnRows)
+        if (row)
+            row->SetForceSingleColumn(compact);
+}
+
 void NifCompareControlPanel::OnRender(ID2D1RenderTarget* target)
 {
     // Strip top border + vertical hairlines centered in the gaps between
@@ -354,14 +368,20 @@ void NifCompareControlPanel::OnRender(ID2D1RenderTarget* target)
     {
         const D2D1_RECT_F rc = LayoutRect();
         target->DrawLine({ rc.left, rc.top + 0.5f }, { rc.right, rc.top + 0.5f }, brush.Get(), 1.0f);
+        // Hairline between horizontally-adjacent groups only. When the strip
+        // wraps, the next group drops to a new row (different top) - skip the
+        // separator there so it doesn't streak across the wrap.
         for (std::size_t i = 0; i + 1 < m_groups.size(); ++i)
         {
             const D2D1_RECT_F g = m_groups[i]->LayoutRect();
+            const D2D1_RECT_F gn = m_groups[i + 1]->LayoutRect();
+            if (gn.top - g.top > 4.0f || g.top - gn.top > 4.0f)
+                continue; // wrapped to a new row
             const float x = g.right + kGroupGap * 0.5f;
-            target->DrawLine({ x, rc.top + 10.0f }, { x, rc.bottom - 10.0f }, brush.Get(), 1.0f);
+            target->DrawLine({ x, g.top + 2.0f }, { x, (std::max)(g.bottom, gn.bottom) - 2.0f }, brush.Get(), 1.0f);
         }
     }
-    FD2D::StackPanel::OnRender(target);
+    DynamicPanel::OnRender(target);
 }
 
 void NifCompareControlPanel::SetOnAddPane(std::function<void()> handler) { m_addPaneBtn->OnClick(std::move(handler)); }

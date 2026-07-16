@@ -20,6 +20,7 @@
 
 #include <SplitPanel.h>
 #include <DockPanel.h>
+#include <ScrollView.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <functional>
@@ -146,6 +147,10 @@ public:
     // (I toggles the material diff panel, T the texture inspector - see
     // DrawMaterialDiffPanel / DrawTextureInspector.)
     bool OnInputEvent(const FD2D::InputEvent& event) override;
+    // Reflows the control strip to the current width and sizes its (bottom) pane
+    // to the resulting wrapped height before doing the split, so a narrow window
+    // grows the strip into more rows instead of clipping controls off-edge.
+    void Arrange(FD2D::Rect finalRect) override;
     // Drains the ResourceManager's completed loads once per frame (before the
     // pane/strip children render), then propagates the D3D pass to them.
     void OnRenderD3D(ID3D11DeviceContext* context) override;
@@ -337,6 +342,10 @@ private:
     void ApplyThumbStripEnabled(bool on); // broadcast to all panes + relayout
     std::vector<std::wstring> m_pendingCloseNames;
     std::shared_ptr<NifCompareControlPanel> m_controls;
+    // Horizontal scroll host for the control strip: when the window is too
+    // narrow to show every group, this clips + adds a draggable scrollbar so no
+    // control becomes unreachable (the strip is fixed-height, so only X scrolls).
+    std::shared_ptr<FD2D::ScrollView> m_controlsScroll;
     std::shared_ptr<IpcOpenQueue> m_ipcQueue;
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;

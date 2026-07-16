@@ -27,10 +27,22 @@ NifCompareView::NifCompareView(const std::wstring& name)
     m_controls = std::make_shared<NifCompareControlPanel>(name + L"_Controls");
     m_viewsArea = std::make_shared<FD2D::DockPanel>(name + L"_ViewsArea");
 
+    // Host the fixed-width control strip in a horizontal scroll view so a narrow
+    // window scrolls (with a draggable bar) instead of clipping groups off-edge.
+    m_controlsScroll = std::make_shared<FD2D::ScrollView>(name + L"_ControlsScroll");
+    m_controlsScroll->SetContent(m_controls);
+    // The strip reflows to fit the width (DynamicPanel wraps groups to rows), so
+    // horizontal scroll is never needed; a vertical scrollbar only appears as a
+    // last resort when the reflowed strip is capped shorter than its content.
+    m_controlsScroll->SetHorizontalScrollEnabled(false);
+    m_controlsScroll->SetVerticalScrollEnabled(true);
+    m_controlsScroll->SetScrollBarsVisible(true);
+    m_controlsScroll->SetPropagateMinSize(false);
+
     CreateInitialPanes();
     RebuildHostTree();
 
-    SetSecondChild(m_controls);
+    SetSecondChild(m_controlsScroll);
     SetSplitRatio(0.85f);
     SetConstraintPropagation(FD2D::ConstraintPropagation::Minimum);
     RecalcControlStripExtent();
@@ -2268,9 +2280,33 @@ void NifCompareView::RecalcControlStripExtent()
     // Query the strip's own Measure() (already sums its rows' heights
     // correctly) instead of guessing a fixed pixel height, same trick
     // liteviewer's constructor used for its (much taller) sidebar variant.
+    // Initial guess only; Arrange() recomputes the strip height for the real
+    // width each layout (the strip reflows, so its height depends on the width).
     const float contentHeight = m_controls->Measure({ 1600.0f, 10000.0f }).h;
-    SetSecondPaneMinExtent((std::max)(80.0f, contentHeight - 6.0f));
+    SetSecondPaneMinExtent((std::max)(80.0f, contentHeight));
     SetSecondPaneMaxExtent((std::max)(120.0f, contentHeight + 16.0f));
+}
+
+void NifCompareView::Arrange(FD2D::Rect finalRect)
+{
+    // Reflow the control strip to the current width and size its (bottom) pane to
+    // the resulting wrapped height, so a narrow window grows the strip into more
+    // rows rather than clipping. Capped so the 3D views keep the bulk of the
+    // window; past the cap the strip's ScrollView shows a vertical scrollbar.
+    if (m_controls)
+    {
+        // Narrow window: collapse the multi-column groups to single columns
+        // (decided from the overall width so it stays consistent across the
+        // strip's Measure and Arrange), then size the strip to the result.
+        m_controls->SetCompact(finalRect.w < 900.0f);
+        const float availW = (std::max)(120.0f, finalRect.w - 24.0f);
+        const float stripH = m_controls->Measure({ availW, 1.0e9f }).h;
+        const float cap = (std::max)(140.0f, finalRect.h * 0.55f);
+        const float ext = (std::min)(stripH + 10.0f, cap);
+        SetSecondPaneMinExtent(ext);
+        SetSecondPaneMaxExtent(ext);
+    }
+    FD2D::SplitPanel::Arrange(finalRect);
 }
 
 void NifCompareView::ApplyOrientationPreset(int index)
