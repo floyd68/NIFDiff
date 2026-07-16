@@ -180,6 +180,11 @@ namespace
     }
 }
 
+Matrix4 SceneBuilder::axisCorrection()
+{
+    return axisCorrectionZupToYup();
+}
+
 std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool includeHidden)
 {
     std::vector<RenderMesh> out;

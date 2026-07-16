@@ -243,4 +243,233 @@ bool sampleRotation(const NifTransformData& data, float time, Matrix& out, int l
     return true;
 }
 
+// --- AnimPlayer --------------------------------------------------------------
+
+namespace
+{
+    int findNodeByName(const std::vector<NifSceneNode>& nodes, const std::string& name)
+    {
+        for (std::size_t i = 0; i < nodes.size(); ++i)
+            if (nodes[i].name == name)
+                return static_cast<int>(i);
+        return -1;
+    }
+}
+
+void AnimPlayer::bind(const NifDocument& doc)
+{
+    m_doc = &doc;
+    m_standalone.clear();
+    m_sequences.clear();
+    m_activeSequence = -1;
+
+    const auto& nodes = doc.nodes();
+    const auto& controllers = doc.timeControllers();
+    const auto& interpolators = doc.transformInterpolators();
+    const auto& datas = doc.transformData();
+
+    // Standalone controllers: walk each node's NiTimeController chain and take
+    // the active, non-manager-driven NiTransformControllers (the "always
+    // playing" kind, e.g. simple spinning props without a manager).
+    for (std::size_t n = 0; n < nodes.size(); ++n)
+    {
+        std::int32_t ref = nodes[n].controllerRef;
+        int guard = 0;
+        while (ref != kNoRef && guard++ < 64)
+        {
+            const auto it = controllers.find(ref);
+            if (it == controllers.end())
+                break;
+            const NifTimeController& ctrl = it->second;
+            if (ctrl.typeName == "NiTransformController" && ctrl.active() && !ctrl.managerControlled())
+            {
+                const auto interpIt = interpolators.find(ctrl.interpolatorRef);
+                if (interpIt != interpolators.end() &&
+                    NifTransformInterpolator::validComponent(ctrl.startTime) && ctrl.stopTime > ctrl.startTime)
+                {
+                    Channel ch;
+                    ch.nodeIndex = static_cast<int>(n);
+                    ch.interp = &interpIt->second;
+                    if (interpIt->second.dataRef != kNoRef)
+                    {
+                        const auto dataIt = datas.find(interpIt->second.dataRef);
+                        if (dataIt != datas.end() && !dataIt->second.empty())
+                            ch.data = &dataIt->second;
+                    }
+                    ch.start = ctrl.startTime;
+                    ch.stop = ctrl.stopTime;
+                    ch.frequency = ctrl.frequency;
+                    ch.phase = ctrl.phase;
+                    ch.cycle = ctrl.cycleType();
+                    m_standalone.push_back(std::move(ch));
+                }
+            }
+            ref = ctrl.nextControllerRef;
+        }
+    }
+
+    // Manager sequences: each ControlledBlock binds an interpolator to a node
+    // by name (ControllerManager::setSequence's logic). The sequence's own
+    // time range / cycle / frequency scopes every channel in it.
+    std::vector<std::pair<std::int32_t, const NifControllerSequence*>> ordered;
+    for (const auto& [blockIdx, seq] : doc.controllerSequences())
+        ordered.emplace_back(blockIdx, &seq);
+    std::sort(ordered.begin(), ordered.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (const auto& [blockIdx, seqPtr] : ordered)
+    {
+        const NifControllerSequence& src = *seqPtr;
+        Sequence seq;
+        seq.name = src.name;
+        seq.start = src.startTime;
+        seq.stop = src.stopTime;
+        const auto cycle = static_cast<NifTimeController::Cycle>(src.cycleType);
+        for (const NifControlledBlock& cb : src.controlledBlocks)
+        {
+            if (cb.controllerType != "NiTransformController" || cb.interpolatorRef == kNoRef)
+                continue; // property/particle controllers: out of scope
+            const int nodeIndex = findNodeByName(nodes, cb.nodeName);
+            const auto interpIt = interpolators.find(cb.interpolatorRef);
+            if (nodeIndex < 0 || interpIt == interpolators.end())
+                continue;
+            Channel ch;
+            ch.nodeIndex = nodeIndex;
+            ch.interp = &interpIt->second;
+            if (interpIt->second.dataRef != kNoRef)
+            {
+                const auto dataIt = datas.find(interpIt->second.dataRef);
+                if (dataIt != datas.end() && !dataIt->second.empty())
+                    ch.data = &dataIt->second;
+            }
+            ch.start = src.startTime;
+            ch.stop = src.stopTime;
+            ch.frequency = src.frequency;
+            ch.phase = 0.0f;
+            ch.cycle = cycle;
+            seq.channels.push_back(std::move(ch));
+        }
+        if (!seq.channels.empty())
+            m_sequences.push_back(std::move(seq));
+    }
+
+    if (!m_sequences.empty())
+        m_activeSequence = 0; // sensible default: the first named sequence
+
+    m_animLocals.assign(nodes.size(), Transform());
+    m_worldCache.assign(nodes.size(), Transform());
+    m_worldState.assign(nodes.size(), 0);
+}
+
+void AnimPlayer::selectSequence(int index)
+{
+    if (index >= static_cast<int>(m_sequences.size()))
+        index = m_sequences.empty() ? -1 : static_cast<int>(m_sequences.size()) - 1;
+    m_activeSequence = (index < 0) ? -1 : index;
+}
+
+float AnimPlayer::timeMin() const
+{
+    if (m_activeSequence >= 0)
+        return m_sequences[static_cast<std::size_t>(m_activeSequence)].start;
+    float t = 0.0f;
+    bool any = false;
+    for (const Channel& ch : m_standalone)
+    {
+        t = any ? (std::min)(t, ch.start) : ch.start;
+        any = true;
+    }
+    return t;
+}
+
+float AnimPlayer::timeMax() const
+{
+    if (m_activeSequence >= 0)
+        return m_sequences[static_cast<std::size_t>(m_activeSequence)].stop;
+    float t = 0.0f;
+    for (const Channel& ch : m_standalone)
+        t = (std::max)(t, ch.stop);
+    return t;
+}
+
+void AnimPlayer::evalChannel(Channel& ch, float time)
+{
+    const float ct = ctrlTime(time, ch.start, ch.stop, ch.frequency, ch.phase, ch.cycle);
+    Transform& local = m_animLocals[static_cast<std::size_t>(ch.nodeIndex)];
+
+    // Interpolator default pose first (only the valid components - see the
+    // -FLT_MAX sentinel note on NifTransformInterpolator), then keyed channels
+    // on top.
+    if (ch.interp->translationValid())
+        local.translation = ch.interp->translation;
+    if (ch.interp->rotationValid())
+        local.rotation.fromQuat(ch.interp->rotation);
+    if (ch.interp->scaleValid())
+        local.scale = ch.interp->scale;
+
+    if (ch.data != nullptr)
+    {
+        Matrix rot;
+        if (sampleRotation(*ch.data, ct, rot, ch.lastRot))
+            local.rotation = rot;
+        Vector3 trans;
+        if (sampleKeys(ch.data->translations, ct, trans, ch.lastTrans))
+            local.translation = trans;
+        float scale = local.scale;
+        if (sampleKeys(ch.data->scales, ct, scale, ch.lastScale))
+            local.scale = scale;
+    }
+}
+
+void AnimPlayer::update(float time, std::vector<RenderMesh>& meshes)
+{
+    if (m_doc == nullptr)
+        return;
+    const auto& nodes = m_doc->nodes();
+    if (nodes.empty())
+        return;
+
+    // Start from the bind pose each frame; animated channels overwrite their
+    // nodes. (Node counts are tiny - tens - so a full copy beats bookkeeping.)
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+        m_animLocals[i] = nodes[i].localTransform;
+
+    for (Channel& ch : m_standalone)
+        evalChannel(ch, time);
+    if (m_activeSequence >= 0)
+        for (Channel& ch : m_sequences[static_cast<std::size_t>(m_activeSequence)].channels)
+            evalChannel(ch, time);
+
+    // Recompose world transforms from the animated locals (iterative memoized
+    // parent-chain walk, same guards as SceneBuilder's computeWorldTransform).
+    std::fill(m_worldState.begin(), m_worldState.end(), std::int8_t(0));
+    const auto worldOf = [&](int index, const auto& self) -> Transform
+    {
+        if (m_worldState[static_cast<std::size_t>(index)] == 2)
+            return m_worldCache[static_cast<std::size_t>(index)];
+        const NifSceneNode& node = nodes[static_cast<std::size_t>(index)];
+        Transform world = m_animLocals[static_cast<std::size_t>(index)];
+        if (node.parentIndex != kNoRef && m_worldState[static_cast<std::size_t>(node.parentIndex)] != 1)
+        {
+            m_worldState[static_cast<std::size_t>(index)] = 1;
+            world = self(node.parentIndex, self) * m_animLocals[static_cast<std::size_t>(index)];
+        }
+        m_worldCache[static_cast<std::size_t>(index)] = world;
+        m_worldState[static_cast<std::size_t>(index)] = 2;
+        return world;
+    };
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+        (void)worldOf(static_cast<int>(i), worldOf);
+
+    const Matrix4 axis = SceneBuilder::axisCorrection();
+    for (RenderMesh& mesh : meshes)
+    {
+        if (mesh.sourceNodeIndex < 0 ||
+            static_cast<std::size_t>(mesh.sourceNodeIndex) >= nodes.size() ||
+            mesh.ownedGeometry) // skinned: pose baked into vertices (Phase 4)
+            continue;
+        mesh.worldTransform = axis * m_worldCache[static_cast<std::size_t>(mesh.sourceNodeIndex)].toMatrix4();
+    }
+}
+
 } // namespace nsk::anim

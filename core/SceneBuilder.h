@@ -72,6 +72,12 @@ public:
     // they are culled by default; the UI's "Hidden" display toggle opts
     // back in, NifSkope's Show Hidden equivalent.
     [[nodiscard]] static std::vector<RenderMesh> build(const NifDocument& doc, bool includeHidden = false);
+
+    // The fixed Z-up -> Y-up rotation baked into every mesh's worldTransform
+    // (see axisCorrectionZupToYup in the .cpp). Exposed so the animation
+    // runtime (AnimPlayer) applies the same convention when it recomputes
+    // world transforms per frame.
+    [[nodiscard]] static Matrix4 axisCorrection();
 };
 
 } // namespace nsk

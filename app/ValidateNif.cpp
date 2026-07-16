@@ -64,6 +64,31 @@ namespace
                 std::cout << std::format("  palette={}\n", tc.objectPaletteRef);
             }
         }
+        {
+            // AnimPlayer smoke test: bind, then sample a few times and show how
+            // the first animated mesh's world position moves.
+            nsk::anim::AnimPlayer player;
+            player.bind(doc);
+            if (player.hasAnimations())
+            {
+                std::cout << std::format("  anim player   : sequences={} range=[{:.2f},{:.2f}] active=\"{}\"\n",
+                    player.sequenceCount(), player.timeMin(), player.timeMax(),
+                    player.selectedSequence() >= 0 ? player.sequenceName(static_cast<std::size_t>(player.selectedSequence())) : "(standalone)");
+                auto animMeshes = SceneBuilder::build(doc);
+                const float t0 = player.timeMin();
+                const float t1 = player.timeMin() + (player.timeMax() - player.timeMin()) * 0.25f;
+                for (const float t : { t0, t1 })
+                {
+                    player.update(t, animMeshes);
+                    if (!animMeshes.empty())
+                    {
+                        const auto& w = animMeshes.front().worldTransform;
+                        std::cout << std::format("                  t={:.2f} mesh[0] worldPos=({:.2f},{:.2f},{:.2f})\n",
+                            t, w(0, 3), w(1, 3), w(2, 3));
+                    }
+                }
+            }
+        }
         for (const auto& [blockIdx, sq] : doc.controllerSequences())
         {
             std::cout << std::format(
