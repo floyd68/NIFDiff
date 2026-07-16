@@ -284,6 +284,10 @@ struct NifTimeController
     std::int32_t targetRef = kNoRef;         // Ptr -> the controlled NiObjectNET
     std::int32_t interpolatorRef = kNoRef;   // NiSingleInterpController only (else kNoRef)
     std::vector<std::int32_t> extraTargets;  // NiMultiTargetTransformController only
+    // NiControllerManager only:
+    bool cumulative = false;                 // accumulate transforms on the accum root
+    std::vector<std::int32_t> sequenceRefs;  // -> NiControllerSequence blocks
+    std::int32_t objectPaletteRef = kNoRef;  // -> NiDefaultAVObjectPalette
 
     enum class Cycle : std::uint16_t { Loop = 0, Reverse = 1, Clamp = 2 };
     Cycle cycleType() const { return static_cast<Cycle>((flags >> 1) & 3); }
@@ -447,6 +451,8 @@ private:
     // hasInterpolator, + the extra-targets list when hasExtraTargets).
     void parseTimeController(class NifIStream& in, int blockIndex, const std::string& typeName,
         bool hasInterpolator, bool hasExtraTargets);
+    NifTimeController readTimeControllerHeader(class NifIStream& in, const std::string& typeName);
+    void parseNiControllerManager(class NifIStream& in, int blockIndex);
     // NiSkinPartition (BS_SSE only - see NifDocument.cpp's scope note on
     // this parser): holds the actual rest-pose vertex/triangle/bone-weight
     // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer

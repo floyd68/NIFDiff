@@ -55,6 +55,13 @@ namespace
                 blockIdx, tc.typeName, tc.nextControllerRef, tc.targetRef, tc.interpolatorRef,
                 tc.extraTargets.size(), static_cast<unsigned>(tc.cycleType()), tc.active(),
                 tc.frequency, tc.startTime, tc.stopTime);
+            if (!tc.sequenceRefs.empty())
+            {
+                std::cout << "                  sequences:";
+                for (const auto s : tc.sequenceRefs)
+                    std::cout << ' ' << s;
+                std::cout << std::format("  palette={}\n", tc.objectPaletteRef);
+            }
         }
         for (const auto& [blockIdx, ti] : doc.transformInterpolators())
         {

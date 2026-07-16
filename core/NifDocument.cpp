@@ -362,6 +362,8 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseTimeController(in, i, t, /*hasInterpolator=*/true, /*hasExtraTargets=*/false);
         else if (t == "NiMultiTargetTransformController")
             parseTimeController(in, i, t, /*hasInterpolator=*/false, /*hasExtraTargets=*/true);
+        else if (t == "NiControllerManager")
+            parseNiControllerManager(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
         else
@@ -950,8 +952,7 @@ void NifDocument::parseNiTransformData(NifIStream& in, int blockIndex)
     m_transformData[blockIndex] = std::move(data);
 }
 
-void NifDocument::parseTimeController(NifIStream& in, int blockIndex, const std::string& typeName,
-    bool hasInterpolator, bool hasExtraTargets)
+NifTimeController NifDocument::readTimeControllerHeader(NifIStream& in, const std::string& typeName)
 {
     // NiTimeController common header (nif.xml line 3604). The "Unknown
     // Integer" tail is until=3.1 - absent in 20.2.0.7.
@@ -964,6 +965,13 @@ void NifDocument::parseTimeController(NifIStream& in, int blockIndex, const std:
     ctrl.startTime = in.f32();          // Start Time
     ctrl.stopTime = in.f32();           // Stop Time
     ctrl.targetRef = in.i32();          // Target (Ptr)
+    return ctrl;
+}
+
+void NifDocument::parseTimeController(NifIStream& in, int blockIndex, const std::string& typeName,
+    bool hasInterpolator, bool hasExtraTargets)
+{
+    NifTimeController ctrl = readTimeControllerHeader(in, typeName);
 
     if (hasInterpolator)
         ctrl.interpolatorRef = in.i32(); // NiSingleInterpController::Interpolator (Ref), since 10.1.0.104
@@ -977,6 +985,20 @@ void NifDocument::parseTimeController(NifIStream& in, int blockIndex, const std:
             ctrl.extraTargets.push_back(in.i32()); // Extra Targets (Ptr[])
     }
 
+    m_timeControllers[blockIndex] = std::move(ctrl);
+}
+
+void NifDocument::parseNiControllerManager(NifIStream& in, int blockIndex)
+{
+    // nif.xml line 4197: NiTimeController header + Cumulative + sequence refs
+    // + Object Palette ref.
+    NifTimeController ctrl = readTimeControllerHeader(in, "NiControllerManager");
+    ctrl.cumulative = in.boolean();               // Cumulative
+    const std::uint32_t numSequences = in.u32();  // Num Controller Sequences
+    ctrl.sequenceRefs.reserve(numSequences);
+    for (std::uint32_t i = 0; i < numSequences; ++i)
+        ctrl.sequenceRefs.push_back(in.i32());    // Controller Sequences (Ref[])
+    ctrl.objectPaletteRef = in.i32();             // Object Palette (Ref)
     m_timeControllers[blockIndex] = std::move(ctrl);
 }
 
