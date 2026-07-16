@@ -238,6 +238,9 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
         m_applyingSync = false;
     });
 
+    // A pane starting a camera tween asks the view to run the ~60fps stepper.
+    pane->Viewport().SetOnCameraAnimateRequested([this]() { EnsureCameraAnimTimer(); });
+
     pane->SetOnDocumentChanged([this]()
     {
         RefreshExtendedMaterialControls();
@@ -2145,13 +2148,20 @@ void NifCompareView::RecalcControlStripExtent()
 
 void NifCompareView::ApplyOrientationPreset(int index)
 {
-    // Unlike liteviewer's Left-is-primary/Right-mirrors-if-synced scheme,
-    // an orientation preset has no natural "primary" pane once there can be
-    // up to 4 - it always applies to every currently open pane.
-    for (auto& p : m_panes)
+    // Under Sync Views every pane shares one camera, so animating the active
+    // pane and letting the sync mirror carry the tween keeps them in lockstep;
+    // otherwise animate each pane so each keeps its own framing. (Unlike
+    // liteviewer's Left-primary scheme, a preset has no natural primary once
+    // there can be up to kMaxPanes - it targets every open pane.)
+    if (m_syncViews)
     {
-        p->Viewport().GetCamera().setPreset(index);
-        p->Viewport().Invalidate();
+        if (NifComparePane* active = ActivePane())
+            active->Viewport().AnimateToPreset(index);
+    }
+    else
+    {
+        for (auto& p : m_panes)
+            p->Viewport().AnimateToPreset(index);
     }
 }
 
@@ -2182,6 +2192,38 @@ void NifCompareView::TimerThunk(HWND hwnd, UINT /*msg*/, UINT_PTR idEvent, DWORD
     // window, alive for the whole session).
     auto* self = reinterpret_cast<NifCompareView*>(idEvent);
     self->ProcessPendingCloses();
+}
+
+void NifCompareView::EnsureCameraAnimTimer()
+{
+    if (m_cameraAnimTimerRunning)
+        return;
+    FD2D::Backplate* bp = BackplateRef();
+    if (!bp || !bp->Window())
+        return;
+    m_cameraAnimTimerRunning = true;
+    // nIDEvent = this+1 keeps it distinct from the pending-close timer (this).
+    ::SetTimer(bp->Window(), reinterpret_cast<UINT_PTR>(this) + 1, 16, &NifCompareView::CameraAnimThunk);
+}
+
+void NifCompareView::CameraAnimThunk(HWND /*hwnd*/, UINT /*msg*/, UINT_PTR idEvent, DWORD /*dwTime*/)
+{
+    reinterpret_cast<NifCompareView*>(idEvent - 1)->TickCameraAnimations();
+}
+
+void NifCompareView::TickCameraAnimations()
+{
+    const unsigned long long now = GetTickCount64();
+    bool any = false;
+    for (auto& p : m_panes)
+        if (p && p->Viewport().TickCameraAnimation(now))
+            any = true;
+    if (any)
+        return;
+    // All tweens finished: stop the timer until the next animation is requested.
+    if (FD2D::Backplate* bp = BackplateRef(); bp && bp->Window())
+        ::KillTimer(bp->Window(), reinterpret_cast<UINT_PTR>(this) + 1);
+    m_cameraAnimTimerRunning = false;
 }
 
 void NifCompareView::ProcessPendingCloses()

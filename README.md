@@ -53,6 +53,16 @@ own copies.
   scene), and the mouse wheel zooms toward the cursor - together with
   clip planes that adapt to the scene's size, this keeps tiny
   silverware and huge exteriors equally navigable.
+- **Navigation** (Maya/Blender-style, dual scheme): left-drag orbits,
+  middle/right-drag pans, wheel zooms toward the cursor; the same actions
+  are also on the DCC-standard **Alt chords** - `Alt`+left-drag orbit,
+  `Alt`+middle-drag pan, `Alt`+right-drag dolly-zoom - so users of any 3D
+  package feel at home. When a sub-mesh is selected the orbit **pivots on
+  it** (a rigid rotation of the whole rig, so the selection stays put on
+  screen while the rest revolves around it) rather than the scene center.
+  Preset snaps (the orientation dropdown / `PgUp`/`PgDn`) and Center/Focus
+  **animate** smoothly (~180ms eased tween) instead of jumping, and the
+  transition mirrors across Sync-View panes in lockstep.
 - Orientation presets, Center/Reset view, wireframe/grid/axes toggles
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a

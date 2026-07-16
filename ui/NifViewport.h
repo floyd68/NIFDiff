@@ -82,9 +82,24 @@ public:
 
     Camera& GetCamera() { return m_camera; }
     const Camera& GetCamera() const { return m_camera; }
-    void SetCamera(const Camera& cam) { m_camera = cam; Invalidate(); }
+    void SetCamera(const Camera& cam) { m_camera = cam; m_camAnimating = false; Invalidate(); }
     using CameraChangedHandler = std::function<void(const Camera&)>;
     void SetOnCameraChanged(CameraChangedHandler handler) { m_onCameraChanged = std::move(handler); }
+
+    // Smooth camera transitions (preset snaps, focus framing). AnimateCameraTo
+    // tweens orbit/distance/target over durMs and, on each step, fires
+    // onCameraChanged so Sync Views mirrors the interpolated frame. The owner
+    // (NifCompareView) drives the per-frame stepping through TickCameraAnimation
+    // and starts its timer via the animate-requested callback. A manual nav
+    // gesture (drag/wheel) cancels any in-flight animation.
+    void AnimateCameraTo(float yaw, float pitch, float distance, const Vector3& target,
+                         unsigned durationMs = kCameraAnimMs);
+    void AnimateToPreset(int presetIndex);      // keeps the current target/distance
+    bool TickCameraAnimation(unsigned long long nowMs); // true while still animating
+    bool IsAnimatingCamera() const { return m_camAnimating; }
+    using AnimateRequestedHandler = std::function<void()>;
+    void SetOnCameraAnimateRequested(AnimateRequestedHandler h) { m_onCameraAnimateRequested = std::move(h); }
+    static constexpr unsigned kCameraAnimMs = 180;
 
     // Click-to-select (NifSkope-style): a left click that never turned into
     // an orbit drag ray-picks the nearest sub-mesh under the cursor, which
@@ -197,6 +212,14 @@ private:
     void EnsureD2DTarget();
     void UpdateFrontalLight();
     int PickMeshAt(POINT pt) const; // -1 when no mesh under pt
+    // World-space bbox center of the selected sub-mesh, or the current orbit
+    // target when nothing is selected - the pivot an orbit revolves around.
+    Vector3 SelectionCenterOrTarget() const;
+    // Rigidly rotate the whole camera rig (eye + look-at) around m_orbitPivot
+    // by the turntable delta, so orbiting a selected sub-mesh keeps it fixed
+    // on screen instead of re-aiming the view (reduces to a plain orbit when
+    // the pivot is the current target).
+    void OrbitAroundPivot(float deltaYawRad, float deltaPitchRad);
     // World-space ray through the given client pixel, from the same camera
     // basis/fov the render uses. False when the viewport has no size.
     bool RayThroughPoint(POINT pt, Vector3& outOrigin, Vector3& outDir) const;
@@ -237,18 +260,34 @@ private:
     // just on a resize.
     ID3D11Texture2D* m_d2dBitmapTex = nullptr;
 
+    // Two overlapping navigation schemes share these flags: NIFDiff-native
+    // (LMB orbit / MMB-RMB pan / wheel zoom) and Maya/Blender-style Alt chords
+    // (Alt+LMB orbit / Alt+MMB pan / Alt+RMB dolly-zoom). Only one gesture is
+    // ever active at a time.
     bool m_dragging = false;
     bool m_dragMoved = false; // left drag actually orbited (a still click picks a mesh instead)
+    bool m_dragAlt = false;   // orbit started with Alt held -> never a pick on release
     bool m_panning = false;
     bool m_panMoved = false; // pan actually moved (right-click without movement bubbles up for the app context menu)
+    bool m_dollying = false; // Alt+RMB dolly-zoom drag (horizontal = zoom)
     POINT m_dragDownPt {};
     POINT m_panDownPt {};
     POINT m_lastMousePt {};
+    Vector3 m_orbitPivot; // cached at orbit-gesture start (selection center or target)
 
     int m_selectedMesh = -1; // index into m_meshes, -1 = none
 
+    // Camera-animation state (see AnimateCameraTo / TickCameraAnimation).
+    bool m_camAnimating = false;
+    unsigned long long m_camAnimStartMs = 0;
+    unsigned m_camAnimDurMs = 0;
+    float m_camAnimStartYaw = 0.0f, m_camAnimStartPitch = 0.0f, m_camAnimStartDist = 0.0f;
+    float m_camAnimEndYaw = 0.0f, m_camAnimEndPitch = 0.0f, m_camAnimEndDist = 0.0f;
+    Vector3 m_camAnimStartTarget, m_camAnimEndTarget;
+
     CameraChangedHandler m_onCameraChanged {};
     SelectionChangedHandler m_onSelectionChanged {};
+    AnimateRequestedHandler m_onCameraAnimateRequested {};
 };
 
 } // namespace nsk

@@ -305,6 +305,13 @@ private:
     void ProcessPendingCloses();
     static void CALLBACK TimerThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
 
+    // ~60fps timer that steps every pane's camera tween until none are
+    // animating (started on demand by a pane's animate-requested callback).
+    void EnsureCameraAnimTimer();
+    void TickCameraAnimations();
+    static void CALLBACK CameraAnimThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
+    bool m_cameraAnimTimerRunning = false;
+
     std::vector<std::shared_ptr<NifComparePane>> m_panes;
     NifComparePane* m_activePane = nullptr; // read through ActivePane() - validates + falls back
     NifComparePane* m_dragOverlayPane = nullptr;

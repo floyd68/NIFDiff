@@ -19,6 +19,23 @@ namespace
     // to pass through the clicked pixel.
     constexpr float kFovY = 0.9f;
 
+    // Rotate v about the world +Y axis by `a`, matching Camera::forwardVector's
+    // yaw convention (yaw 0 = +Z, increasing yaw turns toward +X).
+    Vector3 RotateAboutY(const Vector3& v, float a)
+    {
+        const float c = std::cos(a), s = std::sin(a);
+        return Vector3(v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c);
+    }
+
+    // Rodrigues rotation of v about unit axis k by angle a.
+    Vector3 RotateAboutAxis(const Vector3& v, const Vector3& k, float a)
+    {
+        const float c = std::cos(a), s = std::sin(a);
+        const Vector3 kxv = Vector3::crossproduct(k, v);
+        const float kdotv = Vector3::dotproduct(k, v);
+        return v * c + kxv * s + k * (kdotv * (1.0f - c));
+    }
+
     // Moller-Trumbore, both-sided (picking ignores backface culling, like
     // NifSkope's selection). Returns the ray parameter in outT on hit.
     bool RayIntersectsTriangle(
@@ -200,6 +217,7 @@ void NifViewport::FrameCameraToScene()
     // it is done FIRST (before any texture work) - the model is framed correctly
     // the instant it first draws, untextured, rather than jumping once textures
     // finish loading.
+    m_camAnimating = false; // a fresh frame (load / Reset View) supersedes any tween
     Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
     bool any = false;
     for (const RenderMesh& mesh : m_meshes)
@@ -427,8 +445,30 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // clicks that actually landed on a Splitter's drag handle.
         if (!event.hasPoint || !FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
             break;
-        if (event.button == MouseButton::Left) { m_dragging = true; m_dragMoved = false; m_dragDownPt = event.point; m_lastMousePt = event.point; RequestFocus(); return true; }
-        if (event.button == MouseButton::Middle || event.button == MouseButton::Right) { m_panning = true; m_panMoved = false; m_panDownPt = event.point; m_lastMousePt = event.point; RequestFocus(); return true; }
+        m_camAnimating = false; // a manual gesture cancels any camera tween
+        // LMB (or Alt+LMB) orbits; Alt+LMB never resolves to a pick on release.
+        if (event.button == MouseButton::Left)
+        {
+            m_dragging = true; m_dragMoved = false; m_dragAlt = event.modifiers.alt;
+            m_dragDownPt = event.point; m_lastMousePt = event.point;
+            m_orbitPivot = SelectionCenterOrTarget(); // pivot fixed for this gesture
+            RequestFocus(); return true;
+        }
+        // MMB (and Alt+MMB) pan.
+        if (event.button == MouseButton::Middle)
+        {
+            m_panning = true; m_panMoved = false;
+            m_panDownPt = event.point; m_lastMousePt = event.point;
+            RequestFocus(); return true;
+        }
+        // Alt+RMB is a Maya-style dolly-zoom; plain RMB pans (and, without
+        // movement, bubbles up as the app context menu).
+        if (event.button == MouseButton::Right)
+        {
+            if (event.modifiers.alt) { m_dollying = true; m_lastMousePt = event.point; }
+            else { m_panning = true; m_panMoved = false; m_panDownPt = event.point; m_lastMousePt = event.point; }
+            RequestFocus(); return true;
+        }
         break;
 
     case InputEventType::MouseUp:
@@ -439,10 +479,15 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         {
             m_dragging = false;
             // A left click that never crossed the drag-jitter threshold is a
-            // pick, not an orbit: select the sub-mesh under the cursor (or
-            // clear the selection when the click lands on empty space).
-            if (!m_dragMoved && event.hasPoint)
+            // pick, not an orbit (unless it was an explicit Alt+LMB orbit):
+            // select the sub-mesh under the cursor (or clear it on empty space).
+            if (!m_dragMoved && !m_dragAlt && event.hasPoint)
                 SetSelectedMesh(PickMeshAt(event.point));
+            return true;
+        }
+        if (event.button == MouseButton::Right && m_dollying)
+        {
+            m_dollying = false;
             return true;
         }
         if ((event.button == MouseButton::Middle || event.button == MouseButton::Right) && m_panning)
@@ -468,6 +513,8 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
             m_dragging = false;
         if (m_panning && !event.modifiers.middleButton && !event.modifiers.rightButton)
             m_panning = false;
+        if (m_dollying && !event.modifiers.rightButton)
+            m_dollying = false;
         float dx = static_cast<float>(event.point.x - m_lastMousePt.x);
         float dy = static_cast<float>(event.point.y - m_lastMousePt.y);
         if (m_dragging)
@@ -482,7 +529,7 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
             }
             if (m_dragMoved)
             {
-                m_camera.orbit(dx * 0.01f, dy * 0.01f);
+                OrbitAroundPivot(dx * 0.01f, dy * 0.01f); // pivots on the selection
                 if (m_onCameraChanged) m_onCameraChanged(m_camera);
                 Invalidate();
             }
@@ -503,6 +550,18 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
             Invalidate();
             return true;
         }
+        if (m_dollying)
+        {
+            // Maya-style Alt+RMB dolly: horizontal drag scales the eye
+            // distance about the target (right = closer). Exponential per
+            // pixel keeps the feel scale-independent; Shift is finer.
+            const float perPixel = event.modifiers.shift ? 0.9985f : 0.994f;
+            m_camera.setDistance(m_camera.distance() * std::pow(perPixel, dx));
+            m_lastMousePt = event.point;
+            if (m_onCameraChanged) m_onCameraChanged(m_camera);
+            Invalidate();
+            return true;
+        }
         break;
     }
 
@@ -516,6 +575,7 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // notch: fast to traverse a large scene, still fine near the target
         // since 20% of a small distance is small). Shift = 4x finer per notch
         // for precise framing.
+        m_camAnimating = false; // a manual zoom cancels any camera tween
         const float perNotch = event.modifiers.shift ? 0.95f : 0.8f;
         const float delta = static_cast<float>(event.wheelDelta) / 120.0f;
         const float d = m_camera.distance();
@@ -775,9 +835,120 @@ void NifViewport::FocusOnSelection()
         }
     }
 
-    m_camera.frame(center, radius); // keeps the current yaw/pitch
-    if (m_onCameraChanged) m_onCameraChanged(m_camera);
+    // Frame keeps the current yaw/pitch; animate target + distance to it.
+    const float dist = (std::max)(radius * 2.2f, 0.01f);
+    AnimateCameraTo(m_camera.yaw(), m_camera.pitch(), dist, center);
+}
+
+Vector3 NifViewport::SelectionCenterOrTarget() const
+{
+    if (const RenderMesh* sel = SelectedMesh(); sel && sel->geometry)
+    {
+        Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
+        bool any = false;
+        for (const Vector3& p : sel->geometry->positions)
+        {
+            Vector3 wp = sel->worldTransform * p;
+            minB.boundMin(wp);
+            maxB.boundMax(wp);
+            any = true;
+        }
+        if (any)
+            return (minB + maxB) * 0.5f;
+    }
+    return m_camera.target();
+}
+
+void NifViewport::OrbitAroundPivot(float deltaYawRad, float deltaPitchRad)
+{
+    const Vector3 P = m_orbitPivot;
+    Vector3 e = m_camera.eyePosition() - P; // eye relative to the pivot
+
+    // Apply the turntable delta to the camera (clamps pitch at the poles), then
+    // rotate the eye offset by the SAME rotation so the whole rig revolves
+    // rigidly about P: yaw about world-Y, then pitch about the (post-yaw) right
+    // axis (invariant under pitch, so it can be read off the new forward).
+    const float pitch0 = m_camera.pitch();
+    m_camera.orbit(deltaYawRad, deltaPitchRad);
+    const float appliedPitch = m_camera.pitch() - pitch0;
+
+    e = RotateAboutY(e, deltaYawRad);
+    Vector3 f = m_camera.forwardVector();
+    f.normalize();
+    Vector3 right = Vector3::crossproduct(Vector3(0.0f, 1.0f, 0.0f), f);
+    if (right.squaredLength() < 1e-8f)
+        right = Vector3(1.0f, 0.0f, 0.0f);
+    right.normalize();
+    // A +pitch about right = cross(Y,F) tilts F's y DOWN, but Camera::orbit
+    // raises pitch (F.y up), so the eye offset must rotate by the negated
+    // applied pitch to revolve around the pivot (otherwise vertical drag reads
+    // as a camera-relative tilt rather than an orbit about the selection).
+    e = RotateAboutAxis(e, right, -appliedPitch);
+
+    // Keep the eye at P+e; the look-at target follows from the new forward so
+    // eyePosition() == P + e still holds (target = eye + forward*distance).
+    m_camera.setTarget((P + e) + f * m_camera.distance());
+}
+
+void NifViewport::AnimateCameraTo(float yaw, float pitch, float distance,
+                                  const Vector3& target, unsigned durationMs)
+{
+    // Snapshot the start pose.
+    m_camAnimStartYaw = m_camera.yaw();
+    m_camAnimStartPitch = m_camera.pitch();
+    m_camAnimStartDist = m_camera.distance();
+    m_camAnimStartTarget = m_camera.target();
+
+    // Shortest-path yaw so a Back<->Front snap doesn't wind the long way round.
+    float dyaw = yaw - m_camAnimStartYaw;
+    while (dyaw > NSK_PI)  dyaw -= 2.0f * NSK_PI;
+    while (dyaw < -NSK_PI) dyaw += 2.0f * NSK_PI;
+    m_camAnimEndYaw = m_camAnimStartYaw + dyaw;
+    m_camAnimEndPitch = std::clamp(pitch, -1.55f, 1.55f);
+    m_camAnimEndDist = (std::max)(distance, 0.01f);
+    m_camAnimEndTarget = target;
+
+    if (durationMs == 0)
+    {
+        m_camera.setOrbit(m_camAnimEndYaw, m_camAnimEndPitch);
+        m_camera.setDistance(m_camAnimEndDist);
+        m_camera.setTarget(m_camAnimEndTarget);
+        m_camAnimating = false;
+        if (m_onCameraChanged) m_onCameraChanged(m_camera);
+        Invalidate();
+        return;
+    }
+    m_camAnimDurMs = durationMs;
+    m_camAnimStartMs = GetTickCount64();
+    m_camAnimating = true;
+    if (m_onCameraAnimateRequested) m_onCameraAnimateRequested();
+}
+
+void NifViewport::AnimateToPreset(int presetIndex)
+{
+    float yaw = 0.0f, pitch = 0.0f;
+    Camera::presetOrbit(presetIndex, yaw, pitch);
+    AnimateCameraTo(yaw, pitch, m_camera.distance(), m_camera.target());
+}
+
+bool NifViewport::TickCameraAnimation(unsigned long long nowMs)
+{
+    if (!m_camAnimating)
+        return false;
+    const float t = (m_camAnimDurMs == 0)
+        ? 1.0f
+        : static_cast<float>(nowMs - m_camAnimStartMs) / static_cast<float>(m_camAnimDurMs);
+    const bool done = t >= 1.0f;
+    const float e = done ? 1.0f : (t * t * (3.0f - 2.0f * t)); // smoothstep ease-in-out
+    m_camera.setOrbit(m_camAnimStartYaw + (m_camAnimEndYaw - m_camAnimStartYaw) * e,
+                      m_camAnimStartPitch + (m_camAnimEndPitch - m_camAnimStartPitch) * e);
+    m_camera.setDistance(m_camAnimStartDist + (m_camAnimEndDist - m_camAnimStartDist) * e);
+    m_camera.setTarget(m_camAnimStartTarget + (m_camAnimEndTarget - m_camAnimStartTarget) * e);
+    if (done)
+        m_camAnimating = false;
+    if (m_onCameraChanged) m_onCameraChanged(m_camera); // drives Sync Views mirroring
     Invalidate();
+    return !done;
 }
 
 void NifViewport::SetShowHiddenNodes(bool show)

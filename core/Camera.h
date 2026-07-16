@@ -56,14 +56,18 @@ public:
     void setTarget(const Vector3& t) { m_target = t; }
     const Vector3& target() const { return m_target; }
 
+    // Current orbit angles (for camera-animation snapshots / interpolation).
+    float yaw() const { return m_yaw; }
+    float pitch() const { return m_pitch; }
+
     void frame(const Vector3& center, float radius)
     {
         m_target = center;
         m_distance = std::max(radius * 2.2f, 0.01f);
     }
 
-    // Preset orientations, mirroring GLView's View > Front/Back/Left/Right/Top/Bottom.
-    void setPreset(int presetIndex)
+    // Preset orbit angles, mirroring GLView's View > Front/Back/Left/Right/Top/Bottom.
+    static void presetOrbit(int presetIndex, float& yaw, float& pitch)
     {
         static const float kPresets[6][2] = {
             {0.0f, 0.0f},               // Front
@@ -74,8 +78,13 @@ public:
             {0.0f, -(NSK_PI * 0.5f - 0.001f)}, // Bottom
         };
         int i = std::clamp(presetIndex, 0, 5);
-        m_yaw = kPresets[i][0];
-        m_pitch = kPresets[i][1];
+        yaw = kPresets[i][0];
+        pitch = kPresets[i][1];
+    }
+
+    void setPreset(int presetIndex)
+    {
+        presetOrbit(presetIndex, m_yaw, m_pitch);
     }
 
     Vector3 eyePosition() const
