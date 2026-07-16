@@ -63,6 +63,14 @@ own copies.
   Preset snaps (the orientation dropdown / `PgUp`/`PgDn`) and Center/Focus
   **animate** smoothly (~180ms eased tween) instead of jumping, and the
   transition mirrors across Sync-View panes in lockstep.
+- **On-screen axis gizmo** (Blender-style, per pane): a small XYZ widget in
+  each pane's top-left corner projects the six world axes (X red, Y green,
+  Z blue; positive axes lettered and lined, negatives as hollow rings) through
+  the live camera, so the current orbit orientation is readable at a glance -
+  axes pointing toward you are opaque, those pointing away fade back. **Click
+  an axis nub** to animation-snap to that view (e.g. the `Y` nub → top-down),
+  matching the orientation presets; the snap mirrors across Sync-View panes and
+  never selects the mesh behind the widget.
 - Orientation presets, Center/Reset view, wireframe/grid/axes toggles
   (plus a "Hidden" toggle for NiAVObject-hidden marker subtrees),
   brightness/ambient sliders, light declination/planar angle, and a

@@ -26,6 +26,7 @@
 
 #include <Wnd.h>
 #include <d2d1_1.h>
+#include <array>
 #include <functional>
 #include <memory>
 
@@ -236,6 +237,16 @@ private:
     bool RayThroughPoint(POINT pt, Vector3& outOrigin, Vector3& outDir) const;
     void SetSelectedMesh(int index);
 
+    // On-screen orientation gizmo (Phase 3): a Blender-style axis widget in the
+    // viewport's top-left corner. DrawNavGizmo projects the six world axes
+    // (+/-X/Y/Z) through the current camera basis into colored nubs so the
+    // widget always shows the live orbit orientation; clicking a nub
+    // animation-snaps the view to look straight down that axis. Nub screen
+    // positions are cached each OnRender for hit-testing in OnInputEvent.
+    void DrawNavGizmo(ID2D1RenderTarget* target);
+    int  HitTestGizmo(POINT pt) const; // nub index under pt, -1 = none
+    void SnapToGizmoAxis(int nubIndex); // animate to look down that nub's axis
+
     const NifDocument* m_doc = nullptr;
     std::vector<RenderMesh> m_meshes;
     Vector3 m_sceneCenter;       // world bounds of the current mesh list,
@@ -288,6 +299,26 @@ private:
     Vector3 m_orbitPivot; // cached at orbit-gesture start (selection center or target)
 
     int m_selectedMesh = -1; // index into m_meshes, -1 = none
+
+    // On-screen orientation gizmo state (see DrawNavGizmo / HitTestGizmo). The
+    // nub positions are recomputed each frame from the camera basis; depth is
+    // the axis' component along the view forward (>0 = pointing away from the
+    // viewer) and drives both the far-to-near draw order and the alpha fade.
+    struct GizmoNub
+    {
+        D2D1_POINT_2F pos {}; // screen position (viewport-local DIPs)
+        Vector3 axis;         // the world axis this nub represents (unit)
+        int colorAxis = 0;    // 0=X(red) 1=Y(green) 2=Z(blue)
+        bool positive = true; // positive axes get a filled nub + letter + line
+        float depth = 0.0f;   // dot(axis, forward): >0 away from viewer
+    };
+    bool m_navGizmoEnabled = true;
+    bool m_gizmoLive = false;          // geometry below is valid this frame
+    D2D1_POINT_2F m_gizmoCenter {};
+    float m_gizmoRadius = 0.0f;
+    std::array<GizmoNub, 6> m_gizmoNubs {};
+    int m_gizmoHover = -1;             // nub index under the cursor, -1 = none
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_gizmoLetterFormat;
 
     // Camera-animation state (see AnimateCameraTo / TickCameraAnimation).
     bool m_camAnimating = false;

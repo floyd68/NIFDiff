@@ -439,6 +439,10 @@ void NifViewport::OnRender(ID2D1RenderTarget* target)
             target->DrawTextW(text, 8u, m_loadingFormat.Get(), destRect, brush.Get());
         }
     }
+
+    // On-screen orientation gizmo (top-left corner): always drawn on top of the
+    // scene so the current orbit orientation is readable and clickable.
+    DrawNavGizmo(target);
 }
 
 bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
@@ -457,6 +461,19 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         // clicks that actually landed on a Splitter's drag handle.
         if (!event.hasPoint || !FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
             break;
+        // Orientation gizmo takes clicks before the orbit/pick logic: an LMB on
+        // an axis nub animation-snaps to that view instead of starting an orbit.
+        if (event.button == MouseButton::Left)
+        {
+            const int nub = HitTestGizmo(event.point);
+            if (nub >= 0)
+            {
+                m_camAnimating = false;
+                SnapToGizmoAxis(nub);
+                RequestFocus();
+                return true;
+            }
+        }
         m_camAnimating = false; // a manual gesture cancels any camera tween
         // LMB (or Alt+LMB) orbits; Alt+LMB never resolves to a pick on release.
         if (event.button == MouseButton::Left)
@@ -517,6 +534,18 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
     case InputEventType::MouseMove:
     {
         if (!event.hasPoint) break;
+        // Gizmo hover highlight (only while no nav gesture is active - a plain
+        // MouseMove doesn't repaint on its own, so re-invalidate when the
+        // hovered nub changes).
+        if (!m_dragging && !m_panning && !m_dollying)
+        {
+            const int hover = HitTestGizmo(event.point);
+            if (hover != m_gizmoHover)
+            {
+                m_gizmoHover = hover;
+                Invalidate();
+            }
+        }
         // Self-heal a lost button-up: if the drag/pan's button is no longer
         // held (the release landed on another control that consumed it - e.g.
         // dragging out of the viewport onto a checkbox), stop tracking so the
@@ -617,6 +646,14 @@ bool NifViewport::OnInputEvent(const FD2D::InputEvent& event)
         if (event.button != MouseButton::Left || !event.hasPoint ||
             !FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
             break;
+        // A double-click landing on the gizmo is just a repeated axis snap, not
+        // a focus-on-selection (which would pick the mesh behind the widget).
+        if (const int nub = HitTestGizmo(event.point); nub >= 0)
+        {
+            m_camAnimating = false;
+            SnapToGizmoAxis(nub);
+            return true;
+        }
         // Double-click focuses: on a mesh it selects + frames that mesh,
         // on empty space it re-frames the whole scene (keeping the orbit).
         const int hit = PickMeshAt(event.point);
@@ -1051,6 +1088,203 @@ int NifViewport::PickMeshAt(POINT pt) const
         }
     }
     return best;
+}
+
+namespace
+{
+    // Axis colors matching the in-scene world axes (X red, Y green, Z blue).
+    D2D1_COLOR_F GizmoAxisColor(int colorAxis, float alpha)
+    {
+        switch (colorAxis)
+        {
+        case 0:  return D2D1::ColorF(0.91f, 0.30f, 0.34f, alpha); // X
+        case 1:  return D2D1::ColorF(0.52f, 0.78f, 0.30f, alpha); // Y
+        default: return D2D1::ColorF(0.30f, 0.56f, 0.96f, alpha); // Z
+        }
+    }
+}
+
+void NifViewport::DrawNavGizmo(ID2D1RenderTarget* target)
+{
+    m_gizmoLive = false;
+    if (!m_navGizmoEnabled || !target)
+        return;
+
+    const D2D1_RECT_F rect = LayoutRect();
+    if (rect.right - rect.left < 120.0f || rect.bottom - rect.top < 120.0f)
+        return; // too cramped to be useful (tiny pane)
+
+    // Widget geometry: a small disc of axis nubs in the top-left corner, just
+    // inside the viewport (clear of the top path strip and the material panel,
+    // which lives top-right).
+    constexpr float kRadius = 34.0f;   // center -> axis-nub distance
+    constexpr float kMargin = 18.0f;
+    const D2D1_POINT_2F center { rect.left + kMargin + kRadius,
+                                 rect.top + kMargin + kRadius };
+    m_gizmoCenter = center;
+    m_gizmoRadius = kRadius;
+
+    // Camera basis, identical to viewMatrix()/RayThroughPoint so the widget
+    // agrees with what is rendered.
+    Vector3 forward = m_camera.forwardVector();
+    forward.normalize();
+    const Vector3 worldUp(0.0f, 1.0f, 0.0f);
+    Vector3 right = Vector3::crossproduct(worldUp, forward);
+    if (right.squaredLength() < 1e-8f)
+        right = Vector3(1.0f, 0.0f, 0.0f);
+    right.normalize();
+    Vector3 up = Vector3::crossproduct(forward, right);
+    up.normalize();
+
+    struct AxisDef { Vector3 dir; int colorAxis; bool positive; const wchar_t* label; };
+    static const AxisDef defs[6] = {
+        { Vector3( 1.0f, 0.0f, 0.0f), 0, true,  L"X" },
+        { Vector3(-1.0f, 0.0f, 0.0f), 0, false, L""  },
+        { Vector3( 0.0f, 1.0f, 0.0f), 1, true,  L"Y" },
+        { Vector3( 0.0f,-1.0f, 0.0f), 1, false, L""  },
+        { Vector3( 0.0f, 0.0f, 1.0f), 2, true,  L"Z" },
+        { Vector3( 0.0f, 0.0f,-1.0f), 2, false, L""  },
+    };
+
+    // Project each axis: x/y across the screen plane (y flips for pixel space),
+    // depth along the forward axis (>0 = pointing away from the viewer).
+    for (int i = 0; i < 6; ++i)
+    {
+        const Vector3& d = defs[i].dir;
+        const float sx = Vector3::dotproduct(d, right);
+        const float sy = Vector3::dotproduct(d, up);
+        m_gizmoNubs[i].pos = { center.x + sx * kRadius, center.y - sy * kRadius };
+        m_gizmoNubs[i].axis = d;
+        m_gizmoNubs[i].colorAxis = defs[i].colorAxis;
+        m_gizmoNubs[i].positive = defs[i].positive;
+        m_gizmoNubs[i].depth = Vector3::dotproduct(d, forward);
+    }
+    m_gizmoLive = true;
+
+    // Faint backing disc for legibility over bright models.
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush;
+    if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.09f, 0.10f, 0.12f, 0.42f), &bgBrush)))
+    {
+        D2D1_ELLIPSE disc = D2D1::Ellipse(center, kRadius + 14.0f, kRadius + 14.0f);
+        target->FillEllipse(disc, bgBrush.Get());
+    }
+
+    if (!m_gizmoLetterFormat)
+    {
+        if (IDWriteFactory* dw = FD2D::Core::DWriteFactory())
+        {
+            if (SUCCEEDED(dw->CreateTextFormat(L"Segoe UI", nullptr,
+                    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL, 11.0f, L"", &m_gizmoLetterFormat)))
+            {
+                m_gizmoLetterFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                m_gizmoLetterFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+        }
+    }
+
+    // Draw far-to-near so nubs pointing toward the viewer land on top.
+    int order[6] = { 0, 1, 2, 3, 4, 5 };
+    std::sort(order, order + 6, [this](int a, int b) { return m_gizmoNubs[a].depth > m_gizmoNubs[b].depth; });
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush, textBrush, hollowBrush;
+    target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f), &brush);
+    target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.11f, 0.13f), &textBrush);
+    target->CreateSolidColorBrush(D2D1::ColorF(0.13f, 0.14f, 0.17f), &hollowBrush);
+    if (!brush)
+        return;
+
+    for (int idx = 0; idx < 6; ++idx)
+    {
+        const int i = order[idx];
+        const GizmoNub& nub = m_gizmoNubs[i];
+        // Fade with depth: nearest (depth=-1) fully opaque, farthest (+1) dim.
+        const float a = 0.45f + 0.55f * (0.5f - 0.5f * nub.depth);
+        const bool hovered = (i == m_gizmoHover);
+        const D2D1_COLOR_F col = GizmoAxisColor(nub.colorAxis, hovered ? 1.0f : a);
+
+        // Positive axes get a stem line from the center to the nub.
+        if (nub.positive)
+        {
+            brush->SetColor(col);
+            target->DrawLine(center, nub.pos, brush.Get(), 2.0f);
+        }
+
+        const float r = (nub.positive ? 8.5f : 6.0f) + (hovered ? 2.0f : 0.0f);
+        D2D1_ELLIPSE e = D2D1::Ellipse(nub.pos, r, r);
+        if (nub.positive)
+        {
+            brush->SetColor(col);
+            target->FillEllipse(e, brush.Get());
+            if (hovered)
+            {
+                brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f));
+                target->DrawEllipse(e, brush.Get(), 1.5f);
+            }
+            if (m_gizmoLetterFormat && textBrush)
+            {
+                const D2D1_RECT_F lr { nub.pos.x - r, nub.pos.y - r, nub.pos.x + r, nub.pos.y + r };
+                target->DrawTextW(defs[i].label, 1u, m_gizmoLetterFormat.Get(), lr, textBrush.Get());
+            }
+        }
+        else
+        {
+            // Negative axes: a hollow ring (filled with the disc color) so they
+            // read as "the back side" of each axis.
+            if (hollowBrush)
+                target->FillEllipse(e, hollowBrush.Get());
+            brush->SetColor(col);
+            target->DrawEllipse(e, brush.Get(), hovered ? 2.5f : 1.8f);
+        }
+    }
+}
+
+int NifViewport::HitTestGizmo(POINT pt) const
+{
+    if (!m_gizmoLive || !m_navGizmoEnabled)
+        return -1;
+    // Prefer the nub nearest the viewer (smallest depth) among those the cursor
+    // is over, so a front nub wins when it overlaps a back one.
+    constexpr float kHitR = 11.0f;
+    int best = -1;
+    float bestDepth = 1e9f;
+    for (int i = 0; i < 6; ++i)
+    {
+        const float dx = static_cast<float>(pt.x) - m_gizmoNubs[i].pos.x;
+        const float dy = static_cast<float>(pt.y) - m_gizmoNubs[i].pos.y;
+        if (dx * dx + dy * dy <= kHitR * kHitR && m_gizmoNubs[i].depth < bestDepth)
+        {
+            bestDepth = m_gizmoNubs[i].depth;
+            best = i;
+        }
+    }
+    return best;
+}
+
+void NifViewport::SnapToGizmoAxis(int nubIndex)
+{
+    if (nubIndex < 0 || nubIndex >= 6)
+        return;
+    // Snap to the named-view orientation for the clicked axis, matching the
+    // View presets (Camera::presetOrbit): each preset looks *along* its axis
+    // (Top = forward +Y, Front = forward +Z, Left = forward +X, ...), so the
+    // +Y nub gives the bird's-eye Top view (not Bottom). Solve yaw/pitch from
+    // forward = (sin(yaw)cos(pitch), sin(pitch), cos(yaw)cos(pitch)) = axis.
+    const Vector3 f = m_gizmoNubs[nubIndex].axis;
+    float yaw, pitch;
+    if (std::abs(f[1]) > 0.9999f)
+    {
+        // Pole (Top/Bottom): keep the current heading so the view doesn't spin
+        // about vertical on the way there.
+        yaw = m_camera.yaw();
+        pitch = f[1] > 0.0f ? (NSK_PI * 0.5f) : -(NSK_PI * 0.5f);
+    }
+    else
+    {
+        yaw = std::atan2(f[0], f[2]);
+        pitch = std::asin(std::clamp(f[1], -1.0f, 1.0f));
+    }
+    AnimateCameraTo(yaw, pitch, m_camera.distance(), m_camera.target());
 }
 
 } // namespace nsk
