@@ -289,6 +289,9 @@ private:
     void UpdateIpcOpenSnapshot();
     void RecalcControlStripExtent();
     void ApplyOrientationPreset(int index);
+    // Numpad 5: flip orthographic/perspective on every pane (kept uniform so a
+    // side-by-side compare uses the same projection); new panes inherit it.
+    void ToggleProjection();
 
     // Deferred pane removal: a pane's own Close button cannot safely destroy
     // its owning NifComparePane synchronously from inside its own click
@@ -411,6 +414,7 @@ private:
     bool m_showNormals = false;          // vertex normal/tangent line overlays, mirrored onto new panes
     bool m_showTangents = false;
     bool m_msaaEnabled = true;           // 4x MSAA toggle, mirrored onto new panes
+    bool m_orthographic = false;         // ortho/persp projection, mirrored onto new panes
     bool m_enableTextures = true;        // render-channel toggles, mirrored onto new panes
     bool m_enableVertexColors = true;
     bool m_enableSpecular = true;

@@ -208,6 +208,7 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->Viewport().SetShowNormals(m_showNormals);
     pane->Viewport().SetShowTangents(m_showTangents);
     pane->Viewport().SetMsaaEnabled(m_msaaEnabled);
+    pane->Viewport().SetOrthographic(m_orthographic);
     pane->Viewport().SetEnableTextures(m_enableTextures);
     pane->Viewport().SetEnableVertexColors(m_enableVertexColors);
     pane->Viewport().SetEnableSpecular(m_enableSpecular);
@@ -1911,6 +1912,22 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_PRIOR: m_controls->CycleOrientation(-1); return true; // PgUp
     case VK_NEXT:  m_controls->CycleOrientation(+1); return true; // PgDn
 
+    // Blender-style numpad view presets (NumLock on; the numeric VKs are
+    // distinct from the nav-cluster ones, so they don't collide with the
+    // thumbnail Home/End or PgUp/PgDn cycling). Ctrl picks the opposite face.
+    case VK_NUMPAD1: m_controls->SetOrientation(ctrl ? 1 : 0); return true; // Front / Back
+    case VK_NUMPAD3: m_controls->SetOrientation(ctrl ? 2 : 3); return true; // Right / Left
+    case VK_NUMPAD7: m_controls->SetOrientation(ctrl ? 5 : 4); return true; // Top / Bottom
+    case VK_NUMPAD5: ToggleProjection(); return true;                   // ortho <-> perspective
+    case VK_DECIMAL: // Numpad . : frame the active pane's selection (whole scene when none)
+        if (NifComparePane* active = ActivePane())
+            active->Viewport().FocusOnSelection();
+        return true;
+    case VK_NUMPAD0: // frame the whole scene, keeping orientation (View All)
+        if (NifComparePane* active = ActivePane())
+            active->Viewport().FrameScene();
+        return true;
+
     // Thumbnail navigation on the active pane's strip (FICture2's browser
     // keys); each load syncs into the other panes via Sync Files.
     //   Left / ',' : previous sibling    Right / '.' : next sibling
@@ -2163,6 +2180,13 @@ void NifCompareView::ApplyOrientationPreset(int index)
         for (auto& p : m_panes)
             p->Viewport().AnimateToPreset(index);
     }
+}
+
+void NifCompareView::ToggleProjection()
+{
+    m_orthographic = !m_orthographic;
+    for (auto& p : m_panes)
+        p->Viewport().SetOrthographic(m_orthographic);
 }
 
 void NifCompareView::QueueClosePane(const std::wstring& paneName)

@@ -335,7 +335,19 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
     float nearZ = (std::max)((dist - sceneR) * 0.2f, dist * 0.02f);
     nearZ = (std::max)(nearZ, 1e-4f);
     const float farZ = (std::max)(dist + (std::max)(sceneR * 4.0f, 600.0f), nearZ * 100.0f);
-    m_settings.proj = Camera::projectionMatrix(kFovY, aspect, nearZ, farZ);
+    if (m_orthographic)
+    {
+        // View height matched to the perspective frustum at the target plane
+        // (same on-screen size when toggling); a wide symmetric depth range
+        // around the target keeps the scene + grid unclipped.
+        const float orthoH = 2.0f * dist * std::tan(kFovY * 0.5f);
+        const float margin = (std::max)(sceneR * 4.0f, 600.0f);
+        m_settings.proj = Camera::orthographicMatrix(orthoH, aspect, dist - margin, dist + margin);
+    }
+    else
+    {
+        m_settings.proj = Camera::projectionMatrix(kFovY, aspect, nearZ, farZ);
+    }
     m_settings.eyePos = m_camera.eyePosition();
     m_settings.selectedMesh = m_selectedMesh;
     // While the archive scan runs, BSA diffuse textures resolve to null (not
@@ -803,6 +815,20 @@ bool NifViewport::RayThroughPoint(POINT pt, Vector3& outOrigin, Vector3& outDir)
     Vector3 up = Vector3::crossproduct(forward, right);
     up.normalize();
 
+    if (m_orthographic)
+    {
+        // Parallel rays in ortho: direction is the view forward, and the origin
+        // slides across the eye plane by the pixel's world offset (same ortho
+        // height the projection uses).
+        const float orthoH = 2.0f * (std::max)(m_camera.distance(), 1e-4f) * tanHalf;
+        outOrigin = m_camera.eyePosition()
+                  + right * (ndcX * orthoH * aspect * 0.5f)
+                  + up * (ndcY * orthoH * 0.5f);
+        outDir = forward;
+        outDir.normalize();
+        return true;
+    }
+
     outOrigin = m_camera.eyePosition();
     outDir = right * (ndcX * tanHalf * aspect) + up * (ndcY * tanHalf) + forward;
     outDir.normalize();
@@ -838,6 +864,14 @@ void NifViewport::FocusOnSelection()
     // Frame keeps the current yaw/pitch; animate target + distance to it.
     const float dist = (std::max)(radius * 2.2f, 0.01f);
     AnimateCameraTo(m_camera.yaw(), m_camera.pitch(), dist, center);
+}
+
+void NifViewport::FrameScene()
+{
+    // Whole-scene bounds (computed at load into m_sceneCenter/m_sceneRadius),
+    // keeping the current orientation - "View All" ignoring any selection.
+    const float dist = (std::max)(m_sceneRadius * 2.2f, 0.01f);
+    AnimateCameraTo(m_camera.yaw(), m_camera.pitch(), dist, m_sceneCenter);
 }
 
 Vector3 NifViewport::SelectionCenterOrTarget() const

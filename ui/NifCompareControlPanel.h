@@ -69,6 +69,7 @@ public:
     void ToggleShowTangents();
     void ToggleMsaa();
     void CycleOrientation(int delta);
+    void SetOrientation(int index); // absolute preset (keyboard/numpad), syncs the combo label
 
     void SetOnBrightnessChanged(std::function<void(float)> handler);
     void SetOnAmbientChanged(std::function<void(float)> handler);

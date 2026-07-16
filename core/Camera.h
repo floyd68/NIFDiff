@@ -137,6 +137,24 @@ public:
         return m;
     }
 
+    // Left-handed orthographic (D3DXMatrixOrthoLH: z in [0,1]), same handedness
+    // as projectionMatrix. `height` is the view-volume height in world units
+    // (width = height*aspect); driving it from the eye distance keeps zoom
+    // meaningful in ortho and matches the perspective framing at the target.
+    static Matrix4 orthographicMatrix(float height, float aspect, float nearZ, float farZ)
+    {
+        Matrix4 m;
+        std::memset(&m.m[0][0], 0, sizeof(m.m));
+        const float w = std::max(height * aspect, 1e-4f);
+        const float h = std::max(height, 1e-4f);
+        m(0, 0) = 2.0f / w;
+        m(1, 1) = 2.0f / h;
+        m(2, 2) = 1.0f / (farZ - nearZ);
+        m(2, 3) = -nearZ / (farZ - nearZ);
+        m(3, 3) = 1.0f;
+        return m;
+    }
+
 private:
     // Same handedness as viewMatrix() (right = worldUp x forward, up =
     // forward x right), so pan()'s +x really is screen-right. The previous

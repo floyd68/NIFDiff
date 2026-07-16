@@ -164,6 +164,17 @@ public:
     void SetShowHiddenNodes(bool show);
     void ResetCamera();
 
+    // Orthographic vs perspective projection (Numpad 5). Ortho removes
+    // perspective foreshortening - ideal for lining up two meshes' silhouettes
+    // in a compare. The ortho view height is matched to the perspective frustum
+    // at the target plane so toggling never changes the model's on-screen size.
+    void SetOrthographic(bool on) { if (m_orthographic != on) { m_orthographic = on; Invalidate(); } }
+    bool IsOrthographic() const { return m_orthographic; }
+
+    // Frame the whole scene's bounds keeping the current orbit orientation
+    // (animated), regardless of any selection - "View All".
+    void FrameScene();
+
     // Frames the picked sub-mesh's world bounds (or the whole scene when
     // nothing is selected), keeping the current orbit orientation - the
     // remedy for scenes whose interesting meshes sit far off the overall
@@ -235,6 +246,7 @@ private:
     float m_lightPlanarAngleDeg = 45.0f;
     bool m_frontalLight = false;
     bool m_showHiddenNodes = false;
+    bool m_orthographic = false; // Numpad 5 toggles ortho/perspective projection
     bool m_msaaEnabled = true;
     bool m_loading = false; // draw the "Loading..." overlay
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_loadingFormat;

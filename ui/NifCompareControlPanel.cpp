@@ -345,6 +345,14 @@ void NifCompareControlPanel::CycleOrientation(int delta)
     m_orientationCombo->SetSelectedIndex(idx, /*notify=*/true);
 }
 
+void NifCompareControlPanel::SetOrientation(int index)
+{
+    // notify=true fires OnOrientationChanged -> ApplyOrientationPreset, so a
+    // keyboard/numpad preset drives the same path as picking from the dropdown
+    // (and the combo label stays in sync with the actual view).
+    m_orientationCombo->SetSelectedIndex(index, /*notify=*/true);
+}
+
 void NifCompareControlPanel::SetOnBrightnessChanged(std::function<void(float)> handler) { m_brightnessSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnAmbientChanged(std::function<void(float)> handler) { m_ambientSlider->OnValueChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnDeclinationChanged(std::function<void(float)> handler) { m_declinationSlider->OnValueChanged(std::move(handler)); }

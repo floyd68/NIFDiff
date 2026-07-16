@@ -90,9 +90,17 @@ own copies.
   so the group being compared against the focused pane stands out. The glow is
   chrome only, so every pane's 3D background stays identical and the model
   comparison isn't biased.
+- **Orthographic projection** (`Numpad 5`): drops perspective
+  foreshortening so two meshes' silhouettes line up 1:1 for a compare
+  (parallel edges stay parallel; the ortho view height matches the
+  perspective frustum at the target, so toggling never resizes the model).
+  Applied to every pane so the comparison stays on equal footing.
 - **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
   `W` wireframe, `H` hidden, `N` normals, `Shift+N` tangents, `M` MSAA,
-  `PgUp`/`PgDn` cycle the camera preset;
+  `PgUp`/`PgDn` cycle the camera preset. Blender-style numpad views
+  (NumLock on): `Numpad 1/3/7` = Front/Right/Top, `Ctrl+` the opposite
+  face, `Numpad 5` toggles ortho/perspective, `Numpad .` frames the
+  selection and `Numpad 0` frames the whole scene;
   pane-context keys acting on the active pane: `1`-`8` / `Tab` /
   `Shift+Tab` select it, `R` resets its camera, `C` focuses its
   selected sub-mesh, `Ctrl+O` opens a file into it, `Ctrl+Shift+O` opens one
