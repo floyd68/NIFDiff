@@ -70,6 +70,16 @@ own copies.
 - **Active pane** (FICture2's focused-browser equivalent): any click in
   a pane makes it active, drawn with an accent border while several
   panes are open; pane-context shortcuts target it.
+- **Synced/unique pane badges**: each pane shows a small corner badge -
+  teal "SYNCED" when another pane holds a file of the same name (the
+  compare-the-same-mesh-across-mods group), amber "UNIQUE" when its file
+  name is one of a kind - so an odd-one-out pane (e.g. a mod missing that
+  mesh, so a different file stayed loaded) is obvious at a glance. The panes
+  that share the ACTIVE pane's file name also get a green inner-glow frame
+  (fading inward from the edges; the active pane gets a stronger blue glow),
+  so the group being compared against the focused pane stands out. The glow is
+  chrome only, so every pane's 3D background stays identical and the model
+  comparison isn't biased.
 - **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
   `W` wireframe, `H` hidden, `N` normals, `Shift+N` tangents, `M` MSAA,
   `PgUp`/`PgDn` cycle the camera preset;

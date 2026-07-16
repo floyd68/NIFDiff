@@ -1340,6 +1340,114 @@ bool NifCompareView::HandleTextureInspectorClick(const POINT& pt)
     return true; // swallow clicks anywhere else on the panel
 }
 
+namespace
+{
+    // Lowercased file name of a path (empty when the path is empty), for the
+    // same-name "synced" comparison across panes.
+    std::wstring LowerBaseName(const std::wstring& path)
+    {
+        if (path.empty())
+            return {};
+        std::wstring name = std::filesystem::path(path).filename().wstring();
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+        return name;
+    }
+
+    // An inner-glow frame: `color` (at `edgeAlpha`) hugging the rect's edge and
+    // fading to transparent `thickness` px inward, on all four sides. Reads far
+    // better than a 1px line without covering the content.
+    void DrawInnerGlowBorder(ID2D1RenderTarget* target, const D2D1_RECT_F& r,
+                             D2D1_COLOR_F color, float edgeAlpha, float thickness)
+    {
+        const float t = (std::min)(thickness,
+                                   (std::min)((r.right - r.left) * 0.5f, (r.bottom - r.top) * 0.5f));
+        if (t <= 0.0f)
+            return;
+        color.a = edgeAlpha;
+        D2D1_COLOR_F clear = color;
+        clear.a = 0.0f;
+
+        auto strip = [&](const D2D1_RECT_F& rect, D2D1_POINT_2F edge, D2D1_POINT_2F in)
+        {
+            const D2D1_GRADIENT_STOP stops[2] = { { 0.0f, color }, { 1.0f, clear } };
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> coll;
+            if (FAILED(target->CreateGradientStopCollection(stops, 2, &coll)))
+                return;
+            Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush;
+            if (FAILED(target->CreateLinearGradientBrush({ edge, in }, coll.Get(), &brush)))
+                return;
+            target->FillRectangle(rect, brush.Get());
+        };
+
+        strip({ r.left, r.top, r.right, r.top + t }, { 0, r.top }, { 0, r.top + t });          // top
+        strip({ r.left, r.bottom - t, r.right, r.bottom }, { 0, r.bottom }, { 0, r.bottom - t }); // bottom
+        strip({ r.left, r.top, r.left + t, r.bottom }, { r.left, 0 }, { r.left + t, 0 });        // left
+        strip({ r.right - t, r.top, r.right, r.bottom }, { r.right, 0 }, { r.right - t, 0 });    // right
+    }
+}
+
+void NifCompareView::DrawSyncBadges(ID2D1RenderTarget* target)
+{
+    if (target == nullptr || m_panes.size() < 2)
+        return; // the synced/unique distinction only means something across panes
+
+    // Lowercased file name per pane (empty when the pane holds no file). Two
+    // panes are "synced" when they show the same file NAME (the compare-across-
+    // mods workflow - Sync Files loads a picked name into every pane's folder).
+    std::vector<std::wstring> names;
+    names.reserve(m_panes.size());
+    for (const auto& p : m_panes)
+        names.push_back(p ? LowerBaseName(p->CurrentPath()) : std::wstring());
+
+    if (!m_syncBadgeText)
+    {
+        FD2D::Core::DWriteFactory()->CreateTextFormat(L"Segoe UI", nullptr,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+            11.0f, L"", &m_syncBadgeText);
+        if (m_syncBadgeText)
+        {
+            m_syncBadgeText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_syncBadgeText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+    if (!m_syncBadgeText)
+        return;
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    for (std::size_t i = 0; i < m_panes.size(); ++i)
+    {
+        if (!m_panes[i] || names[i].empty())
+            continue;
+        bool synced = false;
+        for (std::size_t j = 0; j < names.size(); ++j)
+            if (j != i && names[j] == names[i]) { synced = true; break; }
+
+        const D2D1_RECT_F r = m_panes[i]->LayoutRect();
+        constexpr float bw = 64.0f, bh = 18.0f, pad = 8.0f;
+        const float top = r.top + 26.0f; // just below the path-label strip
+        const D2D1_RECT_F badge { r.right - pad - bw, top, r.right - pad, top + bh };
+        const D2D1_ROUNDED_RECT rr { badge, 4.0f, 4.0f };
+
+        // Synced: muted teal (the expected, aligned state). Unique: bright amber
+        // so the odd-one-out pane stands out.
+        const D2D1_COLOR_F fill = synced ? D2D1::ColorF(0.11f, 0.34f, 0.31f, 0.88f)
+                                         : D2D1::ColorF(0.44f, 0.30f, 0.07f, 0.90f);
+        const D2D1_COLOR_F edge = synced ? D2D1::ColorF(0.35f, 0.82f, 0.72f, 0.95f)
+                                         : D2D1::ColorF(0.98f, 0.72f, 0.28f, 0.98f);
+        if (SUCCEEDED(target->CreateSolidColorBrush(fill, &brush)))
+            target->FillRoundedRectangle(rr, brush.Get());
+        if (SUCCEEDED(target->CreateSolidColorBrush(edge, &brush)))
+            target->DrawRoundedRectangle(rr, brush.Get(), 1.0f);
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.95f, 0.97f, 1.0f), &brush)))
+        {
+            const wchar_t* label = synced ? L"SYNCED" : L"UNIQUE";
+            target->DrawTextW(label, static_cast<UINT32>(std::wcslen(label)),
+                              m_syncBadgeText.Get(), badge, brush.Get());
+        }
+    }
+}
+
 void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
 {
     FD2D::SplitPanel::OnRenderOverlay(target);
@@ -1348,19 +1456,34 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
 
     DrawMaterialDiffPanel(target);
     DrawTextureInspector(target);
+    DrawSyncBadges(target);
 
-    // Active-pane accent border (FICture2's focused-browser highlight).
-    // Only meaningful while several panes compete for the pane-context
-    // hotkeys; a single pane is trivially the active one.
+    // Active-pane accent border (FICture2's focused-browser highlight) + its
+    // sync group. Only meaningful while several panes compete for the
+    // pane-context hotkeys; a single pane is trivially the active one.
     if (m_panes.size() > 1)
     {
         if (NifComparePane* active = ActivePane())
         {
-            D2D1_RECT_F rc = active->LayoutRect();
-            rc.left += 1.0f; rc.top += 1.0f; rc.right -= 1.0f; rc.bottom -= 1.0f;
-            Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> accent;
-            if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.30f, 0.58f, 0.95f, 0.85f), &accent)))
-                target->DrawRectangle(rc, accent.Get(), 2.0f);
+            // The panes showing the SAME file name as the active pane get a
+            // green border, so the group being compared against the focused
+            // pane stands out. Drawn on the chrome only - the 3D backgrounds
+            // stay identical so the model comparison isn't biased.
+            const std::wstring activeName = LowerBaseName(active->CurrentPath());
+            if (!activeName.empty())
+            {
+                for (const auto& p : m_panes)
+                {
+                    if (!p || p.get() == active || LowerBaseName(p->CurrentPath()) != activeName)
+                        continue;
+                    DrawInnerGlowBorder(target, p->LayoutRect(),
+                                        D2D1::ColorF(0.35f, 0.82f, 0.48f), 0.55f, 10.0f); // green group
+                }
+            }
+
+            // The active pane's own inner glow, a touch stronger, on top.
+            DrawInnerGlowBorder(target, active->LayoutRect(),
+                                D2D1::ColorF(0.30f, 0.60f, 0.98f), 0.65f, 10.0f); // blue accent
         }
     }
 

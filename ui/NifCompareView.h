@@ -270,6 +270,9 @@ private:
     // the panel are consumed in OnInputEvent via the rects captured at
     // draw time.
     void DrawTextureInspector(ID2D1RenderTarget* target);
+    // Per-pane badge distinguishing panes that show the SAME file name as
+    // another pane (a synced compare group) from ones whose file is unique.
+    void DrawSyncBadges(ID2D1RenderTarget* target);
     bool HandleTextureInspectorClick(const POINT& pt);
     bool EnsureTexturePreview(ID2D1RenderTarget* target, NifComparePane& pane, const std::string& relPath);
 
@@ -334,6 +337,7 @@ private:
 
     bool m_showMaterialPanel = true; // 'I' toggles; shown only while something is selected
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_matPanelText; // lazy, device-independent
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_syncBadgeText; // lazy, centered badge label
 
     // Texture inspector state (see DrawTextureInspector).
     bool m_showTextureInspector = false; // 'T' toggles
