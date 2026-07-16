@@ -9,6 +9,7 @@
 // against the sample files in test_assets/.
 #include "../core/NifDocument.h"
 #include "../core/SceneBuilder.h"
+#include "../core/AnimController.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -90,6 +91,29 @@ namespace
                 td.xyzRotations[0].keys.size(), td.xyzRotations[1].keys.size(), td.xyzRotations[2].keys.size(),
                 td.translations.keys.size(), static_cast<unsigned>(td.translations.keyType),
                 td.scales.keys.size());
+
+            // Sample the rotation channel across its key range so the
+            // interpolation math can be eyeballed against NifSkope: derive
+            // the Y-euler angle from the matrix (exact for Y-only channels).
+            float tMin = 1e30f, tMax = -1e30f;
+            const auto scan = [&](float t) { tMin = (std::min)(tMin, t); tMax = (std::max)(tMax, t); };
+            for (const auto& k : td.quatKeys) scan(k.time);
+            for (const auto& g : td.xyzRotations)
+                for (const auto& k : g.keys) scan(k.time);
+            if (tMax > tMin)
+            {
+                std::cout << "                  rot samples:";
+                int lastIdx[3] = { 0, 0, 0 };
+                for (int s = 0; s <= 4; ++s)
+                {
+                    const float t = tMin + (tMax - tMin) * (static_cast<float>(s) / 4.0f);
+                    Matrix rot;
+                    if (nsk::anim::sampleRotation(td, t, rot, lastIdx))
+                        std::cout << std::format("  t={:.2f} yaw={:.1f}deg", t,
+                            std::atan2(rot(0, 2), rot(2, 2)) * 180.0f / 3.14159265f);
+                }
+                std::cout << '\n';
+            }
         }
 
         auto meshes = SceneBuilder::build(doc);

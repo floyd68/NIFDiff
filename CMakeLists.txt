@@ -154,6 +154,8 @@ add_executable(NIFDiff WIN32
     core/NifItem.h
     core/NifDocument.h
     core/NifDocument.cpp
+    core/AnimController.h
+    core/AnimController.cpp
     core/SceneBuilder.h
     core/SceneBuilder.cpp
     core/NifLog.h
@@ -243,6 +245,8 @@ add_executable(NifValidate
     core/NifItem.h
     core/NifDocument.h
     core/NifDocument.cpp
+    core/AnimController.h
+    core/AnimController.cpp
     core/SceneBuilder.h
     core/SceneBuilder.cpp
     core/NifLog.h
