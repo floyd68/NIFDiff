@@ -473,6 +473,37 @@ namespace
     }
 
 
+    // Keep a restored window rect on-screen: after a monitor is unplugged or the
+    // resolution changes, a saved position can land the window fully off-screen
+    // (unreachable). Snap it to the nearest monitor's work area - clamp the size
+    // to fit, then the position so the WHOLE window stays inside it. (Inspired by
+    // FICture2's AppSetup::ClampRectToMonitorWorkArea, which only guarantees a
+    // 64px grab-sliver; keeping the whole window visible is friendlier. NIFDiff
+    // previously applied the saved X/Y/W/H raw, so it lacked this guard.)
+    void ClampRectToMonitorWorkArea(RECT& rc)
+    {
+        if (rc.right <= rc.left || rc.bottom <= rc.top)
+            return;
+
+        const HMONITOR mon = MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi {};
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(mon, &mi))
+            return;
+        const RECT wa = mi.rcWork;
+
+        // Clamp the size to the work area (also guards absurd sizes from a
+        // corrupted INI), then clamp the top-left so the full window fits.
+        const int w = (std::max)(200, (std::min)(int(rc.right - rc.left), int(wa.right - wa.left)));
+        const int h = (std::max)(200, (std::min)(int(rc.bottom - rc.top), int(wa.bottom - wa.top)));
+        const int x = (std::min)((std::max)(int(rc.left), int(wa.left)), int(wa.right) - w);
+        const int y = (std::min)((std::max)(int(rc.top), int(wa.top)), int(wa.bottom) - h);
+        rc.left = x;
+        rc.top = y;
+        rc.right = x + w;
+        rc.bottom = y + h;
+    }
+
     bool ReadWindowPlacement(const AppSettings& settings, RECT& outRect, int& outShowCmd)
     {
         if (!settings.IsLoaded())
@@ -487,6 +518,7 @@ namespace
         outRect.top = settings.GetInt(kSectionWindow, L"Y", 100);
         outRect.right = outRect.left + width;
         outRect.bottom = outRect.top + height;
+        ClampRectToMonitorWorkArea(outRect); // never restore off-screen
         outShowCmd = settings.GetInt(kSectionWindow, L"ShowCmd", SW_SHOWNORMAL);
         return true;
     }

@@ -334,7 +334,9 @@ documents every control in detail.
   closing a pane mid-load drops the superseded load instead of letting a
   stale result land in the wrong pane.
 - Session persistence (open files, splitter ratios, recent-files list,
-  Game Data path, override folders),
+  Game Data path, override folders, and the window size/position - restored
+  clamped to a monitor's work area so it never comes back off-screen after a
+  display change),
   `.nif` file association, and single-instance forwarding: opening a
   file whose NAME matches a document already open lands in a new pane of
   the existing window - the "compare two mods' versions of the same
