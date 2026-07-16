@@ -357,7 +357,9 @@ documents every control in detail.
 - Session persistence (open files, splitter ratios, recent-files list,
   Game Data path, override folders, and the window size/position - restored
   clamped to a monitor's work area so it never comes back off-screen after a
-  display change),
+  display change), stored per-user in `%LOCALAPPDATA%\NIFDiff\NIFDiff.ini`
+  (the Windows-recommended location, so it works from a read-only install
+  directory too; a legacy INI next to the exe is migrated over once),
   `.nif` file association, and single-instance forwarding: opening a
   file whose NAME matches a document already open lands in a new pane of
   the existing window - the "compare two mods' versions of the same

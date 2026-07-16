@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <string_view>
 #include <shellapi.h>
+#include <shlobj.h> // SHGetKnownFolderPath (per-user INI location)
 #include <objbase.h>
 
 namespace nsk
@@ -316,9 +317,30 @@ namespace
 
     std::wstring GetIniFilePath()
     {
+        // Windows-recommended per-user location: %LOCALAPPDATA%\NIFDiff\
+        // (SHGetKnownFolderPath, same convention as FICture2). The old
+        // next-to-the-exe location breaks once the app is installed under
+        // Program Files (no write access - session saves silently fail or get
+        // UAC-virtualized). A legacy exe-side INI is migrated over once, so
+        // existing sessions survive the move.
         wchar_t exePath[MAX_PATH] {};
         GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-        return (std::filesystem::path(exePath).parent_path() / kIniFileName).wstring();
+        const std::filesystem::path legacyIni =
+            std::filesystem::path(exePath).parent_path() / kIniFileName;
+
+        PWSTR localAppData = nullptr;
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &localAppData)))
+            return legacyIni.wstring(); // no known-folder API result: keep the old behavior
+
+        const std::filesystem::path dir = std::filesystem::path(localAppData) / L"NIFDiff";
+        CoTaskMemFree(localAppData);
+
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        const std::filesystem::path ini = dir / kIniFileName;
+        if (!std::filesystem::exists(ini, ec) && std::filesystem::exists(legacyIni, ec))
+            std::filesystem::copy_file(legacyIni, ini, ec); // one-time migration
+        return ini.wstring();
     }
 
     // Recent-files (MRU) list, persisted pipe-joined under [Session].
