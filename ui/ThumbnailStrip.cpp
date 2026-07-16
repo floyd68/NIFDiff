@@ -180,6 +180,7 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
     m_entries.clear();
     m_scroll = 0.0f;
     m_hoverCard = -1;
+    m_selected = -1; // the listing changed; drop the keyboard selection cursor
     m_folder = folder;
     m_currentFile = selectPath;
     m_thumbCache.Clear();
@@ -300,59 +301,73 @@ void ThumbnailStrip::SetFixedExtent(float extent)
     Invalidate();
 }
 
-std::wstring ThumbnailStrip::StepFile(int delta) const
-{
-    // File entries in display order (folders/".." are not stepped through).
-    std::vector<std::size_t> files;
-    for (std::size_t i = 0; i < m_entries.size(); ++i)
-        if (m_entries[i].kind == EntryKind::File)
-            files.push_back(i);
-    if (files.empty())
-        return std::wstring();
-
-    // Locate the currently-highlighted file among them.
-    int cur = -1;
-    for (std::size_t k = 0; k < files.size(); ++k)
-        if (m_entries[files[k]].path == m_currentFile)
-        {
-            cur = static_cast<int>(k);
-            break;
-        }
-
-    const int n = static_cast<int>(files.size());
-    int next;
-    if (cur < 0)
-        next = (delta >= 0) ? 0 : n - 1; // nothing highlighted -> first / last
-    else
-        next = std::clamp(cur + delta, 0, n - 1); // stop at the ends (no wrap-around)
-    if (next == cur)
-        return std::wstring(); // already at that end - no move, don't reload
-    return m_entries[files[static_cast<std::size_t>(next)]].path;
-}
-
-std::wstring ThumbnailStrip::EdgeFile(bool last) const
-{
-    if (last)
-    {
-        for (auto it = m_entries.rbegin(); it != m_entries.rend(); ++it)
-            if (it->kind == EntryKind::File)
-                return it->path;
-    }
-    else
-    {
-        for (const Entry& e : m_entries)
-            if (e.kind == EntryKind::File)
-                return e.path;
-    }
-    return std::wstring();
-}
-
 void ThumbnailStrip::NavigateUp()
 {
     // The ".." tile (when present) carries the parent directory. NavigateTo
     // takes its args by value, so passing the entry's own path is safe.
     if (!m_entries.empty() && m_entries.front().kind == EntryKind::Up)
         NavigateTo(m_entries.front().path, m_currentFile);
+}
+
+std::wstring ThumbnailStrip::StepSelection(int delta)
+{
+    if (m_entries.empty())
+        return std::wstring();
+
+    int cur = m_selected;
+    if (cur < 0)
+    {
+        // No cursor yet: start from the highlighted current file if it's listed,
+        // else a virtual slot so the first step lands on the first/last tile.
+        for (std::size_t i = 0; i < m_entries.size(); ++i)
+            if (m_entries[i].kind == EntryKind::File && m_entries[i].path == m_currentFile)
+            {
+                cur = static_cast<int>(i);
+                break;
+            }
+        if (cur < 0)
+            cur = (delta >= 0) ? -1 : static_cast<int>(m_entries.size());
+    }
+
+    const int next = std::clamp(cur + delta, 0, static_cast<int>(m_entries.size()) - 1);
+    if (next == m_selected)
+        return std::wstring(); // already at that end - no move
+    m_selected = next;
+    CenterEntry(m_selected);
+    Invalidate();
+
+    const Entry& e = m_entries[static_cast<std::size_t>(next)];
+    return (e.kind == EntryKind::File) ? e.path : std::wstring();
+}
+
+std::wstring ThumbnailStrip::EdgeSelection(bool last)
+{
+    if (m_entries.empty())
+        return std::wstring();
+    const int idx = last ? static_cast<int>(m_entries.size()) - 1 : 0;
+    m_selected = idx;
+    CenterEntry(idx);
+    Invalidate();
+    const Entry& e = m_entries[static_cast<std::size_t>(idx)];
+    return (e.kind == EntryKind::File) ? e.path : std::wstring();
+}
+
+bool ThumbnailStrip::ActivateSelection()
+{
+    if (m_selected < 0 || m_selected >= static_cast<int>(m_entries.size()))
+        return false;
+    const Entry& e = m_entries[static_cast<std::size_t>(m_selected)];
+    if (e.kind == EntryKind::File)
+    {
+        if (m_onActivated)
+            m_onActivated(e.path); // load it into the pane (owner also mirrors via Sync Files)
+        return true;
+    }
+    // Folder / "..": browse the strip into it. NavigateTo clears m_entries and
+    // takes its args by value, so copy the target path out of the entry first.
+    std::wstring target = e.path;
+    NavigateTo(std::move(target), m_currentFile);
+    return true;
 }
 
 FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
@@ -562,7 +577,10 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
         // highlighted card - re-center it while auto-centering is in effect, so
         // the selection stays put as the strip settles.
         if (done > 0 && m_autoCenter)
-            CenterCurrentFile();
+        {
+            if (m_selected >= 0) CenterEntry(m_selected);
+            else CenterCurrentFile();
+        }
     }
     if (!m_ready.empty())
         Invalidate(); // keep draining next frame
@@ -643,7 +661,12 @@ void ThumbnailStrip::CenterCurrentFile()
             idx = static_cast<int>(i);
             break;
         }
-    if (idx < 0)
+    CenterEntry(idx);
+}
+
+void ThumbnailStrip::CenterEntry(int idx)
+{
+    if (idx < 0 || idx >= static_cast<int>(m_entries.size()))
         return;
     m_autoCenter = true; // intent to keep centered; retried in OnRenderD3D as the layout settles
 
@@ -795,7 +818,11 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
             thumbRect = { r.left + kPad, top + kPad, r.left + kPad + thumb, top + kPad + thumb };
         }
 
-        if (static_cast<int>(i) == m_hoverCard &&
+        // Keyboard-selected tile gets an accent-tinted card; plain hover is dimmer.
+        if (static_cast<int>(i) == m_selected &&
+            SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.16f, 0.24f, 0.40f), &brush)))
+            target->FillRectangle(card, brush.Get());
+        else if (static_cast<int>(i) == m_hoverCard &&
             SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.17f, 0.19f, 0.24f), &brush)))
             target->FillRectangle(card, brush.Get());
 
@@ -826,6 +853,16 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
                                       thumbRect.right + 1.5f, thumbRect.bottom + 1.5f };
                 target->DrawRectangle(b, brush.Get(), 2.5f);
             }
+        }
+
+        // Keyboard selection ring (any tile kind), brighter than the loaded-file
+        // border so a selected folder/".." reads as "picked, press Enter".
+        if (static_cast<int>(i) == m_selected &&
+            SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.60f, 0.82f, 1.0f), &brush)))
+        {
+            const D2D1_RECT_F b { thumbRect.left - 2.0f, thumbRect.top - 2.0f,
+                                  thumbRect.right + 2.0f, thumbRect.bottom + 2.0f };
+            target->DrawRectangle(b, brush.Get(), 2.5f);
         }
 
         if (m_textFormat &&
@@ -967,6 +1004,7 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
                 if (hit >= 0)
                 {
                     RequestFocus();
+                    m_selected = hit; // keep the keyboard cursor in sync with clicks
                     const Entry& e = m_entries[static_cast<std::size_t>(hit)];
                     if (e.kind == EntryKind::File)
                     {

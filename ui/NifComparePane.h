@@ -98,11 +98,14 @@ public:
     // true on release) - NifCompareView mirrors the size onto every pane.
     void SetOnThumbnailStripResize(std::function<void(float, bool)> handler) { m_onThumbStripResize = std::move(handler); }
 
-    // Keyboard stepping over this pane's thumbnail strip (owner-driven).
-    // StepThumbnailFile returns the prev/next sibling .nif to load (empty if
-    // none); NavigateThumbnailUp browses the strip to the parent folder.
-    std::wstring StepThumbnailFile(int delta) const { return m_thumbStrip->StepFile(delta); }
-    std::wstring EdgeThumbnailFile(bool last) const { return m_thumbStrip->EdgeFile(last); }
+    // Keyboard browsing over this pane's thumbnail strip (owner-driven). The
+    // selection cursor spans files AND folders/"..": Step/Edge return the .nif
+    // path to load when the newly-selected tile is a file (empty for a folder,
+    // which is only highlighted), and ActivateThumbnailSelection (Enter) enters
+    // a selected folder. NavigateThumbnailUp is a direct jump to the parent.
+    std::wstring StepThumbnailFile(int delta) { return m_thumbStrip->StepSelection(delta); }
+    std::wstring EdgeThumbnailFile(bool last) { return m_thumbStrip->EdgeSelection(last); }
+    bool ActivateThumbnailSelection() { return m_thumbStrip->ActivateSelection(); }
     void NavigateThumbnailUp() { m_thumbStrip->NavigateUp(); }
 
     // Fires after Load/Clear changed this pane's document - NifCompareView

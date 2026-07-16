@@ -132,7 +132,8 @@ documents every control in detail.
 | `1`-`8` / `Tab` / `Shift+Tab` | Select the active pane |
 | `Ctrl+O` / `Ctrl+Shift+O` | Open a file into the active pane / a new pane |
 | `Ctrl+W` (`Ctrl+F4`) / `Del` | Close the active pane / clear its document |
-| `←`/`→` (`,`/`.`), `Home`/`End`, `Backspace` (`Ctrl+Up`) | Thumbnail strip: prev/next, first/last, parent folder |
+| `←`/`→` (`,`/`.`), `Home`/`End` | Thumbnail strip: previous/next tile, first/last tile |
+| `Enter` / `Backspace` (`Ctrl+Up`) | Enter the selected folder / jump to the parent folder |
 | `Ctrl+E` / `F12` | Show active pane's file in Explorer / save its screenshot |
 
 > Numpad view keys need NumLock on. Thumbnail-strip navigation acts on the
@@ -243,9 +244,11 @@ documents every control in detail.
   into a new pane, `Ctrl+W` (or `Ctrl+F4`) closes it,
   `Del` clears its document, `Ctrl+E` shows its file in Explorer,
   `F12` saves its screenshot; thumbnail-strip navigation (FICture2's browser
-  keys, and Sync Files mirrors each pick into the other panes): `←`/`→`
-  (or `,`/`.`) step to the previous/next sibling .nif, `Home`/`End` jump to
-  the first/last, `Backspace` (or `Ctrl+Up`) browses to the parent folder;
+  keys, and Sync Files mirrors each file pick into the other panes): `←`/`→`
+  (or `,`/`.`) step the selection through every tile and `Home`/`End` jump to
+  the first/last - landing on a sibling .nif loads it, while a subfolder or the
+  ".." tile is only **selected** (highlighted) until `Enter` navigates into it
+  (`Backspace` / `Ctrl+Up` still jump straight to the parent);
   `I` toggles the material diff panel and `T` the texture inspector.
 - **Per-pane context menu**: open/close the pane, reopen a **recent file**
   into it (an MRU submenu of the last dozen opened .nifs, most-recent

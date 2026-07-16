@@ -1969,16 +1969,28 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         return true;
 
     // Thumbnail navigation on the active pane's strip (FICture2's browser
-    // keys); each load syncs into the other panes via Sync Files.
-    //   Left / ',' : previous sibling    Right / '.' : next sibling
-    //   Home : first file                End : last file
-    //   Backspace / Ctrl+Up : parent folder
+    // keys); a file load syncs into the other panes via Sync Files. The
+    // selection cursor spans files AND folder/".." tiles - stepping onto a file
+    // loads it, stepping onto a folder only selects it, and Enter enters the
+    // selected folder.
+    //   Left / ',' : previous tile       Right / '.' : next tile
+    //   Home : first tile                End : last tile
+    //   Enter : enter selected folder    Backspace / Ctrl+Up : parent folder
     case VK_LEFT:       StepActiveThumbnail(-1); return true;
     case VK_RIGHT:      StepActiveThumbnail(+1); return true;
     case VK_OEM_COMMA:  StepActiveThumbnail(-1); return true; // ',' / '<'
     case VK_OEM_PERIOD: StepActiveThumbnail(+1); return true; // '.' / '>'
     case VK_HOME:       LoadEdgeThumbnail(false); return true;
     case VK_END:        LoadEdgeThumbnail(true);  return true;
+
+    case VK_RETURN: // Enter: enter the selected folder / ".." tile (arrows load
+                    // files immediately; folders are only selected until Enter)
+    {
+        if (NifComparePane* active = ActivePane())
+            if (active->ActivateThumbnailSelection())
+                return true;
+        return false;
+    }
 
     case VK_BACK: // Backspace: browse the active pane's strip to the parent
         if (NifComparePane* active = ActivePane())

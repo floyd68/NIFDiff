@@ -107,14 +107,19 @@ public:
     // other panes live) and once on release (committed=true, to persist it).
     void SetOnResize(std::function<void(float extent, bool committed)> handler) { m_onResize = std::move(handler); }
 
-    // Keyboard stepping helpers (act on the strip's current listing):
-    // StepFile returns the .nif `delta` cards from the highlighted file (wraps;
-    // first/last when nothing is highlighted); EdgeFile returns the first
-    // (last=false) or last file. Both empty if the folder has no files - the
-    // owner loads the returned path. NavigateUp browses to the parent folder.
-    std::wstring StepFile(int delta) const;
-    std::wstring EdgeFile(bool last) const;
+    // NavigateUp browses the strip directly to the parent folder (Backspace).
     void NavigateUp();
+
+    // Keyboard selection cursor over EVERY tile - files, subfolders AND the
+    // ".." up tile - for the owner's arrow-key browsing. StepSelection moves it
+    // by delta (clamped, no wrap); EdgeSelection jumps to the first/last tile.
+    // Both return the .nif path to LOAD when the newly-selected tile is a file
+    // (arrows keep loading files immediately), or empty for a folder/".." tile,
+    // which is only highlighted; ActivateSelection (Enter) then navigates into
+    // it. ActivateSelection returns false when there is no selection.
+    std::wstring StepSelection(int delta);
+    std::wstring EdgeSelection(bool last);
+    bool ActivateSelection();
 
     // Fires when a thumbnail is clicked, with its full .nif path.
     void SetOnActivated(std::function<void(const std::wstring&)> handler) { m_onActivated = std::move(handler); }
@@ -214,6 +219,9 @@ private:
     // end snap flush to that end instead, so the first/last cards don't leave a
     // gap. No-op until the strip has a valid layout and the file is listed.
     void CenterCurrentFile();
+    // Scroll an arbitrary tile (by m_entries index) to the middle of the strip,
+    // same snap-to-ends rule as CenterCurrentFile - used for keyboard selection.
+    void CenterEntry(int index);
 
     RenderDevice* m_renderDevice = nullptr;
     ResourceResolver* m_resolver = nullptr;
@@ -228,6 +236,7 @@ private:
     std::wstring m_folder;       // directory currently listed
     std::wstring m_currentFile;  // active pane's .nif, highlighted when present
     std::vector<Entry> m_entries;
+    int m_selected = -1;         // keyboard selection cursor into m_entries (any tile kind), -1 = none
     bool m_enabled = true;          // master on/off (see SetEnabled)
     bool m_active = false;          // pane is named -> reserve strip space (see SetActive)
     float m_fixedExtent = kSizeMedium; // strip thickness (see SetFixedExtent)
