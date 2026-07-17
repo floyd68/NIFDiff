@@ -86,6 +86,11 @@ nifdiff_set_cache_bool(FLOAR_ENABLE_COMMON_ARCHIVES ON)
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/external/DirectXTex" "${CMAKE_BINARY_DIR}/_deps/DirectXTex")
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/FD2D" "${CMAKE_BINARY_DIR}/_deps/FD2D")
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/Floar" "${CMAKE_BINARY_DIR}/_deps/Floar")
+# ImageCore (floyd68/ImageCore): async image decode (WIC + DirectXTex) for the
+# ported texture view/compare. Its CMakeLists expects DirectXTex at
+# ../external/DirectXTex - true for this layout - and links the DirectXTex
+# target added just above, so it must follow it.
+add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/ImageCore" "${CMAKE_BINARY_DIR}/_deps/ImageCore")
 
 # ---------------------------------------------------------------------------
 # Shader precompilation: render/shaders/*.hlsl -> bytecode headers via fxc.
@@ -339,6 +344,37 @@ target_compile_definitions(ResourceResolveTest PRIVATE NOMINMAX)
 set_target_properties(ResourceResolveTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
+
+# ---------------------------------------------------------------------------
+# ImageViewTest - P1 validation harness for the texture view/compare port:
+# a standalone window that decodes an image via ImageCore and displays it
+# through FD2D::Image (proves the ported decode + display stack fits inside
+# NIFDiff's build before the larger pane-abstraction work). Not shipped.
+# ---------------------------------------------------------------------------
+add_executable(ImageViewTest WIN32 app/ImageViewTest.cpp)
+target_include_directories(ImageViewTest PRIVATE
+    ${NIFDIFF_THIRD_PARTY_ROOT}          # so "ImageCore/<hdr>.h" resolves
+)
+target_link_libraries(ImageViewTest PRIVATE
+    FD2D
+    ImageCore
+    DirectXTex
+    d2d1
+    d3d11
+    dxgi
+    dwrite          # FD2D::Core (DWriteCreateFactory)
+    d3dcompiler     # FD2D::Image's GPU quad shaders (D3DCompile) - main app never pulls Image.obj
+    windowscodecs
+    ole32
+    shell32
+)
+target_compile_definitions(ImageViewTest PRIVATE FD2D_STATIC UNICODE _UNICODE NOMINMAX)
+set_target_properties(ImageViewTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
+if(MSVC)
+    target_compile_options(ImageViewTest PRIVATE /permissive- /utf-8 /W3)
+endif()
 if(MSVC)
     target_compile_options(ResourceResolveTest PRIVATE /permissive- /utf-8 /W3)
 endif()
