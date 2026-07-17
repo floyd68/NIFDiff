@@ -192,6 +192,19 @@ set_target_properties(NIFDiff PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
 
+# Ship the editable shader sources next to the exe (shaders\*.hlsl). At
+# runtime RenderDevice prefers these over the embedded fxc bytecode, so users
+# can modify the shaders (with the embedded copies as a safe fallback) - see
+# RenderDevice.cpp's shader-override section.
+add_custom_command(TARGET NIFDiff POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:NIFDiff>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Lit.hlsl
+            ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Unlit.hlsl
+            ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Highlight.hlsl
+            "$<TARGET_FILE_DIR:NIFDiff>/shaders"
+    COMMENT "Copying editable shader sources to $<TARGET_FILE_DIR:NIFDiff>/shaders")
+
 target_include_directories(NIFDiff PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/app
     ${CMAKE_CURRENT_SOURCE_DIR}/core
