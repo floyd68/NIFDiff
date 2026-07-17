@@ -53,6 +53,12 @@ documents every control in detail.
   ~75% of a pane *replaces* it; the right ~25% *inserts* a new pane. A pane
   takes **textures** (`.dds`/`.png`/…) just as readily as `.nif`s - it becomes a
   2D image view in place (see [Textures view/compare](#feature-reference)).
+- **Open a folder or archive** the same way - as a command-line argument, a drag
+  & drop, or **right-click → "Open Folder in This Pane…"** (a folder path can't
+  come through the file-open dialog, so it has its own picker). The pane doesn't
+  view the container itself; it *browses into it* in the thumbnail strip so you
+  pick something inside. Folders, `.bsa`/`.ba2`/`.zip`/`.7z`/`.rar` archives,
+  NIFs and textures are all accepted at every one of these entry points.
 - **Compare the same mesh across mods**: opening a `.nif` whose *name* matches
   one already open lands in a new pane of the same window (single-instance
   forwarding) - the core "compare two mods' version of one mesh" flow. Dropping

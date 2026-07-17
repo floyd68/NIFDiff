@@ -63,6 +63,13 @@ public:
     void ShowThumbnailFolder()
     {
         if (!m_thumbStrip) return;
+        if (m_browsingContainer)
+        {
+            // Browsing a folder/archive with no file loaded: keep the strip up
+            // and leave its listing alone (ShowForFile("") would clear it).
+            m_thumbStrip->SetActive(true);
+            return;
+        }
         m_thumbStrip->SetActive(!CurrentPath().empty()); // reserve space while occupied
         m_thumbStrip->ShowForFile(CurrentPath());
     }
@@ -90,6 +97,7 @@ private:
 
     std::shared_ptr<ThumbnailStrip> m_thumbStrip; // persistent across content swaps
     std::shared_ptr<PaneContent> m_content;       // NifComparePane XOR ImagePane
+    bool m_browsingContainer = false;             // strip is showing a folder/archive, no file loaded
 
     RenderDevice* m_renderDevice = nullptr;
     ResourceManager* m_resourceManager = nullptr;

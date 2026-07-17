@@ -104,11 +104,20 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
     if (path.empty())
         return false;
 
-    // An archive itself (.bsa/.ba2/.zip/... with no inner path) isn't a file to
-    // view - descend into it in the strip so the user picks something inside.
-    // (A path INSIDE an archive is not IsArchiveFile, so it loads as content.)
-    if (auto vp = Floar::VirtualPath::Parse(path); vp && vp->IsArchiveFile())
+    // A container to browse rather than a file to view: a plain directory, or an
+    // archive itself (.bsa/.ba2/.zip/... with no inner path). Descend into it in
+    // the strip so the user picks something inside. (A path INSIDE an archive is
+    // not IsArchiveFile and resolves to a real member, so it loads as content.)
+    std::error_code ec;
+    const bool isDir = std::filesystem::is_directory(path, ec);
+    auto vp = Floar::VirtualPath::Parse(path);
+    if (isDir || (vp && vp->IsArchiveFile()))
     {
+        // No file loaded - the pane is browsing this container. Remember that so
+        // a later ShowThumbnailFolder (e.g. ShowAllThumbnailStrips after the
+        // archive scan) keeps the strip up instead of collapsing it for an empty
+        // CurrentPath.
+        m_browsingContainer = true;
         if (m_thumbStrip)
         {
             m_thumbStrip->SetActive(true);
@@ -118,6 +127,7 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
         return true;
     }
 
+    m_browsingContainer = false; // a real file is loading - leave browse mode
     EnsureContent(PathIsImage(path) ? Kind::Image : Kind::Nif);
     const bool ok = m_content->Load(path, error);
     ShowThumbnailFolder(); // strip follows the loaded file's folder
@@ -126,6 +136,7 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
 
 void ComparePane::Clear()
 {
+    m_browsingContainer = false;
     if (m_content)
         m_content->Clear();
     ShowThumbnailFolder(); // now empty -> clears/collapses the strip

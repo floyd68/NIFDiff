@@ -4,6 +4,8 @@
 
 #include "ImageCore/ImageDecodeDispatcher.h" // which extensions route to an ImagePane
 
+#include <VirtualPath.h> // Floar: is a path an archive to browse into?
+
 #include <Backplate.h>
 #include <Core.h>
 #include <Util.h>
@@ -352,6 +354,18 @@ namespace
                 return true;
         return false;
     }
+
+    // True when `path` is a container to browse into (the strip descends into it)
+    // rather than a file to view: a plain directory, or an archive file (.bsa/
+    // .ba2/.zip/...). ComparePane::Load routes these into the thumbnail strip.
+    bool IsBrowsableContainer(const std::wstring& path)
+    {
+        std::error_code ec;
+        if (std::filesystem::is_directory(path, ec))
+            return true;
+        auto vp = Floar::VirtualPath::Parse(path);
+        return vp && vp->IsArchiveFile();
+    }
 }
 
 void NifCompareView::CreatePanesForPaths(const std::vector<std::wstring>& paths)
@@ -364,9 +378,12 @@ void NifCompareView::CreatePanesForPaths(const std::vector<std::wstring>& paths)
         if (m_panes.size() >= kMaxPanes)
             break;
         std::shared_ptr<ComparePane> pane = CreatePane();
-        if (IsImagePath(path))
+        if (IsImagePath(path) || IsBrowsableContainer(path))
         {
-            pane->Load(path); // content swaps to image; decode starts now
+            // Images decode now; folders/archives descend into the strip - both
+            // go through Load (ComparePane routes by kind). Only a real NIF file
+            // takes the deferred-parse placeholder path below.
+            pane->Load(path);
         }
         else if (NifComparePane* nif = pane->NifContent())
         {
@@ -927,9 +944,11 @@ namespace
 
 bool NifCompareView::OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual)
 {
-    // Accept any file we can open as a pane - a NIF or an image; the target
-    // pane is converted to the matching kind on drop (OpenPathInPane).
-    ComparePane* pane = (IsNifPath(path) || IsImagePath(path)) ? PaneAt(clientPt) : nullptr;
+    // Accept anything we can open in a pane - a NIF, an image, or a container to
+    // browse (a folder / archive). The target pane is converted to the matching
+    // kind (or set browsing) on drop (OpenPathInPane -> ComparePane::Load).
+    ComparePane* pane = (IsNifPath(path) || IsImagePath(path) || IsBrowsableContainer(path))
+                            ? PaneAt(clientPt) : nullptr;
     if (pane == nullptr)
     {
         SetDragOverlay(nullptr, DragOverlayKind::None);
@@ -956,7 +975,7 @@ bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, con
     std::vector<std::wstring> files;
     for (const std::wstring& p : paths)
     {
-        if (IsNifPath(p) || IsImagePath(p))
+        if (IsNifPath(p) || IsImagePath(p) || IsBrowsableContainer(p))
             files.push_back(p);
     }
     if (files.empty())

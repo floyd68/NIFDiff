@@ -70,6 +70,7 @@ namespace
     constexpr UINT kMenuIdOpenPane = 4;
     constexpr UINT kMenuIdClosePane = 5;
     constexpr UINT kMenuIdOpenFolder = 6;
+    constexpr UINT kMenuIdOpenFolderPane = 15; // browse a folder in this pane (strip)
     constexpr UINT kMenuIdSaveScreenshot = 7;
     constexpr UINT kMenuIdClearRecent = 8;
     constexpr UINT kMenuIdToggleThumbnailStrip = 11;
@@ -181,6 +182,10 @@ namespace
         if (view != nullptr && pane != nullptr)
         {
             AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open in This Pane...");
+            // The file dialog can't return a folder, so browsing a folder/archive
+            // in this pane (its thumbnail strip) gets its own folder-picker item -
+            // same grade as opening a file, at the same entry point.
+            AppendMenuW(menu, MF_STRING, kMenuIdOpenFolderPane, L"Open Fo&lder in This Pane...");
 
             // Recent-files (MRU) submenu: open a previously loaded .nif into
             // this pane. Grayed out with no history yet.
@@ -267,6 +272,15 @@ namespace
         case kMenuIdOpenPane:
             if (view != nullptr && pane != nullptr)
                 view->RequestOpenPane(*pane);
+            break;
+
+        case kMenuIdOpenFolderPane:
+            if (view != nullptr && pane != nullptr)
+            {
+                std::wstring folder;
+                if (ShowPickFolderDialog(hwnd, L"Open Folder in This Pane", folder))
+                    view->OpenPathInPane(pane, folder); // ComparePane::Load browses it
+            }
             break;
 
         case kMenuIdClosePane:
@@ -590,8 +604,11 @@ namespace
             const std::wstring arg = argv[i] ? argv[i] : L"";
             if (arg.empty() || arg.front() == L'-')
                 continue;
+            // Accept any existing path - a file OR a directory. A folder (like an
+            // archive) opens as a pane that browses into it via its thumbnail
+            // strip; CreatePanesForPaths / ComparePane::Load route by kind.
             const DWORD attr = GetFileAttributesW(arg.c_str());
-            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0)
+            if (attr != INVALID_FILE_ATTRIBUTES)
                 out.push_back(arg);
         }
         LocalFree(argv);
