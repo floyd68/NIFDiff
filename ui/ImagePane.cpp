@@ -323,9 +323,13 @@ ImagePane::ImagePane(const std::wstring& name)
 
     m_image = std::make_shared<ImageView>(name + L"_Image");
 
-    // Same dock order as NifComparePane: Top strip first, Fill last.
+    // Same dock order as NifComparePane: Top strip + Bottom strip first (Fill
+    // stops further docking, so it comes last). m_thumbStrip is the base's
+    // shared folder browser - image panes browse too (P3.5).
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
+    AddChild(m_thumbStrip);
+    SetChildDock(m_thumbStrip, FD2D::Dock::Bottom);
     AddChild(m_image);
     SetChildDock(m_image, FD2D::Dock::Fill);
 
@@ -354,6 +358,11 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
     UpdatePathLabel();
     if (m_image)
         m_image->ResetView(); // each new image starts aspect-fit, unrotated
+    if (m_thumbStrip)
+    {
+        m_thumbStrip->SetActive(true);
+        m_thumbStrip->ShowForFile(path); // browse this image's folder from here too
+    }
 
     // Supersede any previous load: cancel it and bump the generation so a late
     // completion for the old path is dropped.

@@ -311,10 +311,19 @@ namespace
 
 std::shared_ptr<ImagePane> NifCompareView::CreateImagePane()
 {
-    // Image panes decode on ImageCore's own workers and draw via FD2D::Image,
-    // so they need none of the NIF render/resource wiring - just a name.
     auto pane = std::make_shared<ImagePane>(NifCompareSplitCoordinator::NextPaneName());
     ImagePane* raw = pane.get();
+
+    // The image display needs no NIF resources, but its thumbnail strip (base)
+    // does - to render NIF thumbnails in the folder and to feed the shared pool.
+    if (m_resolver) pane->SetResourceResolver(m_resolver);
+    if (m_textureRepository) pane->SetTextureRepository(m_textureRepository);
+    if (m_renderDevice) pane->SetRenderDevice(m_renderDevice);
+    if (m_resourceManager) pane->SetResourceManager(m_resourceManager);
+    pane->SetThumbnailStripEnabled(m_thumbStripEnabled);
+    pane->SetThumbnailStripSize(m_thumbStripExtent);
+    WireThumbnailCallbacks(raw); // strip pick (kind-aware) + resize
+
     // Sync Views (same toggle as the NIF camera sync): mirror one image pane's
     // zoom/pan/channel/rotation onto every other image pane for pixel compare.
     pane->SetOnViewChanged([this, raw](const ImagePane::ImageViewState& state)
@@ -451,23 +460,28 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
             m_onFileOpened(path);
         // The pane refreshes its own thumbnail strip in Load().
     });
-    pane->SetOnThumbnailChosen([this, paneRaw](const std::wstring& path)
+    WireThumbnailCallbacks(paneRaw); // strip pick + resize (shared by both kinds)
+}
+
+void NifCompareView::WireThumbnailCallbacks(ComparePane* raw)
+{
+    raw->SetOnThumbnailChosen([this, raw](const std::wstring& path)
     {
-        // A texture picked from the strip opens in an image pane (kept beside the
-        // browsing NIF pane so browsing continues); a .nif loads into this pane
-        // and mirrors the same file name into the other panes' folders.
+        // A texture picked from the strip opens in an image pane (which now has
+        // its own strip, so browsing continues there); a .nif loads into this
+        // pane and mirrors the same file name into the other panes' folders.
         if (IsImagePath(path))
         {
             OpenIntoBestPane(path);
         }
         else
         {
-            OpenPathInPane(paneRaw, path);
-            SyncThumbnailSelection(paneRaw, path);
+            OpenPathInPane(raw, path);
+            SyncThumbnailSelection(raw, path);
         }
         Invalidate();
     });
-    pane->SetOnThumbnailStripResize([this](float ext, bool committed)
+    raw->SetOnThumbnailStripResize([this](float ext, bool committed)
     {
         // Keep every pane's strip the same size as the one being dragged;
         // persist only once the drag settles.
@@ -477,7 +491,7 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     });
 }
 
-void NifCompareView::ApplyThumbnailPick(NifComparePane* active, const std::wstring& path)
+void NifCompareView::ApplyThumbnailPick(ComparePane* active, const std::wstring& path)
 {
     if (!active || path.empty())
         return;
@@ -488,7 +502,7 @@ void NifCompareView::ApplyThumbnailPick(NifComparePane* active, const std::wstri
 
 void NifCompareView::StepActiveThumbnail(int delta)
 {
-    if (NifComparePane* active = AsNif(ActivePane()))
+    if (ComparePane* active = ActivePane())
     {
         active->FocusThumbnailStrip(); // keyboard browsing keeps the strip focused (enables type-to-select)
         ApplyThumbnailPick(active, active->StepThumbnailFile(delta));
@@ -497,14 +511,14 @@ void NifCompareView::StepActiveThumbnail(int delta)
 
 void NifCompareView::LoadEdgeThumbnail(bool last)
 {
-    if (NifComparePane* active = AsNif(ActivePane()))
+    if (ComparePane* active = ActivePane())
     {
         active->FocusThumbnailStrip();
         ApplyThumbnailPick(active, active->EdgeThumbnailFile(last));
     }
 }
 
-void NifCompareView::SyncThumbnailSelection(NifComparePane* source, const std::wstring& path)
+void NifCompareView::SyncThumbnailSelection(ComparePane* source, const std::wstring& path)
 {
     if (!m_syncThumbnails)
         return;
@@ -675,7 +689,7 @@ void NifCompareView::ShowAllThumbnailStrips()
     // their proper height right away; the mains still parse first (priority),
     // and each strip's thumbnails trail them. Called after the scan so a strip's
     // one-shot thumbnail render resolves archive textures.
-    ForEachNifPane([](NifComparePane& n) { n.ShowThumbnailFolder(); });
+    for (auto& p : m_panes) p->ShowThumbnailFolder(); // strip is on the base (all kinds)
 }
 
 void NifCompareView::RefreshTexturesAfterScan()
@@ -811,7 +825,7 @@ void NifCompareView::SetActivePane(ComparePane* pane)
 void NifCompareView::ApplyThumbStripEnabled(bool on)
 {
     m_thumbStripEnabled = on;
-    ForEachNifPane([on](NifComparePane& n) { n.SetThumbnailStripEnabled(on); });
+    for (auto& p : m_panes) p->SetThumbnailStripEnabled(on);
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
@@ -820,7 +834,7 @@ void NifCompareView::ApplyThumbStripEnabled(bool on)
 void NifCompareView::SetThumbnailStripSize(float extent)
 {
     m_thumbStripExtent = extent;
-    ForEachNifPane([extent](NifComparePane& n) { n.SetThumbnailStripSize(extent); });
+    for (auto& p : m_panes) p->SetThumbnailStripSize(extent);
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
@@ -2729,25 +2743,25 @@ void NifCompareView::SetOnPaneOpenRequested(std::function<void(ComparePane&)> ha
 void NifCompareView::SetResourceResolver(ResourceResolver* resolver)
 {
     m_resolver = resolver;
-    ForEachNifPane([resolver](NifComparePane& n) { n.SetResourceResolver(resolver); });
+    for (auto& p : m_panes) p->SetResourceResolver(resolver); // base wires the strip; NIF also the viewport
 }
 
 void NifCompareView::SetTextureRepository(TextureRepository* repository)
 {
     m_textureRepository = repository;
-    ForEachNifPane([repository](NifComparePane& n) { n.SetTextureRepository(repository); });
+    for (auto& p : m_panes) p->SetTextureRepository(repository);
 }
 
 void NifCompareView::SetRenderDevice(RenderDevice* device)
 {
     m_renderDevice = device;
-    ForEachNifPane([device](NifComparePane& n) { n.SetRenderDevice(device); });
+    for (auto& p : m_panes) p->SetRenderDevice(device);
 }
 
 void NifCompareView::SetResourceManager(ResourceManager* manager)
 {
     m_resourceManager = manager;
-    ForEachNifPane([manager](NifComparePane& n) { n.SetResourceManager(manager); });
+    for (auto& p : m_panes) p->SetResourceManager(manager);
 }
 
 void NifCompareView::OnRenderD3D(ID3D11DeviceContext* context)

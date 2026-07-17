@@ -281,6 +281,8 @@ private:
     // NIF render wiring (resolver / render device / resource manager).
     std::shared_ptr<ImagePane> CreateImagePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
+    // Wire the strip pick + resize callbacks shared by every pane kind.
+    void WireThumbnailCallbacks(ComparePane* raw);
     void RebuildHostTree();
     // Rebuilds the views-area DockPanel's children (thumbnail strip docked
     // Bottom, host tree Fill) in the order DockPanel requires.
@@ -494,10 +496,10 @@ private:
 
     // After a thumbnail pick in `source`, load the same file name from every
     // other pane's own folder (skips panes lacking that name).
-    void SyncThumbnailSelection(NifComparePane* source, const std::wstring& path);
+    void SyncThumbnailSelection(ComparePane* source, const std::wstring& path);
     // Thumbnail keyboard navigation on the active pane (each syncs to the
     // others). Step: prev/next sibling (delta -1/+1). Edge: first/last file.
-    void ApplyThumbnailPick(NifComparePane* active, const std::wstring& path);
+    void ApplyThumbnailPick(ComparePane* active, const std::wstring& path);
     void StepActiveThumbnail(int delta);
     void LoadEdgeThumbnail(bool last);
     bool m_applyingSync = false; // re-entrancy guard while mirroring camera changes

@@ -71,53 +71,19 @@ public:
     // the pane is in the Loading placeholder state.
     void StartPendingLoad();
 
-    // Show this pane's thumbnail strip for its current/pending folder now, so
-    // the strip is present at its proper height before the model finishes
-    // loading (called after the startup batch queues every main, so its
-    // lower-priority thumbnails still trail the mains in the shared queue).
-    void ShowThumbnailFolder() { m_thumbStrip->ShowForFile(CurrentPath()); }
-
     // Re-resolve this pane's textures after the archive scan lands (no-op until
     // a model is loaded). Archive textures that missed during the scan pop in.
     void RefreshTextures() { if (m_doc) m_viewport->RefreshTextures(); }
 
-    void SetResourceResolver(ResourceResolver* resolver);
-    void SetTextureRepository(TextureRepository* repository);
-    void SetRenderDevice(RenderDevice* device);
-    void SetResourceManager(ResourceManager* manager)
-    {
-        m_resourceManager = manager;               // pane loads reuse the shared NifCache
-        m_thumbStrip->SetResourceManager(manager); // strip parses feed the same cache
-    }
+    // Wire the shared resources onto BOTH the 3D viewport and the base strip.
+    void SetResourceResolver(ResourceResolver* resolver) override;
+    void SetTextureRepository(TextureRepository* repository) override;
+    void SetRenderDevice(RenderDevice* device) override;
+    void SetResourceManager(ResourceManager* manager) override;
     void InvalidateTextureCache();
 
-    // This pane's own thumbnail strip (FICture2's ThumbnailPane, one per pane):
-    // it lists the folder of THIS pane's open .nif. Master on/off is a global
-    // UI toggle applied to every pane.
-    void SetThumbnailStripEnabled(bool enabled);
-    // Thumbnail-strip thickness (card size); a global UI setting, all panes
-    // share it. Use ThumbnailStrip::kSizeSmall/Medium/Large.
-    void SetThumbnailStripSize(float extent) { m_thumbStrip->SetFixedExtent(extent); }
-    // Fired while the user drags THIS pane's strip grip (committed=false live,
-    // true on release) - NifCompareView mirrors the size onto every pane.
-    void SetOnThumbnailStripResize(std::function<void(float, bool)> handler) { m_onThumbStripResize = std::move(handler); }
-
-    // Keyboard browsing over this pane's thumbnail strip (owner-driven). The
-    // selection cursor spans files AND folders/"..": Step/Edge return the .nif
-    // path to load when the newly-selected tile is a file (empty for a folder,
-    // which is only highlighted), and ActivateThumbnailSelection (Enter) enters
-    // a selected folder. NavigateThumbnailUp is a direct jump to the parent.
-    std::wstring StepThumbnailFile(int delta) { return m_thumbStrip->StepSelection(delta); }
-    std::wstring EdgeThumbnailFile(bool last) { return m_thumbStrip->EdgeSelection(last); }
-    bool ActivateThumbnailSelection() { return m_thumbStrip->ActivateSelection(); }
-    void NavigateThumbnailUp() { m_thumbStrip->NavigateUp(); }
-
-    // Type-to-select support (owner routes printable keys here while the strip
-    // is focused). FocusThumbnailStrip keeps the strip the keyboard context
-    // through keyboard browsing so type-to-select stays active.
-    bool ThumbnailStripHasFocus() const { return m_thumbStrip->HasFocus(); }
-    std::wstring TypeToSelectThumbnail(wchar_t ch) { return m_thumbStrip->TypeToSelect(ch); }
-    void FocusThumbnailStrip() { m_thumbStrip->RequestFocus(); }
+    // (Thumbnail strip enable/size, resize, keyboard browsing and the
+    // thumbnail-chosen callback now live on ComparePane - the strip is shared.)
 
     // Fires after Load/Clear changed this pane's document - NifCompareView
     // uses it to refresh document-dependent control state (e.g. whether the
@@ -130,12 +96,6 @@ public:
     // it to the app's recent-files (MRU) list.
     void SetOnFileOpened(std::function<void(const std::wstring&)> handler) { m_onFileOpened = std::move(handler); }
 
-    // Fires when the user picks a .nif from THIS pane's thumbnail strip (after
-    // it loads here) - NifCompareView uses it to sync the same file name into
-    // the other panes' folders. Distinct from SetOnFileOpened, which fires for
-    // every load path (and would recurse if it drove the sync).
-    void SetOnThumbnailChosen(std::function<void(const std::wstring&)> handler) { m_onThumbnailChosen = std::move(handler); }
-
 private:
     void UpdatePathLabel();
     void UpdateStatsLabel();
@@ -147,15 +107,12 @@ private:
                       std::vector<RenderMesh> meshes);
 
     std::shared_ptr<NifViewport> m_viewport;
-    std::shared_ptr<ThumbnailStrip> m_thumbStrip; // bottom strip: this pane's folder browser
     std::shared_ptr<FD2D::Text> m_pathLabel;  // top strip: full path of the loaded .nif + picked sub-mesh name
     std::shared_ptr<FD2D::Text> m_statsLabel; // bottom strip, right-aligned: total (and selected sub-mesh) triangle counts
     std::wstring m_selectedName;              // name of the viewport's picked sub-mesh, empty when none
     std::wstring m_selectedKind;              // shader kind of the picked sub-mesh (see NifViewport::ShaderKindFor)
     std::function<void()> m_onDocumentChanged;
     std::function<void(const std::wstring&)> m_onFileOpened;
-    std::function<void(const std::wstring&)> m_onThumbnailChosen;
-    std::function<void(float, bool)> m_onThumbStripResize;
     // Shared with the ResourceManager's NifCache and this pane's thumbnail of
     // its own file: the doc is parsed once and held here (pinning its entry).
     std::shared_ptr<const NifDocument> m_doc;

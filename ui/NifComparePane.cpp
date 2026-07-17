@@ -57,31 +57,8 @@ NifComparePane::NifComparePane(const std::wstring& name)
     m_statsLabel->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.78f));
     m_statsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
 
-    // This pane's own thumbnail strip (one per pane, not shared): follows THIS
-    // pane's open .nif folder. Clicking a sibling loads it into this pane.
-    m_thumbStrip = std::make_shared<ThumbnailStrip>(name + L"_Thumbs");
-    m_thumbStrip->SetOrientation(ThumbnailStrip::Orientation::Horizontal);
-    m_thumbStrip->SetOnActivated([this](const std::wstring& path)
-    {
-        // Route through the owner so the pick is opened by file kind (a texture
-        // opens in an image pane, a .nif loads here) and mirrored to the other
-        // panes. Fall back to a direct load only when unowned (headless/tests).
-        if (m_onThumbnailChosen)
-        {
-            m_onThumbnailChosen(path);
-        }
-        else
-        {
-            std::string err;
-            Load(path, &err);
-            Invalidate();
-        }
-    });
-    m_thumbStrip->SetOnResize([this](float ext, bool committed)
-    {
-        if (m_onThumbStripResize)
-            m_onThumbStripResize(ext, committed);
-    });
+    // The thumbnail strip (this pane's folder browser) is created + wired by the
+    // ComparePane base; this pane just docks it along its bottom edge below.
 
     // DockPanel's Fill dock stops any further docking, so the Top-docked path
     // strip and the Bottom-docked strips must be added before the Fill-docked
@@ -334,24 +311,25 @@ NifComparePane::~NifComparePane()
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)
 {
     m_viewport->SetResourceResolver(resolver);
-    m_thumbStrip->SetResourceResolver(resolver);
+    ComparePane::SetResourceResolver(resolver); // strip
 }
 
 void NifComparePane::SetTextureRepository(TextureRepository* repository)
 {
     m_viewport->SetTextureRepository(repository);
-    m_thumbStrip->SetTextureRepository(repository);
+    ComparePane::SetTextureRepository(repository); // strip
 }
 
 void NifComparePane::SetRenderDevice(RenderDevice* device)
 {
     m_viewport->SetRenderDevice(device);
-    m_thumbStrip->SetRenderDevice(device);
+    ComparePane::SetRenderDevice(device); // strip
 }
 
-void NifComparePane::SetThumbnailStripEnabled(bool enabled)
+void NifComparePane::SetResourceManager(ResourceManager* manager)
 {
-    m_thumbStrip->SetEnabled(enabled);
+    m_resourceManager = manager;               // pane loads reuse the shared NifCache
+    ComparePane::SetResourceManager(manager);  // strip parses feed the same cache
 }
 
 void NifComparePane::InvalidateTextureCache()
