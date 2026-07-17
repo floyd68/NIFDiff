@@ -14,6 +14,7 @@
 #include <Text.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -39,6 +40,22 @@ public:
     void RotateCW();
     void RotateCCW();
     void ResetView();
+
+    // Shareable view transform, for syncing zoom/pan/channel across image panes
+    // (the "Sync Views" compare mode). Pan is in client pixels - fine for the
+    // equal-width grid where panes are the same size.
+    struct ImageViewState
+    {
+        float zoom { 1.0f };
+        float panX { 0.0f };
+        float panY { 0.0f };
+        int rotation { 0 };
+        int channelMode { 0 };
+        bool checkerboard { false };
+    };
+    ImageViewState ViewState() const;
+    void SetViewState(const ImageViewState& state);          // applies without re-notifying
+    void SetOnViewChanged(std::function<void(const ImageViewState&)> handler);
 
 private:
     // FD2D::Image subclass that stages a decoded payload off-thread and uploads

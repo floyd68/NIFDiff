@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <functional>
 #include <mutex>
 #include <utility>
 
@@ -127,7 +128,8 @@ public:
         FD2D::Image::OnRender(target);
     }
 
-    // Reset to aspect-fit, unrotated. Called when a new image loads.
+    // Reset to aspect-fit, unrotated. Called when a new image loads; does NOT
+    // notify sync listeners (loading one pane shouldn't reset the others).
     void ResetView()
     {
         m_zoom = 1.0f;
@@ -135,7 +137,7 @@ public:
         m_panY = 0.0f;
         m_rotation = 0;
         m_channelMode = 0;
-        ApplyDrawState();
+        PushDrawState();
     }
 
     void RotateCW()  { m_rotation = (m_rotation + 1) & 3; ApplyDrawState(); }
@@ -144,6 +146,26 @@ public:
     // 0=RGBA, 1=R, 2=G, 3=B, 4=A. Toggling the current channel off returns to RGBA.
     void SetChannelMode(int mode) { m_channelMode = (m_channelMode == mode) ? 0 : mode; ApplyDrawState(); }
     int ChannelMode() const { return m_channelMode; }
+
+    // Shareable transform for cross-pane sync.
+    ImagePane::ImageViewState GetState() const
+    {
+        ImagePane::ImageViewState s;
+        s.zoom = m_zoom; s.panX = m_panX; s.panY = m_panY;
+        s.rotation = m_rotation; s.channelMode = m_channelMode; s.checkerboard = m_checkerboard;
+        return s;
+    }
+    // Apply an externally-driven transform WITHOUT notifying (no sync feedback).
+    void SetState(const ImagePane::ImageViewState& s)
+    {
+        m_zoom = s.zoom; m_panX = s.panX; m_panY = s.panY;
+        m_rotation = s.rotation; m_channelMode = s.channelMode; m_checkerboard = s.checkerboard;
+        PushDrawState();
+    }
+    void SetOnViewChanged(std::function<void(const ImagePane::ImageViewState&)> handler)
+    {
+        m_onViewChanged = std::move(handler);
+    }
 
     // Mouse wheel zooms toward the cursor; left-drag pans; double-click resets.
     bool OnInputEvent(const FD2D::InputEvent& event) override
@@ -207,6 +229,7 @@ public:
             if (event.hasPoint && FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
             {
                 ResetView();
+                if (m_onViewChanged) m_onViewChanged(GetState()); // a user reset syncs
                 return true;
             }
             return false;
@@ -217,7 +240,16 @@ public:
     }
 
 private:
+    // Input-driven change: push to the display AND notify sync listeners.
     void ApplyDrawState()
+    {
+        PushDrawState();
+        if (m_onViewChanged)
+            m_onViewChanged(GetState());
+    }
+    // Push the current transform to FD2D::Image without notifying (so applying
+    // a synced transform from another pane doesn't loop back).
+    void PushDrawState()
     {
         FD2D::Image::DrawState ds;
         ds.zoomScale = m_zoom;
@@ -270,6 +302,7 @@ private:
     LONG m_dragStartY = 0;
     float m_panStartX = 0.0f;
     float m_panStartY = 0.0f;
+    std::function<void(const ImagePane::ImageViewState&)> m_onViewChanged;
 };
 
 struct ImagePane::LoadGuard
@@ -376,6 +409,19 @@ void ImagePane::ToggleAlphaCheckerboard() { if (m_image) m_image->ToggleCheckerb
 void ImagePane::RotateCW() { if (m_image) m_image->RotateCW(); }
 void ImagePane::RotateCCW() { if (m_image) m_image->RotateCCW(); }
 void ImagePane::ResetView() { if (m_image) m_image->ResetView(); }
+
+ImagePane::ImageViewState ImagePane::ViewState() const
+{
+    return m_image ? m_image->GetState() : ImageViewState {};
+}
+void ImagePane::SetViewState(const ImageViewState& state)
+{
+    if (m_image) m_image->SetState(state);
+}
+void ImagePane::SetOnViewChanged(std::function<void(const ImageViewState&)> handler)
+{
+    if (m_image) m_image->SetOnViewChanged(std::move(handler));
+}
 
 void ImagePane::UpdatePathLabel()
 {

@@ -313,7 +313,25 @@ std::shared_ptr<ImagePane> NifCompareView::CreateImagePane()
 {
     // Image panes decode on ImageCore's own workers and draw via FD2D::Image,
     // so they need none of the NIF render/resource wiring - just a name.
-    return std::make_shared<ImagePane>(NifCompareSplitCoordinator::NextPaneName());
+    auto pane = std::make_shared<ImagePane>(NifCompareSplitCoordinator::NextPaneName());
+    ImagePane* raw = pane.get();
+    // Sync Views (same toggle as the NIF camera sync): mirror one image pane's
+    // zoom/pan/channel/rotation onto every other image pane for pixel compare.
+    pane->SetOnViewChanged([this, raw](const ImagePane::ImageViewState& state)
+    {
+        if (!m_syncViews || m_applyingSync)
+            return;
+        m_applyingSync = true;
+        for (auto& p : m_panes)
+        {
+            if (p.get() == raw)
+                continue;
+            if (ImagePane* other = AsImage(p.get()))
+                other->SetViewState(state);
+        }
+        m_applyingSync = false;
+    });
+    return pane;
 }
 
 void NifCompareView::CreatePanesForPaths(const std::vector<std::wstring>& paths)
