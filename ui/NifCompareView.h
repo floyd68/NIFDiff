@@ -90,6 +90,14 @@ public:
     // UI thread too.
     bool OpenIntoBestPane(const std::wstring& path);
 
+    // Open `path` into `pane`, converting the pane to the kind the path needs
+    // first (an image into a NIF pane swaps that slot for an ImagePane in place,
+    // and vice versa). Returns the pane that ended up loaded (may differ from
+    // the one passed in after a swap). The single entry point every "open a
+    // specific file into THIS pane" route (the file dialog, a replace-drop)
+    // funnels through so any file type is handled at the same grade.
+    ComparePane* OpenPathInPane(ComparePane* pane, const std::wstring& path);
+
     // Startup two-phase pane creation (so panes appear before the archive scan
     // finishes and before any file loads):
     //  - PlaceQueuedIpcPanesNamesOnly: during the scan wait, create a named
@@ -258,6 +266,14 @@ public:
 private:
     // Reuse a free (empty) pane, else add one; null at kMaxPanes.
     ComparePane* AllocatePaneFor();
+    // Reuse a free pane already of `kind`; else convert a free pane to `kind`;
+    // else add a new one of `kind` (null at kMaxPanes). Used to route an opened
+    // file to a pane of the matching kind.
+    ComparePane* AllocatePaneOfKind(ComparePane::Kind kind);
+    // Replace `oldPane`'s slot in m_panes with a fresh pane of `kind` (keeping
+    // its position and active state), rebuild the host tree, and return the new
+    // pane. No-op returning oldPane if it is not one of our panes.
+    ComparePane* SwapPaneKind(ComparePane* oldPane, ComparePane::Kind kind);
     void CreateInitialPanes();
     std::shared_ptr<NifComparePane> CreatePane();
     // Build an image pane (the texture-view counterpart of CreatePane). Image

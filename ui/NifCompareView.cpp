@@ -344,6 +344,60 @@ void NifCompareView::CreatePanesForPaths(const std::vector<std::wstring>& paths)
     RebuildHostTree();
 }
 
+ComparePane* NifCompareView::SwapPaneKind(ComparePane* oldPane, ComparePane::Kind kind)
+{
+    auto it = std::find_if(m_panes.begin(), m_panes.end(),
+        [oldPane](const std::shared_ptr<ComparePane>& p) { return p.get() == oldPane; });
+    if (it == m_panes.end())
+        return oldPane;
+    const bool wasActive = (m_activePane == oldPane);
+    std::shared_ptr<ComparePane> fresh = (kind == ComparePane::Kind::Image)
+        ? std::static_pointer_cast<ComparePane>(CreateImagePane())
+        : std::static_pointer_cast<ComparePane>(CreatePane());
+    ComparePane* raw = fresh.get();
+    *it = std::move(fresh);
+    if (wasActive)
+        m_activePane = raw;
+    RebuildHostTree();
+    return raw;
+}
+
+ComparePane* NifCompareView::AllocatePaneOfKind(ComparePane::Kind kind)
+{
+    // A free pane already of the right kind.
+    for (auto& p : m_panes)
+        if (p->PaneKind() == kind && p->CurrentPath().empty())
+            return p.get();
+    // A free pane of the other kind: convert it in place.
+    for (auto& p : m_panes)
+        if (p->CurrentPath().empty())
+            return SwapPaneKind(p.get(), kind);
+    // None free: add a new pane of the right kind (null at kMaxPanes).
+    if (m_panes.size() >= kMaxPanes)
+        return nullptr;
+    if (kind == ComparePane::Kind::Image)
+    {
+        std::shared_ptr<ImagePane> pane = CreateImagePane();
+        ComparePane* raw = pane.get();
+        m_panes.push_back(std::move(pane));
+        RebuildHostTree();
+        return raw;
+    }
+    return AddPane(); // NIF
+}
+
+ComparePane* NifCompareView::OpenPathInPane(ComparePane* pane, const std::wstring& path)
+{
+    if (!pane || path.empty())
+        return pane;
+    const ComparePane::Kind want = IsImagePath(path) ? ComparePane::Kind::Image
+                                                     : ComparePane::Kind::Nif;
+    ComparePane* target = (pane->PaneKind() == want) ? pane : SwapPaneKind(pane, want);
+    std::string error;
+    target->Load(path, &error);
+    return target;
+}
+
 void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane)
 {
     // Raw pointers only below: the pane outlives these callbacks (they are
@@ -607,7 +661,8 @@ bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
     if (path.empty())
         return false;
 
-    ComparePane* target = AllocatePaneFor();
+    ComparePane* target = AllocatePaneOfKind(
+        IsImagePath(path) ? ComparePane::Kind::Image : ComparePane::Kind::Nif);
     if (!target)
         return false;
 
@@ -911,7 +966,9 @@ namespace
 
 bool NifCompareView::OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual)
 {
-    ComparePane* pane = IsNifPath(path) ? PaneAt(clientPt) : nullptr;
+    // Accept any file we can open as a pane - a NIF or an image; the target
+    // pane is converted to the matching kind on drop (OpenPathInPane).
+    ComparePane* pane = (IsNifPath(path) || IsImagePath(path)) ? PaneAt(clientPt) : nullptr;
     if (pane == nullptr)
     {
         SetDragOverlay(nullptr, DragOverlayKind::None);
@@ -935,13 +992,13 @@ bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, con
 {
     SetDragOverlay(nullptr, DragOverlayKind::None);
 
-    std::vector<std::wstring> nifs;
+    std::vector<std::wstring> files;
     for (const std::wstring& p : paths)
     {
-        if (IsNifPath(p))
-            nifs.push_back(p);
+        if (IsNifPath(p) || IsImagePath(p))
+            files.push_back(p);
     }
-    if (nifs.empty())
+    if (files.empty())
         return false;
 
     ComparePane* hit = PaneAt(clientPt);
@@ -949,23 +1006,22 @@ bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, con
         return false; // matches the drag-over decline: no target, no drop
 
     // Same zone split the drag-over visual promised: right quarter inserts
-    // a NEW pane right after the hovered one, the rest replaces it.
-    ComparePane* target = hit;
+    // a NEW pane right after the hovered one, the rest replaces it. Either way
+    // OpenPathInPane converts the slot to the dropped file's kind and loads it.
+    ComparePane* slot = hit;
     if (RelativeX(hit->LayoutRect(), clientPt) >= kInsertZoneRatio && m_panes.size() < kMaxPanes)
     {
         if (ComparePane* inserted = InsertPaneAfter(hit))
-            target = inserted;
+            slot = inserted;
     }
 
+    ComparePane* target = OpenPathInPane(slot, files.front());
     SetActivePane(target); // dropping into a pane means "work here now"
-    std::string error;
-    if (!target->Load(nifs.front(), &error))
-        NIFLOG_WARN("Drop: failed to load into the target pane ({}).", error);
-    for (std::size_t i = 1; i < nifs.size(); ++i)
+    for (std::size_t i = 1; i < files.size(); ++i)
     {
-        if (!OpenIntoBestPane(nifs[i]))
+        if (!OpenIntoBestPane(files[i]))
         {
-            NIFLOG_WARN("Drop: no pane left for {} more dropped file(s).", nifs.size() - i);
+            NIFLOG_WARN("Drop: no pane left for {} more dropped file(s).", files.size() - i);
             break;
         }
     }

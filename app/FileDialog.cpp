@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 
 #include <ArchiveReader.h> // Floar: which archive extensions this build supports
+#include "ImageCore/ImageDecodeDispatcher.h" // which image extensions decode
 
 #include <string>
 #include <vector>
@@ -83,13 +84,33 @@ bool ShowOpenNifDialog(void* ownerWindowHwnd, std::wstring& outPath)
     }
     archiveLabel += L')';
 
+    // Image pattern (e.g. "*.dds;*.png;*.tga;...") from what ImageCore decodes,
+    // so a texture opens straight into an image pane.
+    std::wstring imagePattern;
+    std::wstring imageLabel = L"Images (";
+    for (const std::wstring& ext : ImageCore::ImageDecodeDispatcher::GetSupportedExtensions())
+    {
+        if (!imagePattern.empty())
+        {
+            imagePattern += L';';
+            imageLabel += L' ';
+        }
+        imagePattern += L'*';
+        imagePattern += ext;
+        imageLabel += L'*';
+        imageLabel += ext;
+    }
+    imageLabel += L')';
+
     std::vector<COMDLG_FILTERSPEC> filters;
     filters.push_back({ L"NetImmerse/Gamebryo files (*.nif)", L"*.nif" });
+    if (!imagePattern.empty())
+        filters.push_back({ imageLabel.c_str(), imagePattern.c_str() });
     if (!archivePattern.empty())
         filters.push_back({ archiveLabel.c_str(), archivePattern.c_str() });
     filters.push_back({ L"All files (*.*)", L"*.*" });
 
-    return ShowOpenDialog(ownerWindowHwnd, L"Open NIF File or Archive", filters.data(),
+    return ShowOpenDialog(ownerWindowHwnd, L"Open NIF, Image or Archive", filters.data(),
                           static_cast<UINT>(filters.size()),
                           FOS_FILEMUSTEXIST, outPath);
 }

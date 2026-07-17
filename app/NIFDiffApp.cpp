@@ -895,15 +895,17 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 SavePaneScreenshot(bp->Window(), pane);
         });
 
-        compareView->SetOnPaneOpenRequested([weakBackplate](NifComparePane& pane)
+        compareView->SetOnPaneOpenRequested([weakView, weakBackplate](NifComparePane& pane)
         {
             auto bp = weakBackplate.lock();
-            if (!bp) return;
+            auto view = weakView.lock();
+            if (!bp || !view) return;
             std::wstring path;
             if (ShowOpenNifDialog(bp->Window(), path))
             {
-                std::string error;
-                pane.Load(path, &error);
+                // Route by file kind: an image swaps this pane for an ImagePane,
+                // a NIF/archive loads/browses as a NIF pane (OpenPathInPane).
+                view->OpenPathInPane(&pane, path);
                 bp->Render();
             }
         });
