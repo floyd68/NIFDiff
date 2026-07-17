@@ -16,6 +16,9 @@
 #include "../render/TextureRepository.h"
 #include "../render/RenderDevice.h"
 
+#include "ImageCore/ImageCore.h"     // RegisterBuiltInDecoders (texture-view port)
+#include "ImageCore/ImageLoader.h"   // ImageLoader::Shutdown
+
 #include <Application.h>
 #include <Backplate.h>
 #include <Core.h>
@@ -450,10 +453,10 @@ namespace
             view.SetPaneCount(1);
             return;
         }
-        view.SetPaneCount(paths.size());
-        for (std::size_t i = 0; i < paths.size() && i < view.PaneCount(); ++i)
-            if (auto* nif = dynamic_cast<NifComparePane*>(&view.Pane(i)))
-                nif->ShowPendingFile(paths[i]); // named placeholder, no load yet
+        // One pane per path, each of the kind the path needs (image -> ImagePane,
+        // else NIF). Image panes load immediately; NIF panes are named
+        // placeholders that SubmitInitialLoads parses.
+        view.CreatePanesForPaths(paths);
 
         // Restore the dragged splitter positions saved with the session (only
         // meaningful for a session restore, not command-line files).
@@ -705,6 +708,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             return -1;
         }
     }
+
+    // Register ImageCore's WIC/DirectXTex decoders once, so image panes can
+    // decode textures (texture-view port). Cheap; no worker threads spun yet.
+    ImageCore::RegisterBuiltInDecoders();
 
     const std::wstring iniPath = GetIniFilePath();
 
@@ -1111,6 +1118,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         // posts a completion into a half-torn-down UI.
         resourceManager->Shutdown();
     }
+
+    // Stop ImageCore's decode workers before FD2D/COM teardown (any in-flight
+    // image decode is cancelled; panes are already gone by here).
+    ImageCore::ImageLoader::Instance().Shutdown();
 
     app.Shutdown();
 

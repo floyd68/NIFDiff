@@ -13,6 +13,7 @@
 #pragma once
 
 #include "NifComparePane.h"
+#include "ImagePane.h"
 #include "NifCompareControlPanel.h"
 #include "NifCompareSplitCoordinator.h"
 #include "IpcOpenRequest.h"
@@ -66,6 +67,14 @@ public:
     // Adds a pane (up to kMaxPanes) and rebuilds the equal-width host tree.
     // Returns the new pane, or nullptr if already at kMaxPanes.
     NifComparePane* AddPane();
+
+    // Rebuild the pane set as one pane per path, each of the kind the path
+    // needs: an image extension (dds/png/tga/...) makes an ImagePane, anything
+    // else a NifComparePane. Image panes load immediately (no archive scan
+    // needed); NIF panes are named placeholders that StartAllPendingLoads then
+    // parses (so they can parse during the scan). Used for the command-line /
+    // session-restore file set - the entry point for mixed NIF+image layouts.
+    void CreatePanesForPaths(const std::vector<std::wstring>& paths);
 
     // Grows or shrinks to exactly `count` panes (clamped to
     // [kMinPanes, kMaxPanes]); shrinking drops panes from the end. Intended
@@ -251,6 +260,10 @@ private:
     ComparePane* AllocatePaneFor();
     void CreateInitialPanes();
     std::shared_ptr<NifComparePane> CreatePane();
+    // Build an image pane (the texture-view counterpart of CreatePane). Image
+    // panes decode via ImageCore on their own workers, so they need none of the
+    // NIF render wiring (resolver / render device / resource manager).
+    std::shared_ptr<ImagePane> CreateImagePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
     void RebuildHostTree();
     // Rebuilds the views-area DockPanel's children (thumbnail strip docked

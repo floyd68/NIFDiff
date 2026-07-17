@@ -221,6 +221,8 @@ add_executable(NIFDiff WIN32
     ui/NifViewport.h
     ui/NifViewport.cpp
     ui/ComparePane.h
+    ui/ImagePane.h
+    ui/ImagePane.cpp
     ui/NifComparePane.h
     ui/NifComparePane.cpp
     ui/NifCompareSplitCoordinator.h
@@ -266,6 +268,8 @@ target_include_directories(NIFDiff PRIVATE
     # core/NifLog.h logs via spdlog directly (header-only; see its own
     # comment for why this isn't routed through third_party/AppLog.h).
     ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+    # so ImagePane.cpp can include "ImageCore/<hdr>.h" (texture-view port).
+    ${NIFDIFF_THIRD_PARTY_ROOT}
 )
 
 target_compile_definitions(NIFDiff PRIVATE
@@ -281,6 +285,7 @@ target_link_libraries(NIFDiff PRIVATE
     FD2D
     DirectXTex
     Floar
+    ImageCore
     comctl32
     ole32
     shell32

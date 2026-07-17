@@ -2,6 +2,8 @@
 #include "../core/NifLog.h"
 #include "../core/ResourceManager.h"
 
+#include "ImageCore/ImageDecodeDispatcher.h" // which extensions route to an ImagePane
+
 #include <Backplate.h>
 #include <Core.h>
 #include <Util.h>
@@ -287,6 +289,59 @@ std::shared_ptr<NifComparePane> NifCompareView::CreatePane()
     pane->SetThumbnailStripSize(m_thumbStripExtent);     // ... and the current card size
     WirePaneCallbacks(pane);
     return pane;
+}
+
+namespace
+{
+    // True when `path`'s extension is one ImageCore can decode (dds/png/tga/
+    // jpg/...), i.e. it should open in an ImagePane rather than a NIF pane.
+    bool IsImagePath(const std::wstring& path)
+    {
+        std::wstring ext = std::filesystem::path(path).extension().wstring();
+        for (wchar_t& c : ext)
+            c = static_cast<wchar_t>(std::towlower(c));
+        if (ext.empty())
+            return false;
+        for (const std::wstring& supported : ImageCore::ImageDecodeDispatcher::GetSupportedExtensions())
+            if (ext == supported)
+                return true;
+        return false;
+    }
+}
+
+std::shared_ptr<ImagePane> NifCompareView::CreateImagePane()
+{
+    // Image panes decode on ImageCore's own workers and draw via FD2D::Image,
+    // so they need none of the NIF render/resource wiring - just a name.
+    return std::make_shared<ImagePane>(NifCompareSplitCoordinator::NextPaneName());
+}
+
+void NifCompareView::CreatePanesForPaths(const std::vector<std::wstring>& paths)
+{
+    m_panes.clear();
+    m_activePane = nullptr;
+
+    for (const std::wstring& path : paths)
+    {
+        if (m_panes.size() >= kMaxPanes)
+            break;
+        if (IsImagePath(path))
+        {
+            std::shared_ptr<ImagePane> pane = CreateImagePane();
+            pane->Load(path); // no archive scan needed; decode starts now
+            m_panes.push_back(std::move(pane));
+        }
+        else
+        {
+            std::shared_ptr<NifComparePane> pane = CreatePane();
+            pane->ShowPendingFile(path); // named placeholder; StartAllPendingLoads parses it
+            m_panes.push_back(std::move(pane));
+        }
+    }
+    if (m_panes.empty())
+        m_panes.push_back(CreatePane());
+
+    RebuildHostTree();
 }
 
 void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane)

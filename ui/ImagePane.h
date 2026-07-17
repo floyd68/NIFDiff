@@ -1,0 +1,53 @@
+// ImagePane.h - a ComparePane that shows a decoded texture/image.
+//
+// The image counterpart to NifComparePane, so NifCompareView can lay a
+// texture pane out beside a 3D NIF pane. Decoding runs on ImageCore's own
+// worker pool (WIC + DirectXTex); the decoded CPU BGRA8 payload is marshalled
+// back to the UI thread via the backplate's async-redraw token and uploaded
+// into an FD2D::Image (which handles aspect-fit draw, and later zoom/pan).
+// Lifetime-safe: a decode completion is dropped if it is stale (generation)
+// or the pane is gone (weak_ptr), so no callback ever touches a dead pane.
+#pragma once
+
+#include "ComparePane.h"
+
+#include <Text.h>
+
+#include <cstdint>
+#include <memory>
+#include <string>
+
+namespace nsk
+{
+
+class ImagePane : public ComparePane
+{
+public:
+    explicit ImagePane(const std::wstring& name);
+    ~ImagePane() override;
+
+    // ComparePane: this is the 2D image pane.
+    Kind PaneKind() const override { return Kind::Image; }
+    std::wstring CurrentPath() const override { return m_path; }
+    bool Load(const std::wstring& path, std::string* error = nullptr) override;
+    void Clear() override;
+
+private:
+    // FD2D::Image subclass that stages a decoded payload off-thread and uploads
+    // it to a device bitmap at render time; defined in the .cpp.
+    class ImageView;
+    // Shared with the decode callback: a generation to drop superseded/stale
+    // completions and a weak view so a completion after destruction is a no-op.
+    struct LoadGuard;
+
+    void UpdatePathLabel();
+
+    std::shared_ptr<ImageView> m_image;
+    std::shared_ptr<FD2D::Text> m_pathLabel;
+    std::wstring m_path;
+
+    std::shared_ptr<LoadGuard> m_guard;
+    std::uint64_t m_handle = 0; // last ImageCore request; cancelled on retarget
+};
+
+} // namespace nsk
