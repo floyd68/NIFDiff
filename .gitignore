@@ -42,6 +42,9 @@ CMakeFiles/
 cmake_install.cmake
 *.cmake
 !CMakeLists.txt
+# ...but cmake/ holds our own build scripts (version stamping), not generated
+# cache files - they are source.
+!cmake/*.cmake
 
 # App-level local state (window placement, last-opened files, Game Data path)
 *.ini
@@ -55,6 +58,14 @@ test_assets/
 /*.exe
 /*.dll
 /*.pdb
+
+# Release.ps1's staging dir + the packaged Nexus zips (build output; the
+# published copies live on GitHub Releases / Nexus, not in the repo).
+dist/
+
+# Demo/marketing media: the demo video is published on YouTube and linked
+# from README.md - a multi-MB mp4 has no business in the source history.
+docs/media/
 
 # The shader binding manifest template is source, not a session INI.
 !render/shaders/shaders.ini

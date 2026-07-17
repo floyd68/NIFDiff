@@ -33,7 +33,12 @@
 # NIFDiff's actual logging).
 cmake_minimum_required(VERSION 3.21)
 
-project(NIFDiff VERSION 0.1.0 LANGUAGES C CXX)
+# Version: major.minor from cmake/Version.cmake, revision = git commit count
+# (stamped at BUILD time by the nifdiff_version target below, see
+# cmake/GenerateVersion.cmake and RELEASING.md).
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.cmake")
+
+project(NIFDiff VERSION ${NIFDIFF_VERSION_MAJOR}.${NIFDIFF_VERSION_MINOR} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -134,6 +139,34 @@ set(NIFDIFF_SHADER_SOURCES
 set_source_files_properties(${NIFDIFF_SHADER_SOURCES} PROPERTIES VS_TOOL_OVERRIDE "None")
 
 # ---------------------------------------------------------------------------
+# Version stamp (generated/version.h)
+#
+# Regenerated on every build rather than at configure time: the revision is
+# the git commit count, so a plain `cmake --build` after a commit must pick
+# the new number up without re-running cmake. GenerateVersion.cmake rewrites
+# the header only when its content changed, so this costs one tiny script run
+# per build and triggers no recompiles when the version is unchanged.
+# ---------------------------------------------------------------------------
+set(NIFDIFF_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${NIFDIFF_GENERATED_DIR}")
+add_custom_target(nifdiff_version ALL
+    COMMAND ${CMAKE_COMMAND}
+            -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUT_FILE=${NIFDIFF_GENERATED_DIR}/version.h
+            -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/app/res/version.h.in
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.cmake
+    BYPRODUCTS "${NIFDIFF_GENERATED_DIR}/version.h"
+    COMMENT "Stamping version (major.minor from cmake/Version.cmake + git commit count)"
+    VERBATIM)
+# Generate once now too, so the very first configure+build has the header
+# before the RC compiler asks for it.
+execute_process(COMMAND ${CMAKE_COMMAND}
+    -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DOUT_FILE=${NIFDIFF_GENERATED_DIR}/version.h
+    -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/app/res/version.h.in
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.cmake)
+
+# ---------------------------------------------------------------------------
 # NIFDiff executable
 # ---------------------------------------------------------------------------
 add_executable(NIFDiff WIN32
@@ -151,6 +184,7 @@ add_executable(NIFDiff WIN32
     app/main.cpp
     app/res/resource.h
     app/res/NIFDiff.rc
+    app/res/version.h.in
     core/NifTypes.h
     core/NifStream.h
     core/NifValue.h
@@ -210,7 +244,11 @@ add_custom_command(TARGET NIFDiff POST_BUILD
             "$<TARGET_FILE_DIR:NIFDiff>/shaders"
     COMMENT "Copying editable shader sources to $<TARGET_FILE_DIR:NIFDiff>/shaders")
 
+add_dependencies(NIFDiff nifdiff_version)
+set_source_files_properties(app/res/version.h.in PROPERTIES HEADER_FILE_ONLY ON)
+
 target_include_directories(NIFDiff PRIVATE
+    ${NIFDIFF_GENERATED_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/app
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/render

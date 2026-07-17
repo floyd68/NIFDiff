@@ -1,5 +1,44 @@
 #include "resource.h"
+#include "version.h"   // generated: build/generated/version.h (see cmake/GenerateVersion.cmake)
+#include <winver.h>
 
 // Application icon. The lowest-ID icon in the executable is also what
 // Explorer and the file-association DefaultIcon ("<exe>,0") display.
 IDI_NIFDIFF ICON "NIFDiff.ico"
+
+// Version stamp shown in Explorer's Properties -> Details, and what an
+// installer/updater compares. The numeric FILEVERSION carries the same
+// major.minor.<git commit count> the app reports; field 4 is unused.
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION    NIFDIFF_VERSION_MAJOR,NIFDIFF_VERSION_MINOR,NIFDIFF_VERSION_REVISION,0
+    PRODUCTVERSION NIFDIFF_VERSION_MAJOR,NIFDIFF_VERSION_MINOR,NIFDIFF_VERSION_REVISION,0
+    FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+    FILEFLAGS      VS_FF_DEBUG
+#else
+    FILEFLAGS      0x0L
+#endif
+    FILEOS         VOS_NT_WINDOWS32
+    FILETYPE       VFT_APP
+    FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"   // U.S. English, Unicode
+        BEGIN
+            VALUE "CompanyName",      "EunSuk Lee (floyd)"
+            VALUE "FileDescription",  "NIFDiff - side-by-side NIF model compare for Bethesda games"
+            VALUE "FileVersion",      NIFDIFF_VERSION_STRING
+            VALUE "InternalName",     "NIFDiff"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 EunSuk Lee. MIT licensed."
+            VALUE "OriginalFilename", "NIFDiff.exe"
+            VALUE "ProductName",      "NIFDiff"
+            VALUE "ProductVersion",   NIFDIFF_VERSION_STRING
+            VALUE "Comments",         "Built from git " NIFDIFF_GIT_HASH
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

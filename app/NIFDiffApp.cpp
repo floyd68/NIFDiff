@@ -3,6 +3,7 @@
 #include "AppIpc.h"
 #include "IniStore.h"
 #include "res/resource.h"
+#include "version.h" // generated (cmake/GenerateVersion.cmake): NIFDIFF_VERSION_DISPLAY
 #include "AppSetup.h"
 #include "FileDialog.h"
 #include "../ui/IpcOpenRequest.h"
@@ -32,6 +33,16 @@ namespace nsk
 {
 namespace
 {
+    // version.h hands out narrow literals (the resource compiler needs them);
+    // widen through the usual two-step so the title stays a compile-time
+    // literal concatenation.
+#define NIFDIFF_WIDEN2(x) L##x
+#define NIFDIFF_WIDEN(x) NIFDIFF_WIDEN2(x)
+    // Version in the title bar: a bug-report screenshot then identifies the
+    // build ("1.0.116", or "1.0.116+dev" when built from a dirty tree).
+    constexpr wchar_t kWindowTitle[] =
+        L"NIFDiff " NIFDIFF_WIDEN(NIFDIFF_VERSION_DISPLAY) L" - NIF Model Compare";
+
     constexpr wchar_t kIniFileName[] = L"NIFDiff.ini";
     constexpr wchar_t kSectionWindow[] = L"Window";
     constexpr wchar_t kSectionSession[] = L"Session";
@@ -745,7 +756,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     const bool hasSavedPlacement = ReadWindowPlacement(settings, savedRect, savedShowCmd);
 
     FD2D::WindowOptions opts {};
-    opts.title = L"NIFDiff - NIF Model Compare";
+    opts.title = kWindowTitle;
     opts.instance = hInstance;
     opts.chrome = FD2D::ChromeStyle::Standard;
     // App icon (title bar / taskbar / Alt+Tab). LoadImage picks the closest

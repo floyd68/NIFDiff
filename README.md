@@ -4,6 +4,11 @@ A standalone, Qt-free tool for viewing and diffing NIF files (Bethesda's
 NetImmerse/Gamebryo model format - Skyrim, Skyrim SE, Fallout 4, etc.)
 side by side in 3D.
 
+**[Demo video](https://youtu.be/Ho_BjrLK8lI)** - a walkthrough of the compare
+panes, navigation, animation playback, custom shaders, and the
+Vortex-conflict / Explorer open flows. The Nexus Mods description text lives in
+[NexusMods_Mod_Description.bbcode](NexusMods_Mod_Description.bbcode).
+
 **NIFDiff is FICture2 (`D:\Works\Ficture2`, an image/DDS-texture viewer and
 compare tool by the same author) with a NIF Model View feature added on
 top.** FICture2 already solved "view/compare two-to-four things side by
@@ -579,7 +584,10 @@ included (ENB, Community Shaders, PBRNifPatcher).
 app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
                    IniStore.h (INI persistence), AppIpc.h/.cpp (single-instance
                    forwarding), FileDialog.h/.cpp,
-                   ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests
+                   ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests,
+                   res/ (icon, VERSIONINFO .rc, version.h.in template)
+cmake/             Version.cmake (major.minor - the only hand-edited numbers),
+                   GenerateVersion.cmake (build-time git commit-count stamp)
 core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera /
                    ResourceResolver (override -> nif dir -> Game Data -> BSA/BA2 order)
 render/            D3D11 renderer, HLSL shaders (shaders/, fxc-precompiled at build time),
@@ -596,6 +604,8 @@ third_party/       git submodules: FD2D, Floar, external/DirectXTex (DDS decode
                    + D3D11 SRV creation), external/spdlog
 CMakeLists.txt     sets up third-party wiring + NIFDiff/NifValidate/ResourceResolveTest targets
 GenerateVS2026.ps1/.bat   configures a VS2026 solution under build/
+Release.ps1        release automation (-Plan / -Publish); see RELEASING.md
+NexusMods_Mod_Description.bbcode   the Nexus Mods description page text
 ```
 
 ## Build
@@ -608,6 +618,24 @@ cmake --build build --config Debug
 
 `GenerateVS2026.ps1` runs the submodule update for you if `third_party/FD2D`
 or `third_party/Floar` look uninitialized.
+
+## Versioning and releases
+
+Versions are `MAJOR.MINOR.REVISION` (e.g. `1.0.116`): `MAJOR`/`MINOR` are
+hand-maintained in [cmake/Version.cmake](cmake/Version.cmake), while
+`REVISION` is the **git commit count**, stamped at build time into
+`build/generated/version.h` - so every commit yields a distinct version
+nobody has to maintain, and version `1.0.116` is exactly the commit tagged
+`v1.0.116`. The number shows up in the title bar (with a `+dev` suffix when
+built from a dirty tree, so a local build can't pass for the released one) and
+in the exe's VERSIONINFO (Explorer -> Properties -> Details).
+
+Releases are cut with [Release.ps1](Release.ps1) - `-Plan` reports what
+changed since the last tag and the version the next commit will carry;
+`-Publish` verifies the tree and the changelog, builds Release, packages
+`dist\NIFDiff-<version>.zip` for Nexus, tags and pushes. Full walkthrough in
+[RELEASING.md](RELEASING.md); user-facing history in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Status
 
@@ -626,10 +654,4 @@ hosts one `NifCompareView`.
 Not yet ported/implemented: skeletal (bone) animation with per-frame
 re-skinning, morphs, particles, and property controllers (rigid NIF-embedded
 transform animations DO play - see the ANIMATION group under Features; actor
-animations are external Havok .hkx, unplayable even in NifSkope), and a
-`.ico`/app icon.
-
-## Next steps
-
-Possible follow-ups, not required for the current feature set:
-1. An app icon / `.ico` (none exists yet).
+animations are external Havok .hkx, unplayable even in NifSkope).

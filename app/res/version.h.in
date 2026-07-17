@@ -1,0 +1,19 @@
+// version.h - GENERATED at build time by cmake/GenerateVersion.cmake.
+// Do not edit; edit cmake/Version.cmake (major.minor) instead.
+//
+// Included by C++ (app shell title bar) AND by the resource compiler
+// (NIFDiff.rc's VERSIONINFO), so it must stay preprocessor-only: no types,
+// no namespaces, plain #defines.
+#pragma once
+
+#define NIFDIFF_VERSION_MAJOR    @NIFDIFF_VERSION_MAJOR@
+#define NIFDIFF_VERSION_MINOR    @NIFDIFF_VERSION_MINOR@
+#define NIFDIFF_VERSION_REVISION @NIFDIFF_VERSION_REVISION@
+
+// "1.0.116" - the released identity (matches the git tag v1.0.116).
+#define NIFDIFF_VERSION_STRING  "@NIFDIFF_VERSION_STRING@"
+// Same, but "+dev"-suffixed when built from a dirty tree - what the UI shows,
+// so a local build never claims to be the tagged one.
+#define NIFDIFF_VERSION_DISPLAY "@NIFDIFF_VERSION_DISPLAY@"
+#define NIFDIFF_GIT_HASH        "@NIFDIFF_GIT_HASH@"
+#define NIFDIFF_GIT_DIRTY        @NIFDIFF_GIT_DIRTY@

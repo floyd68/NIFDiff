@@ -1,0 +1,211 @@
+[center][size=5][b]NIFDiff – Side-by-Side NIF Model Compare for Bethesda Games[/b][/size][/center]
+
+[center][size=6][url=https://github.com/floyd68/NIFDiff/releases/tag/v1.0.116]v1.0.116 Release[/url][/size][/center]
+
+[b]NIFDiff[/b] opens up to [b]8 NIF meshes at once[/b] and keeps their cameras, lighting and file selection in sync — so you can see [i]exactly[/i] how two versions of a mesh differ. A parallax/PBR mod vs. vanilla, two mods fighting over the same asset, or a before/after of your own edit.
+
+It is a standalone, Qt-free tool: a single [b]2.3 MB executable[/b], cold start in about half a second. No installer, no runtime frameworks, no background services. Double-click a .nif and you're already comparing.
+
+[center][size=4][b]📺 Demo Video[/b][/size]
+[youtube]Ho_BjrLK8lI[/youtube][/center]
+
+[size=4][b]🆕 v1.0.116 — First Release[/b][/size]
+
+Everything below is new. The highlights, if you only read one list:
+
+[list]
+[*][b]Up to 8 panes[/b], cameras and lighting synced — built around the Vortex "open every conflicting file" flow[/*]
+[*][b]Material diff panel[/b] — a real value-by-value table, not two windows and your memory[/*]
+[*][b]Parallax / Complex Material / True PBR[/b] rendering, each toggleable so you can see which path a mesh takes[/*]
+[*][b]Animation playback[/b] for animated statics, phase-locked across panes[/*]
+[*][b]User-editable shaders[/b] with 1-second hot reload[/*]
+[/list]
+
+[size=4][b]⚡ Why NIFDiff Exists[/b][/size]
+
+NifSkope is the tool everyone uses to inspect a NIF — but when you actually need to answer [i]"what did this mod change?"[/i], you end up:
+
+[list]
+[*]Opening two NifSkope windows and eyeballing them back and forth[/*]
+[*]Manually matching camera angles that never quite line up[/*]
+[*]Digging through block trees to compare two texture slots[/*]
+[*]Never quite sure whether a texture came from a loose file or a BSA[/*]
+[/list]
+
+[b]NIFDiff is built for the compare itself.[/b] Load both meshes, orbit once — both move together — select a sub-mesh, and a diff table tells you which values actually differ.
+
+[size=4][b]🔍 Side-by-Side Comparison (1–8 Panes)[/b][/size]
+
+[list]
+[*]1–8 panes in an equal-width grid (1–4 in a row, 5–8 in two rows), added and removed at runtime[/*]
+[*][b]Synced views[/b] — one orbit / pan / zoom moves every model at once[/*]
+[*][b]Synced lighting[/b] — one light change hits every pane[/*]
+[*][b]Synced files[/b] — stepping to the next mesh in one pane steps every pane to the same file name in its own folder[/*]
+[*]Each sync toggles independently, so you can freeze the others for an isolated before/after[/*]
+[*][b]SYNCED / UNIQUE badges[/b] flag the odd one out at a glance — a mod that's missing that mesh stands out immediately[/*]
+[/list]
+
+[size=4][b]🧩 Built for Vortex Mod Manager Users[/b][/size]
+
+This is where NIFDiff earns its place in your toolbox.
+
+Vortex's conflict editor lets you open every mod's version of a conflicted file. NIFDiff catches them all through single-instance forwarding and lines them up automatically:
+
+[list]
+[*]Open all 8 mods overriding one mesh → [b]one window, 8 panes, all synced[/b][/*]
+[*]No manual setup, no dragging files around[/*]
+[*]Instantly see which mod's version you're actually getting — and what it costs you[/*]
+[/list]
+
+Opening a .nif whose [i]name[/i] matches one already open always lands in a new pane of the same window. Unrelated files start their own window.
+
+[size=4][b]📋 Material Diff Panel — The Actual "Diff"[/b][/size]
+
+Select a sub-mesh and press [b]I[/b]:
+
+[list]
+[*]A table of its BSLightingShaderProperty data — shader type and flags, every texture slot, specular / emissive / alpha / UV values, alpha and depth state[/*]
+[*]Side by side with the [b]same-named mesh in every other pane[/b], with the differing values highlighted[/*]
+[*][b]Loose vs BSA markers[/b] — when two panes resolve the same texture path to different sources, it lights up[/*]
+[*]Hover a texture cell for its full path and resolved source; right-click to copy[/*]
+[/list]
+
+[size=4][b]🔬 Texture Inspector[/b][/size]
+
+Press [b]T[/b] to list the selected mesh's bound textures with resolution, pixel format, mip count and resolved source — then preview any slot in 2D with R/G/B/A channel isolation. Read your RMAOS / complex-material channel content without leaving the viewer.
+
+[size=4][b]✨ Modern Material Support (Not Just Vanilla)[/b][/size]
+
+[list]
+[*][b]Vanilla lit path:[/b] specular, glow/emissive, environment maps with per-material cubemaps, soft/rim/back lighting, model-space normals, multilayer parallax, skin/hair tint, face tint masks, effect shaders, alpha blending/testing, decals, double-sided materials[/*]
+[*][b]Parallax[/b] (_p.dds): parallax occlusion mapping with height-field self-shadowing[/*]
+[*][b]Complex Material[/b] (ENB / Community Shaders _m.dds): R/G/B/A read as reflection / glossiness / metalness / height, detected by the ecosystem's standard rule — with a CPU-side probe that rejects flat alphas and binary masks so fake "height" fields don't produce garbage POM[/*]
+[*][b]True PBR[/b] (Community Shaders / PBRNifPatcher): SLSF2_Unused01 marker, RMAOS slot conventions, GGX/Cook-Torrance shading, displacement POM, and ambient specular from a procedural IBL cubemap so metals get directional, colored reflections[/*]
+[*][b]Toggle each path on/off[/b] (Parallax / Complex Mat / True PBR) to see a mesh with vs. without it — the fastest way to find out why one pane looks different[/*]
+[/list]
+
+[i]A credible preview, not an ENB/CS-exact reproduction — but close enough to catch what's actually wrong with a mesh.[/i]
+
+[size=4][b]🎬 Animation Playback[/b][/size]
+
+The animated statics of the game world — water wheels, windmills, traps, animated doors — play back right in the viewer:
+
+[list]
+[*]Play/Pause, a sequence dropdown ("Idle", "Open", ...), a scrubbable Time slider, Loop, and Speed (0.25–2x)[/*]
+[*][b]Sync Anim[/b] keeps every pane on the same clock — two mods' versions of the same animated mesh run side by side [b]in phase[/b][/*]
+[*]Idle CPU stays at zero when nothing is playing[/*]
+[/list]
+
+[i]Rigid NIF-embedded animations only — actor skeletal animations live in external Havok .hkx files (NifSkope cannot play those either).[/i]
+
+[size=4][b]🧭 Navigation That Doesn't Fight You[/b][/size]
+
+[list]
+[*]Left-drag orbit, middle/right-drag pan, wheel zoom toward the cursor — plus the DCC-standard [b]Alt chords[/b] (Alt+Left/Middle/Right) for Maya/Blender muscle memory[/*]
+[*][b]On-screen XYZ gizmo[/b] in every pane — click an axis nub to animation-snap to that view[/*]
+[*]Blender-style numpad views (1/3/7 = Front/Right/Top, Ctrl for the opposite face, 5 = ortho toggle)[/*]
+[*][b]Orthographic mode[/b] — drop perspective so two silhouettes line up 1:1[/*]
+[*][b]Orbit around your selection[/b] — the picked sub-mesh stays put while the rest revolves around it[/*]
+[*][b]Close-up actually works[/b] — pan and zoom don't freeze as you approach, and zoom can dolly [i]through[/i] the pivot into a model's interior[/*]
+[*]Move / Zoom / Rotate sensitivity sliders and an FOV slider, all shared across panes[/*]
+[/list]
+
+[size=4][b]📁 Per-Pane Folder Browser[/b][/size]
+
+Every pane has its own thumbnail strip along its bottom edge, listing the folder of [i]that[/i] pane's open file — so when comparing files from different mod folders, each pane browses its own.
+
+[list]
+[*]Sibling .nif files render as real [b]3D thumbnails[/b], framed from a 3/4 angle at each model's own aspect ratio[/*]
+[*]Subfolders and a ".." tile for browsing; keyboard navigation with type-to-select[/*]
+[*]Generated on a background thread pool — a big folder never blocks or stutters the UI[/*]
+[*]Resizable (drag the strip's edge) with Small/Medium/Large presets; toggle all strips off at once[/*]
+[/list]
+
+[size=4][b]🗂️ Correct Bethesda Resource Handling[/b][/size]
+
+[list]
+[*]Loads Skyrim LE / Skyrim SE / Fallout 4 NIFs[/*]
+[*]Textures resolve in [b]engine order[/b]: override folders → the NIF's own directory → Game Data → BSA/BA2 archives[/*]
+[*]Game Data auto-detection, plus an override-folder list for loose texture mods that should win[/*]
+[*]A named-but-unresolved diffuse renders [b]magenta[/b] instead of quietly blending in as plain white — missing content is unmissable[/*]
+[*]Textures are pooled process-wide: each unique resolved source is decoded and uploaded once, shared across every pane[/*]
+[/list]
+
+[size=4][b]🎨 User-Editable Shaders (Advanced)[/b][/size]
+
+The HLSL sources ship next to the exe in a shaders folder. Edit one and save — the app [b]hot-reloads it within a second[/b], no restart. A compile error keeps the previous shaders and shows a toast; a broken edit can never blank the viewer.
+
+You can also [b]route the renderer to your own shaders[/b] per material kind via shaders.ini:
+
+[code]
+[Programs]
+MyToon=custom\MyToon.hlsl
+
+[Bind.Mesh]
+Rule1=pbr -> MyToon
+Rule2=* -> Lit
+[/code]
+
+Selectors: pbr / complexmat / parallax / envmap / effect / decal / node:<substring> / tex:<substring> / *. The manifest and every shader source hot-reload live, so a single rule can restyle only the True PBR meshes of a compare — thumbnails included — while everything else keeps stock shading. Delete the file for stock behavior (the default — untouched installs pay zero startup cost).
+
+[size=4][b]⌨️ Hotkeys (Everyday Use)[/b][/size]
+
+[list]
+[*][b]Left drag / Middle-Right drag / Wheel:[/b] orbit / pan / zoom-to-cursor[/*]
+[*][b]Alt + Left/Middle/Right drag:[/b] orbit / pan / dolly (DCC chords)[/*]
+[*][b]Numpad 1/3/7:[/b] Front / Right / Top (Ctrl+ for the opposite face) — [b]Numpad 5:[/b] ortho toggle[/*]
+[*][b]Numpad . / Numpad 0:[/b] frame selection / whole scene[/*]
+[*][b]F / R:[/b] reset all views / active pane's view — [b]C:[/b] focus selected sub-mesh[/*]
+[*][b]I / T:[/b] material diff panel / texture inspector[/*]
+[*][b]G X W H N Shift+N M:[/b] grid / axes / wireframe / hidden / normals / tangents / MSAA[/*]
+[*][b]1–8 / Tab:[/b] select the active pane[/*]
+[*][b]Ctrl+O / Ctrl+Shift+O:[/b] open into the active pane / a new pane[/*]
+[*][b]Left / Right, Home / End:[/b] step the thumbnail strip — [b]Enter / Backspace:[/b] enter folder / go up[/*]
+[*][b]Ctrl+E / F12:[/b] show in Explorer / save a screenshot[/*]
+[/list]
+
+[i]Numpad view keys need NumLock on.[/i]
+
+[size=4][b]🧭 Quick Start[/b][/size]
+
+[list]
+[*]Point [b]Game Data[/b] at your Skyrim/Fallout Data folder once (RESOURCES group → [b]Detect[/b] or [b]Browse[/b]) so BSA/BA2 textures resolve[/*]
+[*]Drag & drop .nif files onto a pane — the left ~75% [b]replaces[/b] it, the right ~25% [b]inserts a new pane[/b][/*]
+[*]Drop several same-named .nifs at once to line them up in equal panes[/*]
+[*]Register the .nif file association to open meshes straight from Explorer or Vortex[/*]
+[/list]
+
+[size=4][b]⚙️ Light and Fast[/b][/size]
+
+[list]
+[*]2.3 MB single executable, no installer[/*]
+[*]Cold start in about half a second — BSA scanning runs in parallel in the background[/*]
+[*]Model loading is async end to end: panes appear immediately, models stream in, textures pop in as they decode[/*]
+[*]No Qt, no Electron, no runtime frameworks, no background services[/*]
+[*]Full session persistence: open files, pane layout, window position, Game Data path, recent files[/*]
+[/list]
+
+[size=4][b]🎯 Who This Is For[/b][/size]
+
+[list]
+[*]Anyone resolving mesh conflicts between mods (especially Vortex users)[/*]
+[*]Mesh authors checking their own before/after[/*]
+[*]Anyone running Parallax / Complex Material / True PBR setups who needs to know which path a mesh actually takes[/*]
+[*]Anyone tired of two NifSkope windows and a lot of squinting[/*]
+[/list]
+
+[size=4][b]📋 Requirements[/b][/size]
+
+[list]
+[*]Windows 10/11, 64-bit[/*]
+[*]A GPU with Direct3D 11 support (anything from the last decade)[/*]
+[*]A Skyrim/Fallout Data folder for archive-backed textures (optional — loose files work without it)[/*]
+[/list]
+
+[b]The compare tool NifSkope never was: 8 meshes, one camera, and a diff table that tells you what actually changed.[/b]
+
+[size=4][b]🔗 Source Code[/b][/size]
+
+[url=https://github.com/floyd68/NIFDiff]Github[/url] — MIT licensed, free and open source.
+
+NIFDiff is built on the author's own [url=https://www.nexusmods.com/skyrimspecialedition/mods/100267]FICture2[/url] app framework, with its NIF parsing and 3D logic ported from [url=https://github.com/niftools/nifskope]NifSkope[/url] (BSD). See THIRD_PARTY_NOTICES.md in the repo for full attribution.

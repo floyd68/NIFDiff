@@ -569,6 +569,13 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     s.showGrid = false;
     s.showAxes = false;
     s.clearColor = Color4 { 0.11f, 0.11f, 0.13f, 1.0f };
+    // Archive scan still running: an unresolved BSA-backed diffuse is "not
+    // ready yet", not missing - suppress the magenta missing-texture marker
+    // (same rule as the live viewport) and flag the entry so the post-scan
+    // pass in OnRenderD3D retakes it with the real textures.
+    const bool scanPending = m_resolver && !m_resolver->IsArchiveScanReady();
+    s.texturesPending = scanPending;
+    e.renderedWhilePending = scanPending;
 
     m_renderDevice->RenderScene(m_thumbTarget, m_thumbCache, pt.meshes, s, &textures);
 
@@ -587,6 +594,7 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     {
         m_context->CopyResource(persistent.Get(), m_thumbTarget.ColorTexture());
         e.tex = std::move(persistent);
+        e.bitmap.Reset(); // a retake replaced the texture: rebuild the D2D view
         e.aspect = pt.aspect; // drives this card's width in the layout
     }
     else
@@ -610,6 +618,24 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
     if (m_renderDevice && m_renderDevice->IsInitialized() && m_device &&
         m_context && m_textureRepository)
     {
+        // Post-scan healing: thumbnails rendered while the archive scan was
+        // still running went out without their BSA-backed textures. Once the
+        // scan lands, drop them back to un-rendered (the old texture stays on
+        // screen until its retake arrives) and resubmit - the parse is a
+        // NifCache hit, so the retake is cheap.
+        if (m_resolver && m_resolver->IsArchiveScanReady())
+        {
+            bool stale = false;
+            for (Entry& e : m_entries)
+                if (e.renderedWhilePending)
+                {
+                    e.renderedWhilePending = false;
+                    e.rendered = false;
+                    stale = true;
+                }
+            if (stale)
+                EnqueuePending();
+        }
         int done = 0;
         while (done < kPerFrame && !m_ready.empty())
         {

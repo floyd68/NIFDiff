@@ -153,6 +153,10 @@ private:
         std::wstring name;      // label (file/folder name, or "..")
         bool rendered = false;  // 3D pass produced a texture (File only)
         bool failed = false;    // parse/build failed - show a placeholder
+        // Rendered while the background archive scan was still running, so
+        // BSA-backed textures were "not resolved yet" and baked absent. The
+        // post-scan pass in OnRenderD3D re-renders these once the scan lands.
+        bool renderedWhilePending = false;
         float aspect = 1.0f;    // rendered thumbnail w/h (drives the card width)
         Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;   // persistent copy of the render
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;   // D2D view of tex (built lazily in the D2D pass)
