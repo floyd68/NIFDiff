@@ -75,6 +75,11 @@ public:
     // Re-lists only when the folder actually changed; otherwise just moves the
     // highlight. Folder/Up tiles navigate the strip in place (no pane load).
     void ShowForFile(const std::wstring& nifPath);
+    // Browse the strip directly to a folder OR an archive (.bsa/.ba2/.zip/...),
+    // listing its contents with no file highlighted. Used when the user opens an
+    // archive: the strip descends into it so they can pick a mesh inside. A
+    // regular folder lists its .nif files + subfolders as usual.
+    void ShowForFolder(const std::wstring& folder);
     const std::wstring& Folder() const { return m_folder; }
     bool HasContent() const { return !m_entries.empty(); }
 

@@ -9,6 +9,8 @@
 #include <Backplate.h>
 #include <Core.h>
 #include <Util.h>
+#include <VirtualPath.h>        // Floar: parse a folder string into a VirtualPath
+#include <VirtualFileSystem.h>  // Floar: list a folder OR a BSA/BA2's contents
 #include <algorithm>
 #include <cwctype>
 #include <filesystem>
@@ -168,6 +170,14 @@ void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
     NavigateTo(dir, nifPath);
 }
 
+void ThumbnailStrip::ShowForFolder(const std::wstring& folder)
+{
+    if (folder.empty())
+        return;
+    // List the folder/archive itself (not a file's parent), no highlight.
+    NavigateTo(folder, std::wstring());
+}
+
 void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 {
     // Cancel in-flight/queued parses from the previous folder: bump our
@@ -193,13 +203,30 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 
     if (!folder.empty())
     {
-        std::error_code ec;
-        std::filesystem::path dir(folder);
-        if (std::filesystem::is_directory(dir, ec))
+        // List through Floar's VFS so the strip descends into BSA/BA2 archives
+        // as if they were folders: a plain directory lists its files, a .ba2/
+        // .bsa lists its root, and a folder *inside* an archive lists that
+        // subtree. m_folder / Entry::path carry VFS display paths (e.g.
+        // "...\foo.ba2\meshes\x.nif"); LoadNifDocument routes those back through
+        // the VFS on open, and std::filesystem name/parent helpers still work on
+        // the string form.
+        auto vpOpt = Floar::VirtualPath::Parse(folder);
+        // For an archive path, IsDirectory would scan the whole entry table just
+        // to answer yes - so skip it and let ListDirectory (one cached-reader
+        // pass) be the single scan. For a plain folder, is_directory is cheap.
+        // NavigateTo is only ever handed folders/archives (folder/Up tiles,
+        // ShowForFolder, a file's parent), never a file, so listing directly is
+        // safe: a non-directory just yields no entries.
+        const bool isArchivePath = vpOpt && (vpOpt->IsArchiveFile() || vpOpt->IsInArchive());
+        if (vpOpt && (isArchivePath || Floar::VirtualFileSystem::IsDirectory(*vpOpt)))
         {
-            // ".." to the parent (unless this is a filesystem root).
-            const std::filesystem::path parent = dir.parent_path();
-            if (!parent.empty() && parent != dir)
+            const Floar::VirtualPath vp = *vpOpt;
+
+            // ".." to the parent: a folder's parent dir, an archive's own folder
+            // (exiting the archive), or a subfolder's parent inside the archive.
+            // GetParent returns *this at a filesystem root - suppress that tile.
+            const Floar::VirtualPath parent = vp.GetParent();
+            if (parent != vp)
             {
                 Entry up;
                 up.kind = EntryKind::Up;
@@ -210,29 +237,29 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
             }
 
             std::vector<Entry> folders, files;
-            for (const auto& de : std::filesystem::directory_iterator(dir, ec))
+            for (const auto& de : Floar::VirtualFileSystem::ListDirectory(vp))
             {
-                if (ec) break;
-                std::error_code ec2;
-                if (de.is_directory(ec2))
+                // A directory, OR an archive file itself (.ba2/.bsa) - both are
+                // navigable folder tiles that NavigateTo descends into.
+                if (de.isDirectory || de.path.IsArchiveFile())
                 {
                     Entry f;
                     f.kind = EntryKind::Folder;
-                    f.path = de.path().wstring();
-                    f.name = de.path().filename().wstring();
+                    f.path = de.path.wstring();
+                    f.name = de.path.GetFilename();
                     f.rendered = true;
                     folders.push_back(std::move(f));
                 }
-                else if (de.is_regular_file(ec2))
+                else
                 {
-                    std::wstring ext = de.path().extension().wstring();
+                    std::wstring ext = de.path.GetExtension();
                     std::transform(ext.begin(), ext.end(), ext.begin(),
                                    [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
                     if (ext != L".nif") continue;
                     Entry e;
                     e.kind = EntryKind::File;
-                    e.path = de.path().wstring();
-                    e.name = de.path().filename().wstring();
+                    e.path = de.path.wstring();
+                    e.name = de.path.GetFilename();
                     files.push_back(std::move(e));
                 }
             }

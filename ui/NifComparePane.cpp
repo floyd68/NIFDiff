@@ -4,6 +4,8 @@
 #include "../core/SceneBuilder.h"    // build the scene on the load pool
 #include "../core/StartupTrace.h"
 
+#include <VirtualPath.h> // Floar: is the opened path an archive to browse into?
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -154,12 +156,25 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     if (path.empty())
         return false;
 
+    // Opening an archive itself (a .bsa/.ba2/.zip/... with no inner path) isn't a
+    // NIF load: descend into it in the thumbnail strip so the user can pick a
+    // mesh from inside. VirtualPath::IsArchiveFile is false for a path that
+    // already points INSIDE an archive, so a mesh chosen from the strip still
+    // loads normally below.
+    if (auto vp = Floar::VirtualPath::Parse(path); vp && vp->IsArchiveFile())
+    {
+        m_thumbStrip->SetActive(true);   // reserve the strip's space
+        m_thumbStrip->ShowForFolder(path);
+        Invalidate();
+        return true;
+    }
+
     // No pool wired (tests / headless): synchronous parse+build so callers that
     // rely on the immediate result still work.
     if (!m_resourceManager)
     {
         auto fresh = std::make_shared<NifDocument>();
-        if (!fresh->loadFromFile(path, error) || !fresh->isValid())
+        if (!LoadNifDocument(*fresh, path, error) || !fresh->isValid())
             return false;
         AcceptLoaded(path, fresh, SceneBuilder::build(*fresh, m_viewport->ShowHiddenNodes()));
         return true;

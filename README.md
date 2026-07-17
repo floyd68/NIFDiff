@@ -310,6 +310,15 @@ documents every control in detail.
   subfolders and an ".." tile appear as folder icons, and the pane's current
   file is drawn with a blue highlight. Clicking a sibling loads it into that pane (the highlight
   follows); clicking a folder or ".." navigates that pane's strip in place.
+  **Archives are browsable too** (BSA, BA2, ZIP, 7z, RAR - every format Floar
+  supports): the strip lists through Floar's virtual filesystem, so an archive
+  sitting in the folder appears as a folder tile you can step into, its
+  subfolders and `.nif` members list just like loose files, and clicking one
+  thumbnails and opens it straight out of the archive (extracted to memory - no
+  unpacking). ".." walks back out of the archive. You can also open an archive
+  directly from **"Open .nif in This Pane"** - the dialog's file-type dropdown
+  has an **Archives** filter, and picking one drops the pane's strip inside it to
+  browse for a mesh.
   Each card's file name is centered and ellipsized under its thumbnail, and
   hovering shows the full path as a tooltip. The VIEW group's "Thumbnails"
   checkbox (mirrored by a "Hide/Show Thumbnail Strips" context-menu item)

@@ -77,9 +77,11 @@ nifdiff_set_cache_bool(BUILD_SHARED_LIBS OFF)
 nifdiff_set_cache_bool(BUILD_DX11 ON)
 nifdiff_set_cache_bool(BUILD_DX12 OFF)
 
-# Floar: BSA/BA2 is enough for Bethesda texture search; skip ZIP/7z/RAR
-# (and Floar's xz/libarchive nest) unless a future feature needs them.
-nifdiff_set_cache_bool(FLOAR_ENABLE_COMMON_ARCHIVES OFF)
+# Floar archive support. BSA/BA2 cover Bethesda's texture search, but the
+# thumbnail-strip browser opens ANY archive Floar supports, so enable the common
+# formats (ZIP/7z/RAR via Floar's libarchive/xz nest) too - the dialog filter
+# and strip navigation follow ArchiveReaderFactory::GetSupportedExtensions().
+nifdiff_set_cache_bool(FLOAR_ENABLE_COMMON_ARCHIVES ON)
 
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/external/DirectXTex" "${CMAKE_BINARY_DIR}/_deps/DirectXTex")
 add_subdirectory("${NIFDIFF_THIRD_PARTY_ROOT}/FD2D" "${CMAKE_BINARY_DIR}/_deps/FD2D")

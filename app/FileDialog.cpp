@@ -7,6 +7,11 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 
+#include <ArchiveReader.h> // Floar: which archive extensions this build supports
+
+#include <string>
+#include <vector>
+
 namespace nsk
 {
 namespace
@@ -57,13 +62,35 @@ namespace
 
 bool ShowOpenNifDialog(void* ownerWindowHwnd, std::wstring& outPath)
 {
-    static constexpr COMDLG_FILTERSPEC kFilters[] =
+    // Build the archive pattern (e.g. "*.bsa;*.ba2;*.zip;*.7z;*.rar") from the
+    // formats Floar actually supports in this build, so picking an archive to
+    // browse into stays in sync with ArchiveReaderFactory. The spec/label
+    // strings must outlive dialog->Show(), so keep them on the stack here.
+    std::wstring archivePattern;
+    std::wstring archiveLabel = L"Archives (";
+    for (const std::wstring& ext : Floar::ArchiveReaderFactory::GetSupportedExtensions())
     {
-        { L"NetImmerse/Gamebryo files (*.nif)", L"*.nif" },
-        { L"All files (*.*)", L"*.*" },
-    };
-    return ShowOpenDialog(ownerWindowHwnd, L"Open NIF File", kFilters,
-                          static_cast<UINT>(std::size(kFilters)),
+        // GetSupportedExtensions yields dotted extensions (".bsa", ".zip", ...).
+        if (!archivePattern.empty())
+        {
+            archivePattern += L';';
+            archiveLabel += L' ';
+        }
+        archivePattern += L'*';
+        archivePattern += ext;
+        archiveLabel += L'*';
+        archiveLabel += ext;
+    }
+    archiveLabel += L')';
+
+    std::vector<COMDLG_FILTERSPEC> filters;
+    filters.push_back({ L"NetImmerse/Gamebryo files (*.nif)", L"*.nif" });
+    if (!archivePattern.empty())
+        filters.push_back({ archiveLabel.c_str(), archivePattern.c_str() });
+    filters.push_back({ L"All files (*.*)", L"*.*" });
+
+    return ShowOpenDialog(ownerWindowHwnd, L"Open NIF File or Archive", filters.data(),
+                          static_cast<UINT>(filters.size()),
                           FOS_FILEMUSTEXIST, outPath);
 }
 

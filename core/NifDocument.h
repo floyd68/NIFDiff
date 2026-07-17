@@ -401,10 +401,15 @@ public:
     [[nodiscard]] bool loadFromFile(const std::wstring& path, std::string* errorOut = nullptr);
     // data may point anywhere (e.g. a BSA extraction buffer); the bytes are
     // copied into this document, so the span only needs to live for the call.
-    [[nodiscard]] bool loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut = nullptr);
+    // sourcePath (optional) records where the bytes came from - pass the VFS
+    // display path (e.g. "...\foo.ba2\meshes\x.nif") for an archive extraction
+    // so filePath() still names the source; empty leaves filePath() unset.
+    [[nodiscard]] bool loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut = nullptr,
+                                      const std::wstring& sourcePath = {});
 
-    // Set only by loadFromFile (empty for loadFromMemory); used by the app
-    // shell to persist "last opened" paths across sessions (phase4_shell).
+    // Set by loadFromFile, or by loadFromMemory when a sourcePath is given
+    // (e.g. an archive-extracted NIF); used by the app shell to persist "last
+    // opened" paths across sessions (phase4_shell).
     const std::wstring& filePath() const { return m_filePath; }
 
     bool isValid() const { return m_valid; }

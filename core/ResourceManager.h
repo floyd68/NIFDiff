@@ -197,4 +197,12 @@ private:
     std::array<int, static_cast<std::size_t>(Priority::Count)> m_ioWaiting {};
 };
 
+// Archive-aware NIF load. A `path` that points inside a BSA/BA2 archive (e.g.
+// "...\foo.ba2\meshes\x.nif", as produced by the ThumbnailStrip's VFS listing)
+// is read through Floar's virtual filesystem and parsed from memory; a plain
+// filesystem path falls through to NifDocument::loadFromFile. Lives here (the
+// app layer links Floar) rather than in NifDocument so the parser stays free of
+// the archive dependency - NifValidate reuses NifDocument without linking Floar.
+bool LoadNifDocument(NifDocument& doc, const std::wstring& path, std::string* error);
+
 } // namespace nsk

@@ -174,7 +174,8 @@ bool NifDocument::loadFromFile(const std::wstring& path, std::string* errorOut)
     return ok;
 }
 
-bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut)
+bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut,
+                                 const std::wstring& sourcePath)
 {
     m_valid = false;
     m_nodes.clear();
@@ -221,6 +222,10 @@ bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string
         m_nodes.size(), shapeNodeCount, m_geometries.size(), m_materials.size(), m_textureSets.size(), m_roots.size());
 
     m_valid = true;
+    // loadFromFile sets m_filePath itself after this returns; a direct
+    // loadFromMemory caller may name its source (e.g. an archive entry) here.
+    if (!sourcePath.empty())
+        m_filePath = sourcePath;
     return true;
 }
 

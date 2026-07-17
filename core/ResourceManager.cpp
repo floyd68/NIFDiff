@@ -5,13 +5,38 @@
 #include "StartupTrace.h"
 
 #include <Backplate.h> // FD2D::AsyncRedrawToken
+#include <VirtualPath.h>        // Floar: archive-inner path parsing
+#include <VirtualFileSystem.h>  // Floar: read a NIF out of a BSA/BA2
 
 #include <algorithm>
+#include <cstdint>
 #include <cwctype>
 #include <system_error>
+#include <vector>
 
 namespace nsk
 {
+
+bool LoadNifDocument(NifDocument& doc, const std::wstring& path, std::string* error)
+{
+    // A path that points inside a BSA/BA2 (e.g. "...\foo.ba2\meshes\x.nif") is
+    // read through Floar's VFS and parsed from memory; anything else is a plain
+    // file on disk. VirtualPath::Parse only reports IsInArchive when an archive
+    // extension appears mid-path, so loose files fall straight through.
+    if (auto vp = Floar::VirtualPath::Parse(path); vp && vp->IsInArchive())
+    {
+        std::vector<std::uint8_t> bytes = Floar::VirtualFileSystem::ReadFile(*vp);
+        if (bytes.empty())
+        {
+            if (error) *error = "Could not read archive entry";
+            NIFLOG_WARN("LoadNifDocument: archive entry empty/missing");
+            return false;
+        }
+        // Keep filePath() naming the VFS source (labels, session persistence).
+        return doc.loadFromMemory(bytes, error, path);
+    }
+    return doc.loadFromFile(path, error);
+}
 
 ResourceManager::~ResourceManager()
 {
@@ -243,7 +268,7 @@ std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
             const int io = throttle ? IoAcquire(prio) : 0; // held permits incl. self
             const auto t0 = StartupTrace::Clock::now();
             auto mutableDoc = std::make_shared<NifDocument>();
-            const bool ok = mutableDoc->loadFromFile(path, error) && mutableDoc->isValid();
+            const bool ok = LoadNifDocument(*mutableDoc, path, error) && mutableDoc->isValid();
             NifPtr doc = ok ? NifPtr(std::move(mutableDoc)) : nullptr;
             const double ms = std::chrono::duration<double, std::milli>(
                 StartupTrace::Clock::now() - t0).count();
