@@ -9,7 +9,7 @@
 // or the pane is gone (weak_ptr), so no callback ever touches a dead pane.
 #pragma once
 
-#include "ComparePane.h"
+#include "PaneContent.h"
 
 #include <Text.h>
 
@@ -21,13 +21,13 @@
 namespace nsk
 {
 
-class ImagePane : public ComparePane
+class ImagePane : public PaneContent
 {
 public:
     explicit ImagePane(const std::wstring& name);
     ~ImagePane() override;
 
-    // ComparePane: this is the 2D image pane.
+    // PaneContent: this is the 2D image content.
     Kind PaneKind() const override { return Kind::Image; }
     std::wstring CurrentPath() const override { return m_path; }
     bool Load(const std::wstring& path, std::string* error = nullptr) override;

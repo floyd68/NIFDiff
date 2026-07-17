@@ -50,7 +50,9 @@ documents every control in detail.
   texture mods that should win over Game Data.
 - **Load a file** into a pane: drag a `.nif` from Explorer onto it, use the
   pane's Open button / right-click → Open, or `Ctrl+O`. Dropping onto the left
-  ~75% of a pane *replaces* it; the right ~25% *inserts* a new pane.
+  ~75% of a pane *replaces* it; the right ~25% *inserts* a new pane. A pane
+  takes **textures** (`.dds`/`.png`/…) just as readily as `.nif`s - it becomes a
+  2D image view in place (see [Textures view/compare](#feature-reference)).
 - **Compare the same mesh across mods**: opening a `.nif` whose *name* matches
   one already open lands in a new pane of the same window (single-instance
   forwarding) - the core "compare two mods' version of one mesh" flow. Dropping
@@ -332,6 +334,25 @@ documents every control in detail.
   REPLACES that pane's document; the right 25% shows a green strip and
   the drop INSERTS a new pane right after it. Multi-file drops place
   the first file per the drop point and the rest into empty/new panes.
+- **Textures view/compare in the same panes** (FICture2's original texture
+  viewer, folded back in): a pane is a persistent frame - its thumbnail strip
+  along the bottom, a **swappable content area** filling the rest - and the
+  content follows whatever file you open. Open a `.nif` and the content is the
+  3D viewport; open a texture (`.dds`, `.png`, `.tga`, `.bmp`, and the rest of
+  the formats ImageCore decodes) and the *same pane* becomes a 2D image view -
+  no separate window, no new pane. Every entry point treats textures, NIFs,
+  folders and archives at the same grade: command-line arguments, drag & drop,
+  **"Open in This Pane"**, and the thumbnail strip all accept any of them.
+  Because the strip is never torn down, picking a texture while browsing a NIF's
+  folder (or a `.nif` while browsing textures) **swaps the content in place** and
+  browsing continues - the strip's folder, scroll and selection survive the
+  swap. Image content supports **zoom / pan / rotate**, a **checkerboard**
+  backdrop for alpha, and **channel isolation** (view R, G, B, or A alone, or the
+  full RGBA) - and with Sync Views on, pan/zoom/channel changes mirror across
+  panes just like the 3D cameras do, so you can line a diffuse up against its
+  normal map or two mods' versions of one texture. Compressed DDS (BC1-BC7) is
+  uploaded straight to the GPU as its native block format rather than decoded to
+  RGBA on the CPU, so 4K textures open effectively instantly.
 
 ### Bethesda resource pipeline
 

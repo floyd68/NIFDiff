@@ -220,6 +220,7 @@ add_executable(NIFDiff WIN32
     ui/IpcOpenRequest.h
     ui/NifViewport.h
     ui/NifViewport.cpp
+    ui/PaneContent.h
     ui/ComparePane.h
     ui/ComparePane.cpp
     ui/ImagePane.h

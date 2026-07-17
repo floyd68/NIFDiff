@@ -312,7 +312,7 @@ struct ImagePane::LoadGuard
 };
 
 ImagePane::ImagePane(const std::wstring& name)
-    : ComparePane(name)
+    : PaneContent(name)
 {
     m_pathLabel = std::make_shared<FD2D::Text>(name + L"_Path");
     m_pathLabel->SetFont(L"Segoe UI", 13.0f);
@@ -323,13 +323,10 @@ ImagePane::ImagePane(const std::wstring& name)
 
     m_image = std::make_shared<ImageView>(name + L"_Image");
 
-    // Same dock order as NifComparePane: Top strip + Bottom strip first (Fill
-    // stops further docking, so it comes last). m_thumbStrip is the base's
-    // shared folder browser - image panes browse too (P3.5).
+    // Just the CONTENT of a ComparePane (the frame owns the folder strip):
+    // path label (top) + the image (Fill last).
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
-    AddChild(m_thumbStrip);
-    SetChildDock(m_thumbStrip, FD2D::Dock::Bottom);
     AddChild(m_image);
     SetChildDock(m_image, FD2D::Dock::Fill);
 
@@ -358,11 +355,6 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
     UpdatePathLabel();
     if (m_image)
         m_image->ResetView(); // each new image starts aspect-fit, unrotated
-    if (m_thumbStrip)
-    {
-        m_thumbStrip->SetActive(true);
-        m_thumbStrip->ShowForFile(path); // browse this image's folder from here too
-    }
 
     // Supersede any previous load: cancel it and bump the generation so a late
     // completion for the old path is dropped.

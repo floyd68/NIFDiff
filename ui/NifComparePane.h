@@ -8,7 +8,7 @@
 // not in per-pane buttons.
 #pragma once
 
-#include "ComparePane.h"
+#include "PaneContent.h"
 #include "NifViewport.h"
 #include "ThumbnailStrip.h"
 #include "../core/NifDocument.h"
@@ -24,13 +24,13 @@
 namespace nsk
 {
 
-class NifComparePane : public ComparePane
+class NifComparePane : public PaneContent
 {
 public:
     explicit NifComparePane(const std::wstring& name);
     ~NifComparePane();
 
-    // ComparePane: this is the 3D NIF pane.
+    // PaneContent: this is the 3D NIF content.
     Kind PaneKind() const override { return Kind::Nif; }
 
     // Load lifecycle: an async Load moves Empty/Ready -> Loading immediately

@@ -1,16 +1,16 @@
-// ComparePane.h - common base for the panes a NifCompareView lays out.
+// ComparePane.h - one slot in a NifCompareView: a persistent folder/archive
+// thumbnail strip plus a swappable content (a NIF viewport or a texture).
 //
-// NifCompareView was written for a homogeneous set of NifComparePane; the
-// texture view/compare port adds a second pane kind (an image/texture pane)
-// that must sit in the SAME host tree and be arranged freely alongside NIF
-// panes. This base carves out the surface the view needs to treat any pane
-// generically - identity, the load/clear lifecycle, its kind, and the shared
-// per-pane thumbnail strip (folder/archive browser). Kind-specific behaviour
-// (a NIF pane's 3D viewport + material/animation tooling; an image pane's
-// zoom/pan/channels) stays on the concrete panes and is reached via PaneKind.
+// Opening a file changes only the CONTENT to match the file's kind - the strip
+// stays put - so a texture picked while browsing a NIF folder (or vice versa)
+// loads IN PLACE and browsing continues, with no pane teardown. Because the
+// strip is never destroyed mid-callback, the swap is safe to do synchronously
+// from the strip's own pick handler. Content lives behind PaneContent; the view
+// reaches kind-specific behaviour via NifContent() / ImageContent().
 #pragma once
 
-#include "ThumbnailStrip.h" // strip + RenderDevice/ResourceResolver/... types
+#include "PaneContent.h"  // Kind + RenderDevice/... types
+#include "ThumbnailStrip.h"
 
 #include <DockPanel.h>
 
@@ -21,52 +21,56 @@
 namespace nsk
 {
 
-class NifViewport;
+class NifComparePane;
+class ImagePane;
 
 class ComparePane : public FD2D::DockPanel
 {
 public:
-    enum class Kind
-    {
-        Nif,   // NifComparePane: a 3D NifViewport
-        Image, // ImagePane: a decoded texture
-    };
+    using Kind = PaneContent::Kind;
 
     explicit ComparePane(const std::wstring& name);
-    ~ComparePane() override = default;
+    ~ComparePane() override;
 
-    // Which concrete pane this is; the view uses it to gate kind-specific work.
-    virtual Kind PaneKind() const = 0;
+    // The pane's kind is its current content's kind.
+    Kind PaneKind() const;
+    std::wstring CurrentPath() const;
 
-    // Full path of the file shown (or loading) here; empty when the pane is
-    // free. The single string every open path funnels through.
-    virtual std::wstring CurrentPath() const = 0;
+    // Open `path`, swapping the content to the kind the path needs first (an
+    // image into a NIF pane becomes an image content, and vice versa) - the
+    // strip persists. Returns false only when it can't be accepted.
+    bool Load(const std::wstring& path, std::string* error = nullptr);
+    void Clear();
 
-    // Open `path` into this pane. Returns false only when it can't be accepted.
-    virtual bool Load(const std::wstring& path, std::string* error = nullptr) = 0;
+    // Kind-specific content, or null when the pane is the other kind. The view
+    // uses these (via AsNif/AsImage) to reach viewport / image behaviour.
+    NifComparePane* NifContent();
+    ImagePane* ImageContent();
+    PaneContent* Content() { return m_content.get(); }
+    ThumbnailStrip* ThumbStrip() { return m_thumbStrip.get(); }
 
-    // Return the pane to its empty state.
-    virtual void Clear() = 0;
+    // Ensure the content is `kind` (creating/swapping if needed) and return it.
+    PaneContent* EnsureContent(Kind kind);
 
-    // Shared resources for this pane's thumbnail strip (and, for a NIF pane, its
-    // viewport - NifComparePane overrides to wire both). Virtual so image panes
-    // get the strip wired without the NIF viewport plumbing.
-    virtual void SetRenderDevice(RenderDevice* device) { if (m_thumbStrip) m_thumbStrip->SetRenderDevice(device); }
-    virtual void SetResourceManager(ResourceManager* manager) { if (m_thumbStrip) m_thumbStrip->SetResourceManager(manager); }
-    virtual void SetResourceResolver(ResourceResolver* resolver) { if (m_thumbStrip) m_thumbStrip->SetResourceResolver(resolver); }
-    virtual void SetTextureRepository(TextureRepository* repository) { if (m_thumbStrip) m_thumbStrip->SetTextureRepository(repository); }
+    // Shared resources: remembered so a later content swap inherits them, and
+    // forwarded to the strip + current content now.
+    void SetRenderDevice(RenderDevice* device);
+    void SetResourceManager(ResourceManager* manager);
+    void SetResourceResolver(ResourceResolver* resolver);
+    void SetTextureRepository(TextureRepository* repository);
 
-    // --- Per-pane thumbnail strip (folder/archive browser) -------------------
-    // List this pane's current file's folder (empty clears the strip).
-    void ShowThumbnailFolder() { if (m_thumbStrip) m_thumbStrip->ShowForFile(CurrentPath()); }
+    // --- Persistent thumbnail strip (folder/archive browser) -----------------
+    void ShowThumbnailFolder()
+    {
+        if (!m_thumbStrip) return;
+        m_thumbStrip->SetActive(!CurrentPath().empty()); // reserve space while occupied
+        m_thumbStrip->ShowForFile(CurrentPath());
+    }
     void SetThumbnailStripEnabled(bool enabled) { if (m_thumbStrip) m_thumbStrip->SetEnabled(enabled); }
     void SetThumbnailStripSize(float extent) { if (m_thumbStrip) m_thumbStrip->SetFixedExtent(extent); }
     void SetOnThumbnailStripResize(std::function<void(float, bool)> handler) { m_onThumbStripResize = std::move(handler); }
-    // Fired when the user picks a file from this pane's strip; the view routes it
-    // by kind (a texture opens as an image, a .nif as a NIF) and mirrors it.
     void SetOnThumbnailChosen(std::function<void(const std::wstring&)> handler) { m_onThumbnailChosen = std::move(handler); }
 
-    // Keyboard browsing over the strip (owner-driven), all kinds.
     std::wstring StepThumbnailFile(int delta) { return m_thumbStrip ? m_thumbStrip->StepSelection(delta) : std::wstring(); }
     std::wstring EdgeThumbnailFile(bool last) { return m_thumbStrip ? m_thumbStrip->EdgeSelection(last) : std::wstring(); }
     bool ActivateThumbnailSelection() { return m_thumbStrip && m_thumbStrip->ActivateSelection(); }
@@ -75,15 +79,26 @@ public:
     std::wstring TypeToSelectThumbnail(wchar_t ch) { return m_thumbStrip ? m_thumbStrip->TypeToSelect(ch) : std::wstring(); }
     void FocusThumbnailStrip() { if (m_thumbStrip) m_thumbStrip->RequestFocus(); }
 
-    ThumbnailStrip* ThumbStrip() { return m_thumbStrip.get(); }
+    // Fired after the content is (re)created, so the view can wire kind-specific
+    // callbacks (NIF camera sync + doc/file-opened; image view-transform sync).
+    // Re-run on every content swap.
+    void SetOnContentCreated(std::function<void(PaneContent*)> handler) { m_onContentCreated = std::move(handler); }
 
-protected:
-    // Owned by the base (created + wired in the ctor); each concrete pane docks
-    // it along its bottom edge in its own constructor (Fill child must come last,
-    // so the derived class controls dock order).
-    std::shared_ptr<ThumbnailStrip> m_thumbStrip;
+private:
+    void Redock();     // ClearDocks + re-add strip (Bottom) then content (Fill)
+    void WireContent(); // apply remembered resources + fire m_onContentCreated
+
+    std::shared_ptr<ThumbnailStrip> m_thumbStrip; // persistent across content swaps
+    std::shared_ptr<PaneContent> m_content;       // NifComparePane XOR ImagePane
+
+    RenderDevice* m_renderDevice = nullptr;
+    ResourceManager* m_resourceManager = nullptr;
+    ResourceResolver* m_resolver = nullptr;
+    TextureRepository* m_textureRepository = nullptr;
+
     std::function<void(const std::wstring&)> m_onThumbnailChosen;
     std::function<void(float, bool)> m_onThumbStripResize;
+    std::function<void(PaneContent*)> m_onContentCreated;
 };
 
 } // namespace nsk

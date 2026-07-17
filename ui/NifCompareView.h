@@ -12,6 +12,7 @@
 // panes in a single row, 5-6 as 3x2, 7-8 as 4x2.
 #pragma once
 
+#include "ComparePane.h"
 #include "NifComparePane.h"
 #include "ImagePane.h"
 #include "NifCompareControlPanel.h"
@@ -66,7 +67,7 @@ public:
 
     // Adds a pane (up to kMaxPanes) and rebuilds the equal-width host tree.
     // Returns the new pane, or nullptr if already at kMaxPanes.
-    NifComparePane* AddPane();
+    ComparePane* AddPane();
 
     // Rebuild the pane set as one pane per path, each of the kind the path
     // needs: an image extension (dds/png/tga/...) makes an ImagePane, anything
@@ -264,24 +265,17 @@ public:
     void SetOverrideCountLabel(std::size_t count);
 
 private:
-    // Reuse a free (empty) pane, else add one; null at kMaxPanes.
+    // Reuse a free (empty) pane, else add one; null at kMaxPanes. A pane holds
+    // either kind (its content swaps on Load), so no per-kind allocation.
     ComparePane* AllocatePaneFor();
-    // Reuse a free pane already of `kind`; else convert a free pane to `kind`;
-    // else add a new one of `kind` (null at kMaxPanes). Used to route an opened
-    // file to a pane of the matching kind.
-    ComparePane* AllocatePaneOfKind(ComparePane::Kind kind);
-    // Replace `oldPane`'s slot in m_panes with a fresh pane of `kind` (keeping
-    // its position and active state), rebuild the host tree, and return the new
-    // pane. No-op returning oldPane if it is not one of our panes.
-    ComparePane* SwapPaneKind(ComparePane* oldPane, ComparePane::Kind kind);
     void CreateInitialPanes();
-    std::shared_ptr<NifComparePane> CreatePane();
-    // Build an image pane (the texture-view counterpart of CreatePane). Image
-    // panes decode via ImageCore on their own workers, so they need none of the
-    // NIF render wiring (resolver / render device / resource manager).
-    std::shared_ptr<ImagePane> CreateImagePane();
-    void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
-    // Wire the strip pick + resize callbacks shared by every pane kind.
+    // Build a compare pane (a strip + swappable content, initially empty NIF).
+    std::shared_ptr<ComparePane> CreatePane();
+    // Wire the kind-specific callbacks onto a pane's content (NIF: viewport
+    // settings + camera sync + doc/file-opened; image: view-transform sync).
+    // Re-run on every content swap via ComparePane::SetOnContentCreated.
+    void WireContent(PaneContent* content);
+    // Wire the strip pick + resize callbacks (on the persistent frame).
     void WireThumbnailCallbacks(ComparePane* raw);
     void RebuildHostTree();
     // Rebuilds the views-area DockPanel's children (thumbnail strip docked
@@ -380,17 +374,21 @@ private:
     // AsNif returns nullptr for a non-NIF (e.g. image) pane; ForEachNifPane /
     // ForEachViewport skip those, so applying a NIF render setting to "all
     // panes" quietly ignores image panes.
+    // A pane's NIF/image content, or null when it is the other kind. Now that
+    // ComparePane is a frame around swappable content, these forward to the
+    // content accessors - so the view's existing AsNif/AsImage call sites are
+    // unchanged.
     static NifComparePane* AsNif(const std::shared_ptr<ComparePane>& p)
     {
-        return dynamic_cast<NifComparePane*>(p.get());
+        return p ? p->NifContent() : nullptr;
     }
     static NifComparePane* AsNif(ComparePane* p)
     {
-        return dynamic_cast<NifComparePane*>(p);
+        return p ? p->NifContent() : nullptr;
     }
     static ImagePane* AsImage(ComparePane* p)
     {
-        return dynamic_cast<ImagePane*>(p);
+        return p ? p->ImageContent() : nullptr;
     }
     template <class Fn> void ForEachNifPane(Fn&& fn)
     {

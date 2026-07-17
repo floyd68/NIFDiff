@@ -36,7 +36,7 @@ namespace
 }
 
 NifComparePane::NifComparePane(const std::wstring& name)
-    : ComparePane(name)
+    : PaneContent(name)
 {
     m_viewport = std::make_shared<NifViewport>(name + L"_Viewport");
 
@@ -57,18 +57,11 @@ NifComparePane::NifComparePane(const std::wstring& name)
     m_statsLabel->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.78f));
     m_statsLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
 
-    // The thumbnail strip (this pane's folder browser) is created + wired by the
-    // ComparePane base; this pane just docks it along its bottom edge below.
-
-    // DockPanel's Fill dock stops any further docking, so the Top-docked path
-    // strip and the Bottom-docked strips must be added before the Fill-docked
-    // viewport. Bottom order = outermost first: the thumbnail strip sits at the
-    // very bottom edge, the stats readout just above it (see DockPanel::Arrange
-    // / NifViewport.h's comment on the same pattern).
+    // This is now just the CONTENT of a ComparePane (the frame owns the folder
+    // thumbnail strip); dock the path label (top), stats (bottom) and the 3D
+    // viewport (Fill last, since Fill stops further docking).
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
-    AddChild(m_thumbStrip);
-    SetChildDock(m_thumbStrip, FD2D::Dock::Bottom);
     AddChild(m_statsLabel);
     SetChildDock(m_statsLabel, FD2D::Dock::Bottom);
     AddChild(m_viewport);
@@ -140,18 +133,8 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
     if (path.empty())
         return false;
 
-    // Opening an archive itself (a .bsa/.ba2/.zip/... with no inner path) isn't a
-    // NIF load: descend into it in the thumbnail strip so the user can pick a
-    // mesh from inside. VirtualPath::IsArchiveFile is false for a path that
-    // already points INSIDE an archive, so a mesh chosen from the strip still
-    // loads normally below.
-    if (auto vp = Floar::VirtualPath::Parse(path); vp && vp->IsArchiveFile())
-    {
-        m_thumbStrip->SetActive(true);   // reserve the strip's space
-        m_thumbStrip->ShowForFolder(path);
-        Invalidate();
-        return true;
-    }
+    // (Archive paths are intercepted by the ComparePane frame, which browses
+    // them in the strip; this content only ever gets a real .nif path.)
 
     // No pool wired (tests / headless): synchronous parse+build so callers that
     // rely on the immediate result still work.
@@ -177,7 +160,6 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
         m_viewport->SetDocument(nullptr);
         m_viewport->SetLoading(true);
     }
-    m_thumbStrip->SetActive(true); // reserve the strip's space up front (stable layout)
     UpdatePathLabel();
     UpdateStatsLabel();
     SubmitParseJob(path);
@@ -251,7 +233,6 @@ void NifComparePane::AcceptLoaded(const std::wstring& path,
     m_viewport->SetPrebuiltScene(m_doc.get(), std::move(meshes));
     UpdatePathLabel();
     UpdateStatsLabel();
-    m_thumbStrip->ShowForFile(path); // list the loaded file's folder, highlighted
     if (m_onDocumentChanged)
         m_onDocumentChanged();
     if (m_onFileOpened)
@@ -274,9 +255,6 @@ void NifComparePane::ShowPendingFile(const std::wstring& path)
     m_loadSubmitted = false; // named only; StartPendingLoad will queue the job
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(true);
-    // Reserve the thumbnail strip's space now, before its folder is listed, so
-    // it doesn't pop in later and shrink the viewport (which reframes the model).
-    m_thumbStrip->SetActive(true);
     UpdatePathLabel();
     UpdateStatsLabel();
 }
@@ -292,10 +270,8 @@ void NifComparePane::Clear()
     m_doc.reset();
     m_viewport->SetDocument(nullptr);
     m_viewport->SetLoading(false);
-    m_thumbStrip->SetActive(false); // empty pane: release the strip's reserved space
     UpdatePathLabel();
     UpdateStatsLabel();
-    m_thumbStrip->ShowForFile(std::wstring()); // nothing loaded -> empty strip
     if (m_onDocumentChanged)
         m_onDocumentChanged();
 }
@@ -311,25 +287,21 @@ NifComparePane::~NifComparePane()
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)
 {
     m_viewport->SetResourceResolver(resolver);
-    ComparePane::SetResourceResolver(resolver); // strip
 }
 
 void NifComparePane::SetTextureRepository(TextureRepository* repository)
 {
     m_viewport->SetTextureRepository(repository);
-    ComparePane::SetTextureRepository(repository); // strip
 }
 
 void NifComparePane::SetRenderDevice(RenderDevice* device)
 {
     m_viewport->SetRenderDevice(device);
-    ComparePane::SetRenderDevice(device); // strip
 }
 
 void NifComparePane::SetResourceManager(ResourceManager* manager)
 {
-    m_resourceManager = manager;               // pane loads reuse the shared NifCache
-    ComparePane::SetResourceManager(manager);  // strip parses feed the same cache
+    m_resourceManager = manager; // content loads reuse the shared NifCache
 }
 
 void NifComparePane::InvalidateTextureCache()
