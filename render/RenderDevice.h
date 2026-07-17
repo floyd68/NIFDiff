@@ -100,8 +100,18 @@ public:
                      const std::vector<RenderMesh>& meshes, const RenderSettings& settings,
                      TextureCache* textures);
 
+    // Accumulated user-shader compile errors from the last (re)load; empty
+    // when every override compiled (or none exist). The UI surfaces this.
+    const std::string& ShaderOverrideStatus() const { return m_shaderOverrideStatus; }
+
 private:
     bool CreateShaders(std::string* error);
+    // One entry point's final bytecode: a user override from exe\shaders\ or
+    // %LOCALAPPDATA%\NIFDiff\shaders\ (D3DCompiled, content-hash cached under
+    // %LOCALAPPDATA%\NIFDiff\shadercache\ so only the first run after an edit
+    // pays the compile), else a copy of the embedded fxc blob. Never empty.
+    std::vector<std::uint8_t> LoadShaderBytecode(const wchar_t* hlslName, const char* entry,
+        const char* profile, const void* embedded, std::size_t embeddedSize);
     bool CreateStateObjects();
     const GpuMesh* GetOrCreateGpuMesh(RenderMeshCache& cache, const NifGeometry* geometry);
     const GpuLineMesh* GetOrCreateLineMesh(RenderMeshCache& cache, const NifGeometry* geometry);
@@ -117,6 +127,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_unlitVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_unlitPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_unlitLayout;
+    std::string m_shaderOverrideStatus; // see ShaderOverrideStatus()
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_highlightVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_highlightPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_highlightLayout;

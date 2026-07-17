@@ -10,9 +10,17 @@
 #include <HighlightVS.h>
 #include <HighlightPS.h>
 
+#include "../core/NifLog.h"
+
 #include <d3d11sdklayers.h>
+#include <d3dcompiler.h>
+#include <shlobj.h>
 #include <DirectXPackedVector.h>
 #include <DirectXTex.h>
+#include <filesystem>
+#include <fstream>
+
+#pragma comment(lib, "d3dcompiler.lib")
 #include <algorithm>
 #include <cmath>
 #include <tuple>
@@ -314,22 +322,159 @@ void RenderDevice::BuildIblCubemap()
         m_device->CreateShaderResourceView(tex.Get(), nullptr, &m_iblCubeSRV);
 }
 
+// --- User shader overrides ----------------------------------------------------
+namespace
+{
+    namespace fs = std::filesystem;
+
+    fs::path ExeDirectory()
+    {
+        wchar_t exePath[MAX_PATH] {};
+        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+        return fs::path(exePath).parent_path();
+    }
+
+    fs::path LocalAppDataNifDiff()
+    {
+        PWSTR base = nullptr;
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &base)))
+            return {};
+        fs::path dir = fs::path(base) / L"NIFDiff";
+        CoTaskMemFree(base);
+        return dir;
+    }
+
+    // Override search order: exe\shaders\ (the editable copies the build
+    // ships) first, then the per-user %LOCALAPPDATA%\NIFDiff\shaders\.
+    fs::path FindShaderOverride(const wchar_t* hlslName)
+    {
+        std::error_code ec;
+        fs::path p = ExeDirectory() / L"shaders" / hlslName;
+        if (fs::exists(p, ec))
+            return p;
+        const fs::path lad = LocalAppDataNifDiff();
+        if (!lad.empty())
+        {
+            p = lad / L"shaders" / hlslName;
+            if (fs::exists(p, ec))
+                return p;
+        }
+        return {};
+    }
+
+    std::vector<std::uint8_t> ReadAllBytes(const fs::path& p)
+    {
+        std::ifstream in(p, std::ios::binary);
+        if (!in)
+            return {};
+        return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in),
+                                         std::istreambuf_iterator<char>());
+    }
+
+    std::uint64_t Fnv1a64(const void* data, std::size_t size, std::uint64_t h)
+    {
+        const auto* p = static_cast<const std::uint8_t*>(data);
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            h ^= p[i];
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+}
+
+std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslName,
+    const char* entry, const char* profile, const void* embedded, std::size_t embeddedSize)
+{
+    const auto useEmbedded = [&]
+    {
+        const auto* p = static_cast<const std::uint8_t*>(embedded);
+        return std::vector<std::uint8_t>(p, p + embeddedSize);
+    };
+
+    const fs::path src = FindShaderOverride(hlslName);
+    if (src.empty())
+        return useEmbedded(); // the common case: no override, zero extra cost
+
+    const std::vector<std::uint8_t> source = ReadAllBytes(src);
+    if (source.empty())
+        return useEmbedded();
+
+    // Content-hash cache key: any edit to the source (or a change of entry/
+    // profile/flags) misses and recompiles; identical content always hits, so
+    // ONLY the first run after an edit pays D3DCompile. Mirrors fxc's flags
+    // (/Ges strictness, default optimization - unoptimized POM loops TDR).
+    constexpr UINT kFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+    std::uint64_t hash = 1469598103934665603ull;
+    hash = Fnv1a64(source.data(), source.size(), hash);
+    hash = Fnv1a64(entry, std::strlen(entry), hash);
+    hash = Fnv1a64(profile, std::strlen(profile), hash);
+    hash = Fnv1a64(&kFlags, sizeof(kFlags), hash);
+
+    std::error_code ec;
+    const fs::path cacheDir = LocalAppDataNifDiff() / L"shadercache";
+    wchar_t cacheName[160] {};
+    swprintf_s(cacheName, L"%s_%hs_%016llx.cso", src.stem().c_str(), entry,
+               static_cast<unsigned long long>(hash));
+    const fs::path cacheFile = cacheDir / cacheName;
+
+    if (fs::exists(cacheFile, ec))
+    {
+        std::vector<std::uint8_t> cached = ReadAllBytes(cacheFile);
+        if (!cached.empty())
+        {
+            NIFLOG_INFO("[SHADER] override '{}' {}: bytecode cache hit", src.filename().string(), entry);
+            return cached;
+        }
+    }
+
+    Microsoft::WRL::ComPtr<ID3DBlob> blob, errors;
+    const HRESULT hr = D3DCompileFromFile(src.c_str(), nullptr,
+        D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, profile, kFlags, 0, &blob, &errors);
+    if (FAILED(hr) || !blob)
+    {
+        std::string msg = errors
+            ? std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize())
+            : ("HRESULT 0x" + std::to_string(static_cast<unsigned long>(hr)));
+        NIFLOG_ERROR("[SHADER] override '{}' {} failed to compile - using embedded fallback:\n{}",
+                     src.filename().string(), entry, msg);
+        m_shaderOverrideStatus += src.filename().string() + " (" + entry + "): " + msg + "\n";
+        return useEmbedded(); // a broken user shader never breaks the app
+    }
+
+    std::vector<std::uint8_t> out(static_cast<const std::uint8_t*>(blob->GetBufferPointer()),
+                                  static_cast<const std::uint8_t*>(blob->GetBufferPointer()) + blob->GetBufferSize());
+    fs::create_directories(cacheDir, ec);
+    std::ofstream(cacheFile, std::ios::binary)
+        .write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
+    NIFLOG_INFO("[SHADER] override '{}' {} compiled ({} bytes, cached)",
+                src.filename().string(), entry, out.size());
+    return out;
+}
+
 bool RenderDevice::CreateShaders(std::string* error)
 {
     // Bytecode arrays are generated at build time by fxc from
     // render/shaders/*.hlsl (see the top-level CMakeLists.txt "Shader
-    // precompilation" section), replacing the six runtime D3DCompile calls
-    // that used to cost ~260ms per viewport. Creating the shader objects
-    // from embedded bytecode is sub-millisecond, so per-renderer creation
-    // needs no cross-instance cache anymore.
+    // precompilation" section). LoadShaderBytecode swaps in a user override
+    // from the loose shaders\ folder when one exists (content-hash cached);
+    // with no overrides this is the embedded bytecode, sub-millisecond.
     (void)error;
+    m_shaderOverrideStatus.clear();
 
-    m_device->CreateVertexShader(g_LitVS, sizeof(g_LitVS), nullptr, &m_litVS);
-    m_device->CreatePixelShader(g_LitPS, sizeof(g_LitPS), nullptr, &m_litPS);
-    m_device->CreateVertexShader(g_UnlitVS, sizeof(g_UnlitVS), nullptr, &m_unlitVS);
-    m_device->CreatePixelShader(g_UnlitPS, sizeof(g_UnlitPS), nullptr, &m_unlitPS);
-    m_device->CreateVertexShader(g_HighlightVS, sizeof(g_HighlightVS), nullptr, &m_highlightVS);
-    m_device->CreatePixelShader(g_HighlightPS, sizeof(g_HighlightPS), nullptr, &m_highlightPS);
+    const auto litVS = LoadShaderBytecode(L"Lit.hlsl", "VSMain", "vs_5_0", g_LitVS, sizeof(g_LitVS));
+    const auto litPS = LoadShaderBytecode(L"Lit.hlsl", "PSMain", "ps_5_0", g_LitPS, sizeof(g_LitPS));
+    const auto unlitVS = LoadShaderBytecode(L"Unlit.hlsl", "VSMain", "vs_5_0", g_UnlitVS, sizeof(g_UnlitVS));
+    const auto unlitPS = LoadShaderBytecode(L"Unlit.hlsl", "PSMain", "ps_5_0", g_UnlitPS, sizeof(g_UnlitPS));
+    const auto hlVS = LoadShaderBytecode(L"Highlight.hlsl", "VSMain", "vs_5_0", g_HighlightVS, sizeof(g_HighlightVS));
+    const auto hlPS = LoadShaderBytecode(L"Highlight.hlsl", "PSMain", "ps_5_0", g_HighlightPS, sizeof(g_HighlightPS));
+
+    m_device->CreateVertexShader(litVS.data(), litVS.size(), nullptr, &m_litVS);
+    m_device->CreatePixelShader(litPS.data(), litPS.size(), nullptr, &m_litPS);
+    m_device->CreateVertexShader(unlitVS.data(), unlitVS.size(), nullptr, &m_unlitVS);
+    m_device->CreatePixelShader(unlitPS.data(), unlitPS.size(), nullptr, &m_unlitPS);
+    m_device->CreateVertexShader(hlVS.data(), hlVS.size(), nullptr, &m_highlightVS);
+    m_device->CreatePixelShader(hlPS.data(), hlPS.size(), nullptr, &m_highlightPS);
 
     D3D11_INPUT_ELEMENT_DESC litLayoutDesc[] =
     {
@@ -339,17 +484,19 @@ bool RenderDevice::CreateShaders(std::string* error)
         { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, tangent), D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
-    m_device->CreateInputLayout(litLayoutDesc, 5, g_LitVS, sizeof(g_LitVS), &m_litLayout);
+    // Input layouts validate against the ACTUAL vertex-shader bytecode in use
+    // (which may be a user override), not the embedded copy.
+    m_device->CreateInputLayout(litLayoutDesc, 5, litVS.data(), litVS.size(), &m_litLayout);
     // The highlight VS consumes the same vertex layout (it only reads
     // POSITION, but the layout must be validated against its own signature).
-    m_device->CreateInputLayout(litLayoutDesc, 5, g_HighlightVS, sizeof(g_HighlightVS), &m_highlightLayout);
+    m_device->CreateInputLayout(litLayoutDesc, 5, hlVS.data(), hlVS.size(), &m_highlightLayout);
 
     D3D11_INPUT_ELEMENT_DESC unlitLayoutDesc[] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(LineVertex, pos),   D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(LineVertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
-    m_device->CreateInputLayout(unlitLayoutDesc, 2, g_UnlitVS, sizeof(g_UnlitVS), &m_unlitLayout);
+    m_device->CreateInputLayout(unlitLayoutDesc, 2, unlitVS.data(), unlitVS.size(), &m_unlitLayout);
 
     return true;
 }
