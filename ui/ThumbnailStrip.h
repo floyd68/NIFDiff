@@ -83,6 +83,13 @@ public:
     const std::wstring& Folder() const { return m_folder; }
     bool HasContent() const { return !m_entries.empty(); }
 
+    // Pick a sensible default tile after listing a container (see
+    // ComparePane::Load). Returns the FIRST viewable file's path (nif/texture)
+    // so the owner loads it; when the folder has no viewable file, highlights
+    // the first subfolder tile (or the ".." Up tile if there is none) as the
+    // keyboard selection and returns empty.
+    std::wstring PickDefaultEntry();
+
     // "This pane will have a strip" - set the instant the pane is named (before
     // its folder is listed / thumbnails load), so the strip reserves its height
     // from pane creation instead of popping in later and shrinking the viewport

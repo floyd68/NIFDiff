@@ -196,6 +196,35 @@ void ThumbnailStrip::ShowForFolder(const std::wstring& folder)
     NavigateTo(folder, std::wstring());
 }
 
+std::wstring ThumbnailStrip::PickDefaultEntry()
+{
+    // A viewable file wins: hand its path back so the owner loads it. Entries
+    // are ordered [Up?, folders..., files...], so the first File is the
+    // alphabetically-first nif/texture.
+    for (const Entry& e : m_entries)
+        if (e.kind == EntryKind::File)
+            return e.path;
+
+    // No files here: highlight the first subfolder tile, or the ".." Up tile if
+    // there is no subfolder, so the user can step in from a sensible cursor.
+    int folderIdx = -1;
+    int upIdx = -1;
+    for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
+    {
+        if (m_entries[i].kind == EntryKind::Folder) { folderIdx = i; break; }
+        if (m_entries[i].kind == EntryKind::Up) upIdx = i;
+    }
+    const int sel = (folderIdx >= 0) ? folderIdx : upIdx;
+    if (sel >= 0)
+    {
+        m_selected = sel;
+        m_autoCenter = true;
+        CenterEntry(sel);
+        Invalidate();
+    }
+    return std::wstring();
+}
+
 void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 {
     // Cancel in-flight/queued parses from the previous folder: bump our

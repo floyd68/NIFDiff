@@ -36,6 +36,12 @@ public:
     virtual bool Load(const std::wstring& path, std::string* error = nullptr) = 0;
     virtual void Clear() = 0;
 
+    // Show `text` in the content's header/path label instead of its usual
+    // "(no file)" placeholder - used while the pane is browsing a container that
+    // has no viewable file to load, so the pane still names where it is. Default
+    // no-op; a NIF placeholder content overrides it.
+    virtual void SetBrowsingLabel(const std::wstring& /*text*/) {}
+
     // Shared resources (the frame forwards these to the content on creation and
     // whenever they change). A NIF content wires its viewport; an image content
     // ignores what it doesn't need.

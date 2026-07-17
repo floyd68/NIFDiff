@@ -55,12 +55,15 @@ documents every control in detail.
   2D image view in place (see [Textures view/compare](#feature-reference)).
 - **Open a folder or archive** the same way - as a command-line argument, a drag
   & drop, or **right-click → "Open Folder in This Pane…"** (a folder path can't
-  come through the file-open dialog, so it has its own picker). The pane doesn't
-  view the container itself; it *browses into it* in the thumbnail strip so you
-  pick something inside. Folders, `.bsa`/`.ba2`/`.zip`/`.7z`/`.rar` archives,
-  NIFs and textures are all accepted at every one of these entry points - and
-  each one is also remembered: they land in the **Open Recent** (MRU) list and
-  are restored on the next launch (a browsed folder/archive resumes browsing).
+  come through the file-open dialog, so it has its own picker). Opening a
+  container lists it in the strip and picks a sensible default: if it holds a
+  viewable file (a NIF or texture) the **first one loads** so the pane shows real
+  content straight away; if it holds none, the pane names the folder over the
+  empty grid and the strip highlights the **first subfolder** (or the ".." tile)
+  so you can step further in. Folders, `.bsa`/`.ba2`/`.zip`/`.7z`/`.rar`
+  archives, NIFs and textures are all accepted at every one of these entry
+  points - and each is remembered: it lands in the **Open Recent** (MRU) list and
+  is restored on the next launch.
 - **Compare the same mesh across mods**: opening a `.nif` whose *name* matches
   one already open lands in a new pane of the same window (single-instance
   forwarding) - the core "compare two mods' version of one mesh" flow. Dropping

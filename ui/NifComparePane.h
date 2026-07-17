@@ -60,6 +60,16 @@ public:
     bool Load(const std::wstring& path, std::string* error = nullptr) override;
     void Clear() override;
 
+    // While the pane browses a container with nothing viewable to load, show the
+    // folder name in the path label (over the empty-grid placeholder) instead of
+    // "(no file)". Overwritten by the next real load's UpdatePathLabel().
+    void SetBrowsingLabel(const std::wstring& text) override
+    {
+        m_pathLabel->SetText(text);
+        m_pathLabel->SetCopyText(text);
+        m_pathLabel->Invalidate();
+    }
+
     // Show a target file name immediately (Loading placeholder) WITHOUT
     // starting the load. Used at startup so every pane appears named before the
     // archive scan finishes; a later StartPendingLoad() does the actual load.
