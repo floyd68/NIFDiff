@@ -382,8 +382,6 @@ namespace
         return h;
     }
 
-    constexpr const wchar_t* kOverrideFiles[4] = { L"Lit.hlsl", L"Unlit.hlsl", L"Highlight.hlsl", L"Common.hlsli" };
-
     // 0 = no override file; otherwise its last-write time in filesystem ticks.
     long long OverrideStamp(const wchar_t* hlslName)
     {
@@ -398,8 +396,12 @@ namespace
 
 void RenderDevice::CaptureShaderStamps()
 {
-    for (int i = 0; i < 4; ++i)
-        m_shaderStamps[i] = OverrideStamp(kOverrideFiles[i]);
+    // Baseline watch list: the built-in sources + the binding manifest.
+    // LoadShaderManifest appends every custom program's file afterwards.
+    m_shaderWatch.clear();
+    for (const wchar_t* f : { L"Lit.hlsl", L"Unlit.hlsl", L"Highlight.hlsl",
+                              L"Common.hlsli", L"shaders.ini" })
+        m_shaderWatch.emplace_back(f, OverrideStamp(f));
 }
 
 bool RenderDevice::ReloadShadersIfChanged()
@@ -407,8 +409,8 @@ bool RenderDevice::ReloadShadersIfChanged()
     if (!m_device)
         return false;
     bool changed = false;
-    for (int i = 0; i < 4; ++i)
-        if (OverrideStamp(kOverrideFiles[i]) != m_shaderStamps[i])
+    for (const auto& [name, stamp] : m_shaderWatch)
+        if (OverrideStamp(name.c_str()) != stamp)
             changed = true;
     if (!changed)
         return false;
@@ -423,22 +425,15 @@ bool RenderDevice::ReloadShadersIfChanged()
     return true;
 }
 
-std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslName,
-    const char* entry, const char* profile, const void* embedded, std::size_t embeddedSize)
+// Compile one entry point from a loose .hlsl (content-hash cached). Returns
+// empty on read/compile failure (errors are logged + accumulated in
+// m_shaderOverrideStatus); the caller decides the fallback.
+std::vector<std::uint8_t> RenderDevice::CompileShaderFromFile(const std::filesystem::path& src,
+    const char* entry, const char* profile)
 {
-    const auto useEmbedded = [&]
-    {
-        const auto* p = static_cast<const std::uint8_t*>(embedded);
-        return std::vector<std::uint8_t>(p, p + embeddedSize);
-    };
-
-    const fs::path src = FindShaderOverride(hlslName);
-    if (src.empty())
-        return useEmbedded(); // the common case: no override, zero extra cost
-
     const std::vector<std::uint8_t> source = ReadAllBytes(src);
     if (source.empty())
-        return useEmbedded();
+        return {};
 
     // Content-hash cache key: any edit to the source (or a change of entry/
     // profile/flags) misses and recompiles; identical content always hits, so
@@ -495,10 +490,10 @@ std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslNa
         std::string msg = errors
             ? std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize())
             : ("HRESULT 0x" + std::to_string(static_cast<unsigned long>(hr)));
-        NIFLOG_ERROR("[SHADER] override '{}' {} failed to compile - using embedded fallback:\n{}",
+        NIFLOG_ERROR("[SHADER] '{}' {} failed to compile:\n{}",
                      src.filename().string(), entry, msg);
         m_shaderOverrideStatus += src.filename().string() + " (" + entry + "): " + msg + "\n";
-        return useEmbedded(); // a broken user shader never breaks the app
+        return {};
     }
 
     std::vector<std::uint8_t> out(static_cast<const std::uint8_t*>(blob->GetBufferPointer()),
@@ -509,6 +504,21 @@ std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslNa
     NIFLOG_INFO("[SHADER] override '{}' {} compiled ({} bytes, cached)",
                 src.filename().string(), entry, out.size());
     return out;
+}
+
+std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslName,
+    const char* entry, const char* profile, const void* embedded, std::size_t embeddedSize)
+{
+    const fs::path src = FindShaderOverride(hlslName);
+    if (!src.empty())
+    {
+        std::vector<std::uint8_t> out = CompileShaderFromFile(src, entry, profile);
+        if (!out.empty())
+            return out; // the compiled override (or its cached bytecode)
+    }
+    // No override, or a broken one: the embedded fxc blob keeps the app alive.
+    const auto* p = static_cast<const std::uint8_t*>(embedded);
+    return std::vector<std::uint8_t>(p, p + embeddedSize);
 }
 
 bool RenderDevice::CreateShaders(std::string* error)
@@ -558,7 +568,227 @@ bool RenderDevice::CreateShaders(std::string* error)
     };
     m_device->CreateInputLayout(unlitLayoutDesc, 2, unlitVS.data(), unlitVS.size(), &m_unlitLayout);
 
+    // shaders.ini manifest: user programs + mesh binding rules (appends the
+    // manifest's files to the hot-reload watch list captured above).
+    LoadShaderManifest();
+
     return true;
+}
+
+namespace
+{
+    std::string ToLowerAscii(std::string s)
+    {
+        for (char& c : s)
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+        return s;
+    }
+
+    std::string Trim(const std::string& s)
+    {
+        const std::size_t b = s.find_first_not_of(" \t\r");
+        if (b == std::string::npos)
+            return {};
+        const std::size_t e = s.find_last_not_of(" \t\r");
+        return s.substr(b, e - b + 1);
+    }
+
+    std::wstring Widen(const std::string& s)
+    {
+        if (s.empty())
+            return {};
+        const int len = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+        std::wstring w(static_cast<std::size_t>(len), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), len);
+        return w;
+    }
+
+    // Shared 5-element mesh vertex layout (must match render/shaders/
+    // Common.hlsli's VSInput and GetOrCreateGpuMesh's interleaved buffer).
+    constexpr D3D11_INPUT_ELEMENT_DESC kMeshLayoutDesc[] =
+    {
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, pos),    D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, normal), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, offsetof(Vertex, uv),     D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, tangent), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    };
+}
+
+void RenderDevice::LoadShaderManifest()
+{
+    // Program 0 is always the built-in Lit pipeline; rules default to "all Lit"
+    // when the manifest is missing/empty, reproducing stock behavior exactly.
+    m_meshPrograms.clear();
+    m_meshRules.clear();
+    MeshProgram lit;
+    lit.name = L"Lit";
+    lit.vs = m_litVS;
+    lit.ps = m_litPS;
+    lit.layout = m_litLayout;
+    lit.valid = true;
+    m_meshPrograms.push_back(std::move(lit));
+
+    const fs::path ini = FindShaderOverride(L"shaders.ini");
+    if (ini.empty())
+        return;
+    const std::vector<std::uint8_t> bytes = ReadAllBytes(ini);
+    if (bytes.empty())
+        return;
+
+    // Tiny line parser: [Section] + Key=Value + ';'/'#' comments. Rules keep
+    // file order (first match wins), regardless of their key names.
+    struct RuleText { std::string selector, program; };
+    std::vector<std::pair<std::string, std::string>> programDecls; // name -> file[|vs|ps]
+    std::vector<RuleText> ruleTexts;
+    std::string section;
+    std::size_t lineStart = 0;
+    const std::string text(bytes.begin(), bytes.end());
+    while (lineStart <= text.size())
+    {
+        std::size_t lineEnd = text.find('\n', lineStart);
+        if (lineEnd == std::string::npos)
+            lineEnd = text.size();
+        std::string line = Trim(text.substr(lineStart, lineEnd - lineStart));
+        lineStart = lineEnd + 1;
+        if (line.empty() || line[0] == ';' || line[0] == '#')
+            continue;
+        if (line.front() == '[' && line.back() == ']')
+        {
+            section = ToLowerAscii(line.substr(1, line.size() - 2));
+            continue;
+        }
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+        const std::string key = Trim(line.substr(0, eq));
+        const std::string value = Trim(line.substr(eq + 1));
+        if (section == "programs")
+        {
+            programDecls.emplace_back(key, value);
+        }
+        else if (section == "bind.mesh")
+        {
+            const std::size_t arrow = value.find("->");
+            if (arrow == std::string::npos)
+                continue;
+            ruleTexts.push_back({ Trim(value.substr(0, arrow)), Trim(value.substr(arrow + 2)) });
+        }
+    }
+
+    // Compile the declared programs (value = file or file|VSEntry|PSEntry).
+    for (const auto& [name, decl] : programDecls)
+    {
+        std::string file = decl, vsEntry = "VSMain", psEntry = "PSMain";
+        const std::size_t p1 = decl.find('|');
+        if (p1 != std::string::npos)
+        {
+            file = Trim(decl.substr(0, p1));
+            const std::size_t p2 = decl.find('|', p1 + 1);
+            vsEntry = Trim(decl.substr(p1 + 1, (p2 == std::string::npos ? decl.size() : p2) - p1 - 1));
+            if (p2 != std::string::npos)
+                psEntry = Trim(decl.substr(p2 + 1));
+        }
+
+        MeshProgram prog;
+        prog.name = Widen(name);
+        const std::wstring fileW = Widen(file);
+        m_shaderWatch.emplace_back(fileW, OverrideStamp(fileW.c_str())); // hot-reload custom sources too
+        const fs::path src = FindShaderOverride(fileW.c_str());
+        if (!src.empty())
+        {
+            const auto vsBc = CompileShaderFromFile(src, vsEntry.c_str(), "vs_5_0");
+            const auto psBc = CompileShaderFromFile(src, psEntry.c_str(), "ps_5_0");
+            if (!vsBc.empty() && !psBc.empty())
+            {
+                prog.valid =
+                    SUCCEEDED(m_device->CreateVertexShader(vsBc.data(), vsBc.size(), nullptr, &prog.vs)) &&
+                    SUCCEEDED(m_device->CreatePixelShader(psBc.data(), psBc.size(), nullptr, &prog.ps)) &&
+                    SUCCEEDED(m_device->CreateInputLayout(kMeshLayoutDesc, 5, vsBc.data(), vsBc.size(), &prog.layout));
+            }
+        }
+        else
+        {
+            NIFLOG_ERROR("[SHADER] manifest program '{}': file '{}' not found", name, file);
+            m_shaderOverrideStatus += "program " + name + ": file not found: " + file + "\n";
+        }
+        if (!prog.valid)
+            NIFLOG_ERROR("[SHADER] manifest program '{}' unavailable - rules using it fall back to Lit", name);
+        m_meshPrograms.push_back(std::move(prog));
+    }
+
+    // Resolve the rules (selector -> program index).
+    for (const RuleText& rt : ruleTexts)
+    {
+        MeshBindRule rule;
+        const std::string sel = ToLowerAscii(rt.selector);
+        if (sel == "*")               rule.selector = MeshSelector::Any;
+        else if (sel == "pbr")        rule.selector = MeshSelector::Pbr;
+        else if (sel == "complexmat") rule.selector = MeshSelector::ComplexMat;
+        else if (sel == "parallax")   rule.selector = MeshSelector::Parallax;
+        else if (sel == "envmap")     rule.selector = MeshSelector::EnvMap;
+        else if (sel == "effect")     rule.selector = MeshSelector::Effect;
+        else if (sel == "decal")      rule.selector = MeshSelector::Decal;
+        else if (sel.rfind("node:", 0) == 0) { rule.selector = MeshSelector::NodePattern; rule.pattern = sel.substr(5); }
+        else if (sel.rfind("tex:", 0) == 0)  { rule.selector = MeshSelector::TexPattern;  rule.pattern = sel.substr(4); }
+        else
+        {
+            NIFLOG_WARN("[SHADER] manifest rule: unknown selector '{}' - skipped", rt.selector);
+            continue;
+        }
+
+        rule.program = 0;
+        const std::wstring wantW = Widen(rt.program);
+        for (std::size_t i = 0; i < m_meshPrograms.size(); ++i)
+            if (m_meshPrograms[i].name == wantW)
+            {
+                rule.program = static_cast<int>(i);
+                break;
+            }
+        m_meshRules.push_back(std::move(rule));
+    }
+
+    if (!m_meshRules.empty() || m_meshPrograms.size() > 1)
+        NIFLOG_INFO("[SHADER] manifest: {} program(s), {} mesh rule(s)",
+                    m_meshPrograms.size(), m_meshRules.size());
+}
+
+int RenderDevice::ResolveMeshProgram(const RenderMesh& mesh, TextureCache* textures) const
+{
+    const NifMaterial& mat = mesh.material;
+    for (const MeshBindRule& rule : m_meshRules)
+    {
+        bool match = false;
+        switch (rule.selector)
+        {
+        case MeshSelector::Any:        match = true; break;
+        case MeshSelector::Pbr:        match = mat.isPBR; break;
+        case MeshSelector::ComplexMat:
+            match = !mat.isPBR && mat.hasEnvironmentMap && !mat.envMaskTexture.empty() &&
+                    textures != nullptr && textures->HasComplexMaterialAlpha(mat.envMaskTexture);
+            break;
+        case MeshSelector::Parallax:   match = mat.hasHeightMap; break;
+        case MeshSelector::EnvMap:     match = mat.hasEnvironmentMap; break;
+        case MeshSelector::Effect:     match = mat.isEffectShader; break;
+        case MeshSelector::Decal:      match = mat.isDecal; break;
+        case MeshSelector::NodePattern:
+            match = ToLowerAscii(mesh.nodeName).find(rule.pattern) != std::string::npos;
+            break;
+        case MeshSelector::TexPattern:
+            match = ToLowerAscii(mat.diffuseTexture).find(rule.pattern) != std::string::npos;
+            break;
+        }
+        if (match)
+        {
+            const int idx = rule.program;
+            if (idx >= 0 && idx < static_cast<int>(m_meshPrograms.size()) &&
+                m_meshPrograms[static_cast<std::size_t>(idx)].valid)
+                return idx;
+            return 0; // broken/unknown program: fall back to Lit
+        }
+    }
+    return 0;
 }
 
 bool RenderDevice::CreateStateObjects()
@@ -987,6 +1217,7 @@ void RenderDevice::RenderScene(RenderTarget& target, RenderMeshCache& cache,
         m_context->VSSetConstantBuffers(0, 1, &frameCb);
         m_context->PSSetConstantBuffers(0, 1, &frameCb);
 
+        int boundProgram = 0; // program 0 (Lit) is what the pass bound above
         auto drawMesh = [&](const RenderMesh& mesh)
         {
             if (!mesh.geometry)
@@ -994,6 +1225,22 @@ void RenderDevice::RenderScene(RenderTarget& target, RenderMeshCache& cache,
             const GpuMesh* gpu = GetOrCreateGpuMesh(cache, mesh.geometry);
             if (!gpu || !gpu->vertexBuffer || gpu->indexCount == 0)
                 return;
+
+            // shaders.ini mesh binding: route this mesh to its manifest-chosen
+            // program (first-match rules; 0 = built-in Lit). Rebinding only
+            // happens when consecutive meshes differ.
+            if (!m_meshRules.empty())
+            {
+                const int progIdx = ResolveMeshProgram(mesh, textures);
+                if (progIdx != boundProgram)
+                {
+                    const MeshProgram& prog = m_meshPrograms[static_cast<std::size_t>(progIdx)];
+                    m_context->IASetInputLayout(prog.layout.Get());
+                    m_context->VSSetShader(prog.vs.Get(), nullptr, 0);
+                    m_context->PSSetShader(prog.ps.Get(), nullptr, 0);
+                    boundProgram = progIdx;
+                }
+            }
 
             const NifMaterial& mat = mesh.material;
 

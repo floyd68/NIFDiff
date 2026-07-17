@@ -204,6 +204,7 @@ add_custom_command(TARGET NIFDiff POST_BUILD
             ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Lit.hlsl
             ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Unlit.hlsl
             ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Highlight.hlsl
+            ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/shaders.ini
             "$<TARGET_FILE_DIR:NIFDiff>/shaders"
     COMMENT "Copying editable shader sources to $<TARGET_FILE_DIR:NIFDiff>/shaders")
 

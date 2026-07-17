@@ -55,3 +55,6 @@ test_assets/
 /*.exe
 /*.dll
 /*.pdb
+
+# The shader binding manifest template is source, not a session INI.
+!render/shaders/shaders.ini

@@ -413,6 +413,17 @@ documents every control in detail.
   whole machinery (embedded bytecode, zero startup cost). Overrides are also
   picked up from `%LOCALAPPDATA%\NIFDiff\shaders\` when the install dir is
   read-only.
+- **User shader binding** (`shaders\shaders.ini`): declare your own shader
+  programs and route the renderer's mesh draws to them per material kind -
+  `[Programs] MyToon=custom\MyToon.hlsl` plus first-match `[Bind.Mesh]` rules
+  with selectors `pbr` / `complexmat` / `parallax` / `envmap` / `effect` /
+  `decal` / `node:<substring>` / `tex:<substring>` / `*`. Custom programs
+  `#include "Common.hlsli"` and provide VSMain/PSMain; a rule naming a broken
+  or missing program falls back to the built-in Lit. The manifest and every
+  program source hot-reload live, so e.g. `Rule1=pbr -> MyToon` restyles only
+  the True PBR meshes of a compare - thumbnails included - while everything
+  else keeps the stock shading. Delete the file (or leave it commented, the
+  shipped default) for stock behavior.
 - **Render-channel toggles** (CHANNELS group): switch Diffuse (white),
   Vertex Colors, Specular (legacy AND PBR GGX), Emissive, or Lighting
   (raw unlit texture) off one at a time to isolate which shading input

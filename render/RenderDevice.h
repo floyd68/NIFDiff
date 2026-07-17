@@ -28,7 +28,9 @@
 #include "RenderTarget.h"
 #include <d3d11_1.h>
 #include <wrl/client.h>
+#include <filesystem>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <string>
 
@@ -118,9 +120,41 @@ private:
     // pays the compile), else a copy of the embedded fxc blob. Never empty.
     std::vector<std::uint8_t> LoadShaderBytecode(const wchar_t* hlslName, const char* entry,
         const char* profile, const void* embedded, std::size_t embeddedSize);
+    // The compile-and-cache core of the above (also used for manifest-declared
+    // custom programs, which have no embedded fallback). Empty on failure.
+    std::vector<std::uint8_t> CompileShaderFromFile(const std::filesystem::path& src,
+        const char* entry, const char* profile);
     // Snapshot the override files' (exists, mtime) so ReloadShadersIfChanged
     // can detect edits/appearance/deletion cheaply.
     void CaptureShaderStamps();
+
+    // --- shaders.ini manifest: user programs + mesh binding rules ----------
+    // One mesh shader program the manifest can route draws to. Index 0 is
+    // always the built-in Lit; custom entries come from [Programs]. `valid`
+    // is false when the custom source failed to compile (rules naming it
+    // fall back to Lit).
+    struct MeshProgram
+    {
+        std::wstring name;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> vs;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> ps;
+        Microsoft::WRL::ComPtr<ID3D11InputLayout> layout;
+        bool valid = false;
+    };
+    enum class MeshSelector { Any, Pbr, ComplexMat, Parallax, EnvMap, Effect, Decal, NodePattern, TexPattern };
+    struct MeshBindRule
+    {
+        MeshSelector selector = MeshSelector::Any;
+        std::string pattern;   // Node/TexPattern: lower-cased substring
+        int program = 0;       // index into m_meshPrograms
+    };
+    // Parse shaders\shaders.ini (when present) into m_meshPrograms/-Rules;
+    // absent or empty -> the built-in "everything through Lit" binding.
+    void LoadShaderManifest();
+    // First-match rule evaluation for one mesh (textures may be null - the
+    // complexmat probe then reports false, e.g. for thumbnail renders).
+    int ResolveMeshProgram(const RenderMesh& mesh, TextureCache* textures) const;
+
     bool CreateStateObjects();
     const GpuMesh* GetOrCreateGpuMesh(RenderMeshCache& cache, const NifGeometry* geometry);
     const GpuLineMesh* GetOrCreateLineMesh(RenderMeshCache& cache, const NifGeometry* geometry);
@@ -137,8 +171,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_unlitPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_unlitLayout;
     std::string m_shaderOverrideStatus; // see ShaderOverrideStatus()
-    // (exists, last_write_time ticks) per watched file: Lit, Unlit, Highlight, Common.hlsli.
-    long long m_shaderStamps[4] { 0, 0, 0, 0 };
+    // Hot-reload watch list: (relative name under shaders\, stamp). Rebuilt on
+    // every (re)load - the built-in sources + shaders.ini + every manifest
+    // program's file.
+    std::vector<std::pair<std::wstring, long long>> m_shaderWatch;
+    std::vector<MeshProgram> m_meshPrograms; // [0] = built-in Lit
+    std::vector<MeshBindRule> m_meshRules;   // first match wins; empty = all Lit
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_highlightVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_highlightPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_highlightLayout;
