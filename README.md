@@ -493,10 +493,16 @@ the long-standing Qt-based NIF editor:
   `src/ui/nifdiffviewer.cpp`/`.h` (the Qt `File -> NIF Diff Viewer...`
   feature), documented in `D:\Works\nifskope\NIF_DIFF_VIEWER.md` - laid
   out FICture2-style (see the FICture2 section above).
-- `schema_reference/nif.xml` (once added) is vendored from the upstream
-  [niftools/nifxml](https://github.com/niftools/nifxml) project that
-  NifSkope itself uses, kept here for reference only (not parsed at
-  build/run time - see `schema_reference/NOTES.md`).
+- `core/AnimController.h/.cpp` is a Qt-free port of the animation-playback
+  math in NifSkope's `src/gl/glcontroller.cpp` (Controller::ctrlTime's
+  extrapolation, the cached key search, the per-KeyType interpolation and
+  quaternion slerp) and of `src/gl/controllers.cpp`'s
+  `ControllerManager::setSequence` binding logic (AnimPlayer::bind).
+- `nif.xml` from [niftools/nifxml](https://github.com/niftools/nifxml) is
+  **referenced as documentation only and not vendored** - it is GPL-3.0,
+  so it is consulted upstream instead of being redistributed in this MIT
+  repo (see `schema_reference/NOTES.md` for the pinned version the parser
+  comments cite).
 - `test_assets/*.nif` are small Skyrim SE/Fallout 4 NIF fixtures used to
   smoke-test the parser - kept local-only (gitignored), since game-derived
   meshes are not suitable for redistribution in a public repo.
@@ -557,7 +563,8 @@ render/            D3D11 renderer, HLSL shaders (shaders/, fxc-precompiled at bu
 ui/                NifViewport (single 3D view), NifComparePane (view + Open/Close),
                    NifCompareSplitCoordinator (1-8 pane two-row equal-width grid),
                    NifCompareControlPanel (bottom strip), NifCompareView (top-level)
-schema_reference/  nif.xml reference (vendored from niftools/nifxml, not parsed at runtime)
+schema_reference/  NOTES.md pointing at the upstream niftools/nifxml reference (GPL-3.0,
+                   consulted upstream - deliberately not vendored into this MIT repo)
 test_assets/       local-only smoke-test .nif fixtures (gitignored - game-
                    derived meshes are not redistributed with this repo)
 third_party/       git submodules: FD2D, Floar, external/DirectXTex (DDS decode

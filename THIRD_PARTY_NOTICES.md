@@ -127,8 +127,12 @@ included**:
   an earlier development revision had ported Community Shaders' GPL-3.0
   `ExtendedMaterials.hlsli` and was rewritten to remove that derivation.
 
-## schema_reference/nif.xml
+## nifxml (referenced only - no longer vendored)
 
-Vendored from [niftools/nifxml](https://github.com/niftools/nifxml) as a
-format reference only - it is not parsed at build or run time and is not
-part of the built binaries. It remains under its upstream project's terms.
+[niftools/nifxml](https://github.com/niftools/nifxml)'s `nif.xml` is
+**GPL-3.0**, so it is NOT redistributed in this repository (it was removed,
+including from the git history). `core/NifDocument.cpp`'s parsers are an
+independent implementation of the NIF *format* written by cross-referencing
+that XML as documentation (against nifxml 0.10.0.0 - see
+`schema_reference/NOTES.md`); no nifxml content ships in the source tree or
+the built binaries.
