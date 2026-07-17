@@ -36,6 +36,12 @@ public:
     Kind PaneKind() const;
     std::wstring CurrentPath() const;
 
+    // The path to persist for a session restore: the loaded file's path, or -
+    // when the pane is browsing a folder/archive with no file open - that
+    // container's path (so the restored pane resumes browsing it). Empty when
+    // the pane holds nothing.
+    std::wstring SessionPath() const;
+
     // Open `path`, swapping the content to the kind the path needs first (an
     // image into a NIF pane becomes an image content, and vice versa) - the
     // strip persists. Returns false only when it can't be accepted.
@@ -91,6 +97,13 @@ public:
     // Re-run on every content swap.
     void SetOnContentCreated(std::function<void(PaneContent*)> handler) { m_onContentCreated = std::move(handler); }
 
+    // Fired for every open through this pane, whatever its kind: a NIF (once its
+    // async parse lands), a texture, or a folder/archive being browsed into. The
+    // app wires this for the recent-files (MRU) list, so all four kinds land
+    // there. The content kinds report via PaneContent::SetOnFileOpened (wired in
+    // WireContent); the container case fires directly from Load.
+    void SetOnFileOpened(std::function<void(const std::wstring&)> handler) { m_onFileOpened = std::move(handler); }
+
 private:
     void Redock();     // ClearDocks + re-add strip (Bottom) then content (Fill)
     void WireContent(); // apply remembered resources + fire m_onContentCreated
@@ -107,6 +120,7 @@ private:
     std::function<void(const std::wstring&)> m_onThumbnailChosen;
     std::function<void(float, bool)> m_onThumbStripResize;
     std::function<void(PaneContent*)> m_onContentCreated;
+    std::function<void(const std::wstring&)> m_onFileOpened;
 };
 
 } // namespace nsk

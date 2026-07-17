@@ -12,7 +12,9 @@
 
 #include <DockPanel.h>
 
+#include <functional>
 #include <string>
+#include <utility>
 
 namespace nsk
 {
@@ -41,6 +43,25 @@ public:
     virtual void SetResourceManager(ResourceManager*) {}
     virtual void SetResourceResolver(ResourceResolver*) {}
     virtual void SetTextureRepository(TextureRepository*) {}
+
+    // Fired when the content has (successfully) opened a file - a NIF once its
+    // async parse lands, an image when its decode is dispatched. The frame wires
+    // this so the app can record the file (MRU / session). Every content kind
+    // reports through the same channel.
+    void SetOnFileOpened(std::function<void(const std::wstring&)> handler)
+    {
+        m_onFileOpened = std::move(handler);
+    }
+
+protected:
+    void NotifyFileOpened(const std::wstring& path)
+    {
+        if (m_onFileOpened)
+            m_onFileOpened(path);
+    }
+
+private:
+    std::function<void(const std::wstring&)> m_onFileOpened;
 };
 
 } // namespace nsk

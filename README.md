@@ -58,7 +58,9 @@ documents every control in detail.
   come through the file-open dialog, so it has its own picker). The pane doesn't
   view the container itself; it *browses into it* in the thumbnail strip so you
   pick something inside. Folders, `.bsa`/`.ba2`/`.zip`/`.7z`/`.rar` archives,
-  NIFs and textures are all accepted at every one of these entry points.
+  NIFs and textures are all accepted at every one of these entry points - and
+  each one is also remembered: they land in the **Open Recent** (MRU) list and
+  are restored on the next launch (a browsed folder/archive resumes browsing).
 - **Compare the same mesh across mods**: opening a `.nif` whose *name* matches
   one already open lands in a new pane of the same window (single-instance
   forwarding) - the core "compare two mods' version of one mesh" flow. Dropping

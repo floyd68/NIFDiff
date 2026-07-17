@@ -73,6 +73,18 @@ std::wstring ComparePane::CurrentPath() const
     return m_content ? m_content->CurrentPath() : std::wstring();
 }
 
+std::wstring ComparePane::SessionPath() const
+{
+    // A loaded file wins; otherwise, if we're browsing a folder/archive, persist
+    // that container so a restored pane resumes browsing it (its path lives in
+    // the strip, not in any content's CurrentPath).
+    if (std::wstring loaded = CurrentPath(); !loaded.empty())
+        return loaded;
+    if (m_browsingContainer && m_thumbStrip)
+        return m_thumbStrip->Folder();
+    return std::wstring();
+}
+
 NifComparePane* ComparePane::NifContent()
 {
     return dynamic_cast<NifComparePane*>(m_content.get());
@@ -123,6 +135,8 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
             m_thumbStrip->SetActive(true);
             m_thumbStrip->ShowForFolder(path);
         }
+        if (m_onFileOpened) // a browsed folder/archive is an "open" too (MRU/session)
+            m_onFileOpened(path);
         Invalidate();
         return true;
     }
@@ -179,7 +193,14 @@ void ComparePane::WireContent()
     if (m_textureRepository) m_content->SetTextureRepository(m_textureRepository);
     if (m_renderDevice) m_content->SetRenderDevice(m_renderDevice);
     if (m_resourceManager) m_content->SetResourceManager(m_resourceManager);
-    // ...and gets its kind-specific callbacks (re)wired by the view.
+    // ...its file-open reports funnel up through the frame (one MRU channel for
+    // every kind)...
+    m_content->SetOnFileOpened([this](const std::wstring& p)
+    {
+        if (m_onFileOpened)
+            m_onFileOpened(p);
+    });
+    // ...and it gets its kind-specific callbacks (re)wired by the view.
     if (m_onContentCreated)
         m_onContentCreated(m_content.get());
 }

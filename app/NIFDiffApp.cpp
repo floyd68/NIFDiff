@@ -574,7 +574,7 @@ namespace
             const std::wstring key = L"File" + std::to_wstring(i);
             std::wstring path;
             if (i < view.PaneCount())
-                path = view.Pane(i).CurrentPath(); // pending path too, if still loading
+                path = view.Pane(i).SessionPath(); // loaded file, browsed folder/archive, or pending path
             IniStore::SetString(iniPath, kSectionSession, key, path);
         }
 

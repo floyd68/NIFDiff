@@ -447,6 +447,10 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
     if (m_image)
         m_image->ResetView(); // each new image starts aspect-fit, unrotated
 
+    // Report the open (MRU / session) - the path is a real texture the user
+    // chose; the decode/cache path below just decides how fast it appears.
+    NotifyFileOpened(path);
+
     // Supersede any previous load: cancel it and bump the generation so a late
     // completion for the old path is dropped.
     if (m_handle)

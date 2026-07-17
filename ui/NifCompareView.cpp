@@ -261,6 +261,12 @@ std::shared_ptr<ComparePane> NifCompareView::CreatePane()
     if (m_resourceManager) pane->SetResourceManager(m_resourceManager);
     pane->SetThumbnailStripEnabled(m_thumbStripEnabled); // new panes inherit the global toggle
     pane->SetThumbnailStripSize(m_thumbStripExtent);     // ... and the current card size
+    // One MRU channel for every open through this pane - NIF, texture, or a
+    // browsed folder/archive (ComparePane funnels all of them here).
+    pane->SetOnFileOpened([this](const std::wstring& path)
+    {
+        if (m_onFileOpened) m_onFileOpened(path);
+    });
     WireThumbnailCallbacks(raw);
     // The ctor created the initial NIF content before SetOnContentCreated was
     // set, so wire that content now (future swaps go through the callback).
@@ -314,10 +320,8 @@ void NifCompareView::WireContent(PaneContent* c)
             RefreshAnimationControls();
             UpdateIpcOpenSnapshot();
         });
-        nif->SetOnFileOpened([this](const std::wstring& path)
-        {
-            if (m_onFileOpened) m_onFileOpened(path);
-        });
+        // File-opened -> MRU is wired once at the ComparePane level (CreatePane),
+        // so every content kind and the browse-a-container case share one channel.
     }
     else if (auto* img = dynamic_cast<ImagePane*>(c))
     {

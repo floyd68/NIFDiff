@@ -235,8 +235,7 @@ void NifComparePane::AcceptLoaded(const std::wstring& path,
     UpdateStatsLabel();
     if (m_onDocumentChanged)
         m_onDocumentChanged();
-    if (m_onFileOpened)
-        m_onFileOpened(path);
+    NotifyFileOpened(path);
 }
 
 void NifComparePane::ShowPendingFile(const std::wstring& path)
