@@ -154,7 +154,11 @@ private:
     struct Entry
     {
         EntryKind kind = EntryKind::File;
-        std::wstring path;      // File: .nif path; Folder/Up: target directory
+        // A File entry that is a texture (dds/png/...) rather than a .nif: shown
+        // with an image placeholder tile and opened into an image pane on click,
+        // never 3D-rendered. (Decoded thumbnails come in a later step.)
+        bool isImage = false;
+        std::wstring path;      // File: .nif/image path; Folder/Up: target directory
         std::wstring name;      // label (file/folder name, or "..")
         bool rendered = false;  // 3D pass produced a texture (File only)
         bool failed = false;    // parse/build failed - show a placeholder
@@ -194,6 +198,8 @@ private:
     void NavigateTo(std::wstring folder, std::wstring selectPath);
     // Draws a folder / up-arrow glyph inside rc for Folder/Up tiles.
     void DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const;
+    // Photo glyph drawn on an image (texture) placeholder tile.
+    void DrawImageIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc) const;
 
     // Submits every not-yet-rendered .nif entry to the shared ResourceManager
     // pool (no-op when disabled). Called after a re-list and on re-enable.

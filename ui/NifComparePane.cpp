@@ -63,12 +63,19 @@ NifComparePane::NifComparePane(const std::wstring& name)
     m_thumbStrip->SetOrientation(ThumbnailStrip::Orientation::Horizontal);
     m_thumbStrip->SetOnActivated([this](const std::wstring& path)
     {
-        std::string err;
-        Load(path, &err);
-        Invalidate();
-        // Let the owner mirror this pick into the other panes' folders.
+        // Route through the owner so the pick is opened by file kind (a texture
+        // opens in an image pane, a .nif loads here) and mirrored to the other
+        // panes. Fall back to a direct load only when unowned (headless/tests).
         if (m_onThumbnailChosen)
+        {
             m_onThumbnailChosen(path);
+        }
+        else
+        {
+            std::string err;
+            Load(path, &err);
+            Invalidate();
+        }
     });
     m_thumbStrip->SetOnResize([this](float ext, bool committed)
     {

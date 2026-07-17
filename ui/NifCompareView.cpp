@@ -453,7 +453,19 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
     });
     pane->SetOnThumbnailChosen([this, paneRaw](const std::wstring& path)
     {
-        SyncThumbnailSelection(paneRaw, path);
+        // A texture picked from the strip opens in an image pane (kept beside the
+        // browsing NIF pane so browsing continues); a .nif loads into this pane
+        // and mirrors the same file name into the other panes' folders.
+        if (IsImagePath(path))
+        {
+            OpenIntoBestPane(path);
+        }
+        else
+        {
+            OpenPathInPane(paneRaw, path);
+            SyncThumbnailSelection(paneRaw, path);
+        }
+        Invalidate();
     });
     pane->SetOnThumbnailStripResize([this](float ext, bool committed)
     {

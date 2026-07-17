@@ -11,6 +11,8 @@
 #include <Util.h>
 #include <VirtualPath.h>        // Floar: parse a folder string into a VirtualPath
 #include <VirtualFileSystem.h>  // Floar: list a folder OR a BSA/BA2's contents
+
+#include "ImageCore/ImageDecodeDispatcher.h" // which extensions are textures
 #include <algorithm>
 #include <cwctype>
 #include <filesystem>
@@ -32,6 +34,17 @@ namespace
     constexpr float kThumbMarginFrac = 0.06f; // equal margin, fraction of the larger extent
     constexpr float kMinAspect = 0.45f;    // clamp card w/h so cards stay reasonable
     constexpr float kMaxAspect = 2.6f;
+
+    // True when `extLower` (dotted, lowercase) is a texture ImageCore can decode.
+    bool IsImageExt(const std::wstring& extLower)
+    {
+        if (extLower.empty())
+            return false;
+        for (const std::wstring& s : ImageCore::ImageDecodeDispatcher::GetSupportedExtensions())
+            if (extLower == s)
+                return true;
+        return false;
+    }
 }
 
 ThumbnailStrip::ThumbnailStrip(const std::wstring& name)
@@ -255,9 +268,12 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
                     std::wstring ext = de.path.GetExtension();
                     std::transform(ext.begin(), ext.end(), ext.begin(),
                                    [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-                    if (ext != L".nif") continue;
+                    const bool isNif = (ext == L".nif");
+                    const bool isImg = !isNif && IsImageExt(ext);
+                    if (!isNif && !isImg) continue;
                     Entry e;
                     e.kind = EntryKind::File;
+                    e.isImage = isImg;
                     e.path = de.path.wstring();
                     e.name = de.path.GetFilename();
                     files.push_back(std::move(e));
@@ -298,8 +314,8 @@ void ThumbnailStrip::EnqueuePending()
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
         const Entry& e = m_entries[i];
-        if (e.kind != EntryKind::File || e.rendered)
-            continue;
+        if (e.kind != EntryKind::File || e.rendered || e.isImage)
+            continue; // image tiles aren't 3D-rendered (shown as a placeholder)
         const std::size_t index = i;
         const std::wstring path = e.path; // copy: the job must not touch m_entries
         mgr->Submit(ResourceManager::Priority::Thumbnail, { self, gen },
@@ -828,6 +844,25 @@ void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F
     }
 }
 
+void ThumbnailStrip::DrawImageIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc) const
+{
+    // A little photo glyph (frame + sun + mountain) on the image placeholder,
+    // so a texture tile reads differently from a NIF tile before its decoded
+    // thumbnail (later step) lands.
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0.50f, 0.72f, 0.78f), &brush)))
+        return;
+    const float w = rc.right - rc.left, h = rc.bottom - rc.top;
+    const float cx = (rc.left + rc.right) * 0.5f, cy = (rc.top + rc.bottom) * 0.5f;
+    const float s = (std::min)(w, h) * 0.28f;
+    const D2D1_RECT_F frame { cx - s, cy - s, cx + s, cy + s };
+    target->DrawRectangle(frame, brush.Get(), 2.0f);
+    const D2D1_ELLIPSE sun { { cx + s * 0.38f, cy - s * 0.40f }, s * 0.16f, s * 0.16f };
+    target->FillEllipse(sun, brush.Get());
+    target->DrawLine({ cx - s, cy + s }, { cx - s * 0.15f, cy - s * 0.15f }, brush.Get(), 2.0f);
+    target->DrawLine({ cx - s * 0.15f, cy - s * 0.15f }, { cx + s, cy + s }, brush.Get(), 2.0f);
+}
+
 void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 {
     if (!target || !ShouldShow())
@@ -940,10 +975,15 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
             }
             else
             {
-                const D2D1_COLOR_F c = e.failed ? D2D1::ColorF(0.28f, 0.14f, 0.14f)
-                                                : D2D1::ColorF(0.14f, 0.14f, 0.17f);
+                // Image tiles get a distinct teal placeholder (decoded thumbnails
+                // land here later); NIF tiles are neutral, failures are reddish.
+                const D2D1_COLOR_F c = e.isImage ? D2D1::ColorF(0.13f, 0.20f, 0.22f)
+                                       : e.failed ? D2D1::ColorF(0.28f, 0.14f, 0.14f)
+                                                  : D2D1::ColorF(0.14f, 0.14f, 0.17f);
                 if (SUCCEEDED(target->CreateSolidColorBrush(c, &brush)))
                     target->FillRectangle(thumbRect, brush.Get());
+                if (e.isImage)
+                    DrawImageIcon(target, thumbRect);
             }
             // Accent border on the active pane's current file.
             if (!m_currentFile.empty() && e.path == m_currentFile &&
