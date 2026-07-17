@@ -401,7 +401,10 @@ documents every control in detail.
   plain env-mapped surfaces, True PBR through the vanilla lit path.
 - **User-editable shaders**: the HLSL sources ship next to the exe in
   `shaders\` (`Lit.hlsl` - the uber-shader covering every material path -,
-  `Unlit.hlsl`, `Highlight.hlsl`). Edit one and save: the app **hot-reloads**
+  `Unlit.hlsl`, `Highlight.hlsl`, and `Common.hlsli` - the shared contract:
+  the constant buffers, texture registers and vertex/interpolant structs a
+  custom mesh shader `#include`s to interoperate with the renderer). Edit
+  one and save: the app **hot-reloads**
   it within a second, no restart. A compile error keeps the previous shaders,
   falls back to the built-in (embedded) copies and shows a toast with the log
   pointer - a broken edit can never blank the viewer. Compiled bytecode is

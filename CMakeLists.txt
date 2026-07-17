@@ -107,7 +107,7 @@ function(nifdiff_compile_shader hlsl entry profile varname header)
     set(out "${NIFDIFF_SHADER_OUT_DIR}/${header}")
     add_custom_command(
         OUTPUT "${out}"
-        DEPENDS "${src}"
+        DEPENDS "${src}" "${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Common.hlsli"
         COMMAND "${NIFDIFF_FXC_TOOL}" /nologo /T ${profile} /E ${entry} /Ges
                 /Fh "${out}" /Vn ${varname} "${src}"
         COMMENT "fxc ${hlsl} ${entry} (${profile}) -> ${header}"
@@ -126,6 +126,7 @@ nifdiff_compile_shader(Highlight.hlsl PSMain ps_5_0 g_HighlightPS HighlightPS.h)
 # Keep the .hlsl sources visible in the IDE without Visual Studio's built-in
 # FXC step double-compiling them (the custom commands above own that).
 set(NIFDIFF_SHADER_SOURCES
+    render/shaders/Common.hlsli
     render/shaders/Lit.hlsl
     render/shaders/Unlit.hlsl
     render/shaders/Highlight.hlsl
@@ -199,6 +200,7 @@ set_target_properties(NIFDiff PROPERTIES
 add_custom_command(TARGET NIFDiff POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:NIFDiff>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Common.hlsli
             ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Lit.hlsl
             ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Unlit.hlsl
             ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/Highlight.hlsl

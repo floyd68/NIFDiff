@@ -137,8 +137,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_unlitPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_unlitLayout;
     std::string m_shaderOverrideStatus; // see ShaderOverrideStatus()
-    // (exists, last_write_time ticks) per override file: Lit, Unlit, Highlight.
-    long long m_shaderStamps[3] { 0, 0, 0 };
+    // (exists, last_write_time ticks) per watched file: Lit, Unlit, Highlight, Common.hlsli.
+    long long m_shaderStamps[4] { 0, 0, 0, 0 };
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_highlightVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_highlightPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_highlightLayout;

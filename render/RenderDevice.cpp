@@ -382,7 +382,7 @@ namespace
         return h;
     }
 
-    constexpr const wchar_t* kOverrideFiles[3] = { L"Lit.hlsl", L"Unlit.hlsl", L"Highlight.hlsl" };
+    constexpr const wchar_t* kOverrideFiles[4] = { L"Lit.hlsl", L"Unlit.hlsl", L"Highlight.hlsl", L"Common.hlsli" };
 
     // 0 = no override file; otherwise its last-write time in filesystem ticks.
     long long OverrideStamp(const wchar_t* hlslName)
@@ -398,7 +398,7 @@ namespace
 
 void RenderDevice::CaptureShaderStamps()
 {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         m_shaderStamps[i] = OverrideStamp(kOverrideFiles[i]);
 }
 
@@ -407,7 +407,7 @@ bool RenderDevice::ReloadShadersIfChanged()
     if (!m_device)
         return false;
     bool changed = false;
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         if (OverrideStamp(kOverrideFiles[i]) != m_shaderStamps[i])
             changed = true;
     if (!changed)
@@ -450,6 +450,25 @@ std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslNa
     hash = Fnv1a64(entry, std::strlen(entry), hash);
     hash = Fnv1a64(profile, std::strlen(profile), hash);
     hash = Fnv1a64(&kFlags, sizeof(kFlags), hash);
+
+    // #include'd files (Common.hlsli etc.) are part of the compiled result, so
+    // their content joins the key too - editing an include invalidates every
+    // cached shader that pulls it in. One level deep matches the shader set.
+    {
+        const std::string text(source.begin(), source.end());
+        std::size_t pos = 0;
+        while ((pos = text.find("#include \"", pos)) != std::string::npos)
+        {
+            pos += 10;
+            const std::size_t end = text.find('"', pos);
+            if (end == std::string::npos)
+                break;
+            const fs::path incPath = src.parent_path() / text.substr(pos, end - pos);
+            const std::vector<std::uint8_t> inc = ReadAllBytes(incPath);
+            hash = Fnv1a64(inc.data(), inc.size(), hash);
+            pos = end;
+        }
+    }
 
     std::error_code ec;
     const fs::path cacheDir = LocalAppDataNifDiff() / L"shadercache";
