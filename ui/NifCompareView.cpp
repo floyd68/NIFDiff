@@ -50,7 +50,7 @@ NifCompareView::NifCompareView(const std::wstring& name)
     m_controls->SetOnAddPane([this]() { AddPane(); });
     m_controls->SetOnResetCameras([this]()
     {
-        for (auto& p : m_panes) p->Viewport().ResetCamera();
+        ForEachViewport([](NifViewport& vp) { vp.ResetCamera(); });
     });
     m_controls->SetOnSyncViewsChanged([this](bool on) { m_syncViews = on; });
     m_controls->SetOnSyncLightingChanged([this](bool on) { m_syncLighting = on; });
@@ -62,33 +62,33 @@ NifCompareView::NifCompareView(const std::wstring& name)
     m_controls->SetOnMoveSensitivityChanged([this](float v)
     {
         m_navMoveSensitivity = v;
-        for (auto& p : m_panes) p->Viewport().SetPanSensitivity(v);
+        ForEachViewport([v](NifViewport& vp) { vp.SetPanSensitivity(v); });
     });
     m_controls->SetOnZoomSensitivityChanged([this](float v)
     {
         m_navZoomSensitivity = v;
-        for (auto& p : m_panes) p->Viewport().SetZoomSensitivity(v);
+        ForEachViewport([v](NifViewport& vp) { vp.SetZoomSensitivity(v); });
     });
     m_controls->SetOnRotateSensitivityChanged([this](float v)
     {
         m_navRotateSensitivity = v;
-        for (auto& p : m_panes) p->Viewport().SetOrbitSensitivity(v);
+        ForEachViewport([v](NifViewport& vp) { vp.SetOrbitSensitivity(v); });
     });
     m_controls->SetOnFovChanged([this](float deg)
     {
         m_fovRadians = deg * (NSK_PI / 180.0f);
-        for (auto& p : m_panes) p->Viewport().SetFieldOfViewRadians(m_fovRadians);
+        ForEachViewport([this](NifViewport& vp) { vp.SetFieldOfViewRadians(m_fovRadians); });
     });
     m_controls->SetOnOrthographicChanged([this](bool on) { ApplyOrthographic(on); });
     m_controls->SetOnOrbitSelectionChanged([this](bool on)
     {
         m_orbitAroundSelection = on;
-        for (auto& p : m_panes) p->Viewport().SetOrbitAroundSelection(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetOrbitAroundSelection(on); });
     });
     m_controls->SetOnZoomToCursorChanged([this](bool on)
     {
         m_zoomToCursor = on;
-        for (auto& p : m_panes) p->Viewport().SetZoomToCursor(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetZoomToCursor(on); });
     });
 
     // ANIMATION group: playback of NIF-embedded transform animations. Actions
@@ -118,39 +118,39 @@ NifCompareView::NifCompareView(const std::wstring& name)
 
     m_controls->SetOnFrontalLightChanged([this](bool on)
     {
-        for (auto& p : m_panes) p->Viewport().SetFrontalLight(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetFrontalLight(on); });
     });
     m_controls->SetOnShowGridChanged([this](bool on)
     {
-        for (auto& p : m_panes) p->Viewport().SetShowGrid(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetShowGrid(on); });
     });
     m_controls->SetOnShowAxesChanged([this](bool on)
     {
-        for (auto& p : m_panes) p->Viewport().SetShowAxes(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetShowAxes(on); });
     });
     m_controls->SetOnWireframeChanged([this](bool on)
     {
-        for (auto& p : m_panes) p->Viewport().SetWireframe(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetWireframe(on); });
     });
     m_controls->SetOnShowHiddenChanged([this](bool on)
     {
         m_showHiddenNodes = on;
-        for (auto& p : m_panes) p->Viewport().SetShowHiddenNodes(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetShowHiddenNodes(on); });
     });
     m_controls->SetOnShowNormalsChanged([this](bool on)
     {
         m_showNormals = on;
-        for (auto& p : m_panes) p->Viewport().SetShowNormals(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetShowNormals(on); });
     });
     m_controls->SetOnShowTangentsChanged([this](bool on)
     {
         m_showTangents = on;
-        for (auto& p : m_panes) p->Viewport().SetShowTangents(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetShowTangents(on); });
     });
     m_controls->SetOnMsaaChanged([this](bool on)
     {
         m_msaaEnabled = on;
-        for (auto& p : m_panes) p->Viewport().SetMsaaEnabled(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetMsaaEnabled(on); });
     });
     // Global on/off for every pane's own thumbnail strip. The user click
     // applies it to all panes and reports it to the owner (for persistence).
@@ -166,81 +166,73 @@ NifCompareView::NifCompareView(const std::wstring& name)
     // an isolated before/after comparison) rather than a two-way mirror.
     m_controls->SetOnBrightnessChanged([this](float v)
     {
-        if (m_panes.empty()) return;
-        if (m_syncLighting) { for (auto& p : m_panes) p->Viewport().SetBrightness(v); }
-        else { m_panes.front()->Viewport().SetBrightness(v); }
+        if (m_syncLighting) { ForEachViewport([v](NifViewport& vp) { vp.SetBrightness(v); }); }
+        else if (NifViewport* vp = FirstNifViewport()) { vp->SetBrightness(v); }
     });
     m_controls->SetOnAmbientChanged([this](float v)
     {
-        if (m_panes.empty()) return;
-        if (m_syncLighting) { for (auto& p : m_panes) p->Viewport().SetAmbient(v); }
-        else { m_panes.front()->Viewport().SetAmbient(v); }
+        if (m_syncLighting) { ForEachViewport([v](NifViewport& vp) { vp.SetAmbient(v); }); }
+        else if (NifViewport* vp = FirstNifViewport()) { vp->SetAmbient(v); }
     });
     m_controls->SetOnDeclinationChanged([this](float v)
     {
-        if (m_panes.empty()) return;
-        if (m_syncLighting) { for (auto& p : m_panes) p->Viewport().SetLightDeclinationDegrees(v); }
-        else { m_panes.front()->Viewport().SetLightDeclinationDegrees(v); }
+        if (m_syncLighting) { ForEachViewport([v](NifViewport& vp) { vp.SetLightDeclinationDegrees(v); }); }
+        else if (NifViewport* vp = FirstNifViewport()) { vp->SetLightDeclinationDegrees(v); }
     });
     m_controls->SetOnPlanarAngleChanged([this](float v)
     {
-        if (m_panes.empty()) return;
-        if (m_syncLighting) { for (auto& p : m_panes) p->Viewport().SetLightPlanarAngleDegrees(v); }
-        else { m_panes.front()->Viewport().SetLightPlanarAngleDegrees(v); }
+        if (m_syncLighting) { ForEachViewport([v](NifViewport& vp) { vp.SetLightPlanarAngleDegrees(v); }); }
+        else if (NifViewport* vp = FirstNifViewport()) { vp->SetLightPlanarAngleDegrees(v); }
     });
 
     // Display setting rather than a light: always applies to every pane.
     m_controls->SetOnParallaxHeightChanged([this](float v)
     {
         m_parallaxHeightScale = v;
-        for (auto& p : m_panes)
-            p->Viewport().SetParallaxHeightScale(v);
+        ForEachViewport([v](NifViewport& vp) { vp.SetParallaxHeightScale(v); });
     });
 
     // Extended-material toggles - display settings, applied to every pane.
     m_controls->SetOnParallaxEnabledChanged([this](bool on)
     {
         m_enableParallax = on;
-        for (auto& p : m_panes)
-            p->Viewport().SetEnableParallax(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableParallax(on); });
     });
     m_controls->SetOnComplexMaterialEnabledChanged([this](bool on)
     {
         m_enableComplexMaterial = on;
-        for (auto& p : m_panes)
-            p->Viewport().SetEnableComplexMaterial(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableComplexMaterial(on); });
     });
     m_controls->SetOnPBREnabledChanged([this](bool on)
     {
         m_enablePBR = on;
-        for (auto& p : m_panes)
-            p->Viewport().SetEnablePBR(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnablePBR(on); });
     });
 
     m_controls->SetOnTexturesEnabledChanged([this](bool on)
     {
         m_enableTextures = on;
-        for (auto& p : m_panes) p->Viewport().SetEnableTextures(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableTextures(on); });
     });
     m_controls->SetOnVertexColorsEnabledChanged([this](bool on)
     {
         m_enableVertexColors = on;
-        for (auto& p : m_panes) p->Viewport().SetEnableVertexColors(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableVertexColors(on); });
     });
     m_controls->SetOnSpecularEnabledChanged([this](bool on)
     {
         m_enableSpecular = on;
-        for (auto& p : m_panes) p->Viewport().SetEnableSpecular(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableSpecular(on); });
     });
     m_controls->SetOnGlowEnabledChanged([this](bool on)
     {
         m_enableGlow = on;
-        for (auto& p : m_panes) p->Viewport().SetEnableGlow(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableGlow(on); });
     });
     m_controls->SetOnLightingEnabledChanged([this](bool on)
     {
         m_enableLighting = on;
-        for (auto& p : m_panes) p->Viewport().SetEnableLighting(on);
+        ForEachViewport([on](NifViewport& vp) { vp.SetEnableLighting(on); });
     });
 }
 
@@ -310,8 +302,9 @@ void NifCompareView::WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pa
         m_applyingSync = true;
         for (auto& other : m_panes)
         {
-            if (other.get() != paneRaw)
-                other->Viewport().SetCamera(cam);
+            NifComparePane* n = AsNif(other);
+            if (n && n != paneRaw)
+                n->Viewport().SetCamera(cam);
         }
         m_applyingSync = false;
     });
@@ -356,7 +349,7 @@ void NifCompareView::ApplyThumbnailPick(NifComparePane* active, const std::wstri
 
 void NifCompareView::StepActiveThumbnail(int delta)
 {
-    if (NifComparePane* active = ActivePane())
+    if (NifComparePane* active = AsNif(ActivePane()))
     {
         active->FocusThumbnailStrip(); // keyboard browsing keeps the strip focused (enables type-to-select)
         ApplyThumbnailPick(active, active->StepThumbnailFile(delta));
@@ -365,7 +358,7 @@ void NifCompareView::StepActiveThumbnail(int delta)
 
 void NifCompareView::LoadEdgeThumbnail(bool last)
 {
-    if (NifComparePane* active = ActivePane())
+    if (NifComparePane* active = AsNif(ActivePane()))
     {
         active->FocusThumbnailStrip();
         ApplyThumbnailPick(active, active->EdgeThumbnailFile(last));
@@ -412,9 +405,10 @@ void NifCompareView::RefreshExtendedMaterialControls()
     bool anyPBR = false;
     for (auto& p : m_panes)
     {
-        if (!p)
+        NifComparePane* n = AsNif(p);
+        if (!n)
             continue;
-        NifViewport& vp = p->Viewport();
+        NifViewport& vp = n->Viewport();
         anySliderParallax = anySliderParallax || vp.HasActiveParallax();
         anyParallax = anyParallax || vp.HasParallaxMaterials();
         anyComplexMaterial = anyComplexMaterial || vp.HasComplexMaterials();
@@ -467,7 +461,7 @@ void NifCompareView::SetPaneCount(std::size_t count)
     RebuildHostTree();
 }
 
-NifComparePane* NifCompareView::AllocatePaneFor()
+ComparePane* NifCompareView::AllocatePaneFor()
 {
     for (auto& pane : m_panes)
     {
@@ -499,7 +493,7 @@ void NifCompareView::PlaceQueuedIpcPanesNamesOnly()
             path = std::move(m_ipcQueue->pending.front());
             m_ipcQueue->pending.pop_front();
         }
-        NifComparePane* target = AllocatePaneFor();
+        ComparePane* target = AllocatePaneFor();
         if (!target)
         {
             // At capacity (a race past the enqueue cap): put it back for the
@@ -508,7 +502,7 @@ void NifCompareView::PlaceQueuedIpcPanesNamesOnly()
             m_ipcQueue->pending.push_front(std::move(path));
             break;
         }
-        target->ShowPendingFile(path);
+        if (auto* nif = AsNif(target)) nif->ShowPendingFile(path);
         placedAny = true;
     }
     if (placedAny)
@@ -533,9 +527,7 @@ void NifCompareView::StartAllPendingLoads()
     // enqueued before any completion runs - keeping every pane's main NIF ahead
     // of the (lower-priority) folder thumbnails in the shared queue. Parsing
     // needs no archive scan, so this can (and does) run during the scan.
-    for (auto& pane : m_panes)
-        if (pane)
-            pane->StartPendingLoad();
+    ForEachNifPane([](NifComparePane& n) { n.StartPendingLoad(); });
 }
 
 void NifCompareView::ShowAllThumbnailStrips()
@@ -544,9 +536,7 @@ void NifCompareView::ShowAllThumbnailStrips()
     // their proper height right away; the mains still parse first (priority),
     // and each strip's thumbnails trail them. Called after the scan so a strip's
     // one-shot thumbnail render resolves archive textures.
-    for (auto& pane : m_panes)
-        if (pane)
-            pane->ShowThumbnailFolder();
+    ForEachNifPane([](NifComparePane& n) { n.ShowThumbnailFolder(); });
 }
 
 void NifCompareView::RefreshTexturesAfterScan()
@@ -554,9 +544,7 @@ void NifCompareView::RefreshTexturesAfterScan()
     // The archive scan landed: re-resolve every loaded pane's textures so the
     // BSA-backed ones (skipped as "not ready" while the scan ran) pop into the
     // models already on screen.
-    for (auto& pane : m_panes)
-        if (pane)
-            pane->RefreshTextures();
+    ForEachNifPane([](NifComparePane& n) { n.RefreshTextures(); });
 }
 
 bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
@@ -564,7 +552,7 @@ bool NifCompareView::OpenIntoBestPane(const std::wstring& path)
     if (path.empty())
         return false;
 
-    NifComparePane* target = AllocatePaneFor();
+    ComparePane* target = AllocatePaneFor();
     if (!target)
         return false;
 
@@ -661,7 +649,7 @@ bool NifCompareView::OnCommandEvent(const FD2D::CommandEvent& event)
     return FD2D::SplitPanel::OnCommandEvent(event);
 }
 
-NifComparePane* NifCompareView::ActivePane() const
+ComparePane* NifCompareView::ActivePane() const
 {
     for (const auto& p : m_panes)
     {
@@ -671,7 +659,7 @@ NifComparePane* NifCompareView::ActivePane() const
     return m_panes.empty() ? nullptr : m_panes.front().get();
 }
 
-void NifCompareView::SetActivePane(NifComparePane* pane)
+void NifCompareView::SetActivePane(ComparePane* pane)
 {
     if (m_activePane == pane)
         return;
@@ -683,8 +671,7 @@ void NifCompareView::SetActivePane(NifComparePane* pane)
 void NifCompareView::ApplyThumbStripEnabled(bool on)
 {
     m_thumbStripEnabled = on;
-    for (auto& p : m_panes)
-        p->SetThumbnailStripEnabled(on);
+    ForEachNifPane([on](NifComparePane& n) { n.SetThumbnailStripEnabled(on); });
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
@@ -693,8 +680,7 @@ void NifCompareView::ApplyThumbStripEnabled(bool on)
 void NifCompareView::SetThumbnailStripSize(float extent)
 {
     m_thumbStripExtent = extent;
-    for (auto& p : m_panes)
-        p->SetThumbnailStripSize(extent);
+    ForEachNifPane([extent](NifComparePane& n) { n.SetThumbnailStripSize(extent); });
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
@@ -783,7 +769,7 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
     // drag or a path-label click both count as "working in this pane".
     if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint)
     {
-        if (NifComparePane* hit = PaneAt(event.point))
+        if (ComparePane* hit = PaneAt(event.point))
             SetActivePane(hit);
     }
 
@@ -795,16 +781,11 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
         event.hasPoint &&
         m_onContextMenuRequested)
     {
-        // Per-pane menu items act on the pane under the cursor.
-        NifComparePane* hitPane = nullptr;
-        for (auto& p : m_panes)
-        {
-            if (p && FD2D::Util::RectContainsPoint(p->LayoutRect(), event.point))
-            {
-                hitPane = p.get();
-                break;
-            }
-        }
+        // Per-pane menu items act on the pane under the cursor. The app-facing
+        // menu callback is still NIF-typed; an image pane (once added) yields
+        // null here and the app shows only its non-pane items - generalized in
+        // a later step.
+        NifComparePane* hitPane = AsNif(PaneAt(event.point));
         m_onContextMenuRequested(event.point, hitPane);
         return true;
     }
@@ -853,7 +834,7 @@ namespace
     }
 }
 
-NifComparePane* NifCompareView::PaneAt(const POINT& clientPt) const
+ComparePane* NifCompareView::PaneAt(const POINT& clientPt) const
 {
     for (const auto& p : m_panes)
     {
@@ -875,7 +856,7 @@ namespace
 
 bool NifCompareView::OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual)
 {
-    NifComparePane* pane = IsNifPath(path) ? PaneAt(clientPt) : nullptr;
+    ComparePane* pane = IsNifPath(path) ? PaneAt(clientPt) : nullptr;
     if (pane == nullptr)
     {
         SetDragOverlay(nullptr, DragOverlayKind::None);
@@ -908,16 +889,16 @@ bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, con
     if (nifs.empty())
         return false;
 
-    NifComparePane* hit = PaneAt(clientPt);
+    ComparePane* hit = PaneAt(clientPt);
     if (hit == nullptr)
         return false; // matches the drag-over decline: no target, no drop
 
     // Same zone split the drag-over visual promised: right quarter inserts
     // a NEW pane right after the hovered one, the rest replaces it.
-    NifComparePane* target = hit;
+    ComparePane* target = hit;
     if (RelativeX(hit->LayoutRect(), clientPt) >= kInsertZoneRatio && m_panes.size() < kMaxPanes)
     {
-        if (NifComparePane* inserted = InsertPaneAfter(hit))
+        if (ComparePane* inserted = InsertPaneAfter(hit))
             target = inserted;
     }
 
@@ -937,7 +918,7 @@ bool NifCompareView::OnFileDropPaths(const std::vector<std::wstring>& paths, con
     return true;
 }
 
-void NifCompareView::SetDragOverlay(NifComparePane* pane, DragOverlayKind kind)
+void NifCompareView::SetDragOverlay(ComparePane* pane, DragOverlayKind kind)
 {
     if (m_dragOverlayPane == pane && m_dragOverlayKind == kind)
         return;
@@ -946,7 +927,7 @@ void NifCompareView::SetDragOverlay(NifComparePane* pane, DragOverlayKind kind)
     Invalidate();
 }
 
-NifComparePane* NifCompareView::InsertPaneAfter(NifComparePane* after)
+ComparePane* NifCompareView::InsertPaneAfter(ComparePane* after)
 {
     if (m_panes.size() >= kMaxPanes)
         return nullptr;
@@ -961,7 +942,7 @@ NifComparePane* NifCompareView::InsertPaneAfter(NifComparePane* after)
             break;
         }
     }
-    NifComparePane* raw = pane.get();
+    ComparePane* raw = pane.get();
     m_panes.insert(insertAt, std::move(pane));
     RebuildHostTree();
     return raw;
@@ -1001,7 +982,7 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     m_matTexCells.clear();
     if (!m_showMaterialPanel)
         return;
-    NifComparePane* active = ActivePane();
+    NifComparePane* active = AsNif(ActivePane());
     if (active == nullptr)
         return;
     const RenderMesh* sel = active->Viewport().SelectedMesh();
@@ -1024,17 +1005,18 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     for (const auto& p : m_panes)
     {
         ++paneNo;
-        if (!p || p->Document() == nullptr)
+        NifComparePane* n = AsNif(p);
+        if (!n || n->Document() == nullptr)
             continue;
         Column col;
-        col.pane = p.get();
-        if (p.get() == active)
+        col.pane = n;
+        if (n == active)
         {
             col.mesh = sel;
         }
         else
         {
-            const std::vector<RenderMesh>& meshes = p->Viewport().Meshes();
+            const std::vector<RenderMesh>& meshes = n->Viewport().Meshes();
             for (const RenderMesh& m : meshes)
             {
                 std::string nameLower = m.nodeName;
@@ -1548,7 +1530,7 @@ void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
 
     if (!m_showTextureInspector)
         return;
-    NifComparePane* active = ActivePane();
+    NifComparePane* active = AsNif(ActivePane());
     if (active == nullptr)
         return;
     const RenderMesh* sel = active->Viewport().SelectedMesh();
@@ -1912,7 +1894,7 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
     // pane-context hotkeys; a single pane is trivially the active one.
     if (m_panes.size() > 1)
     {
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
         {
             // The panes showing the SAME file name as the active pane get a
             // green border, so the group being compared against the focused
@@ -1978,7 +1960,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     // the 3D view on the next viewport click, restoring the shortcuts.
     if (!ctrl && !alt)
     {
-        if (NifComparePane* active = ActivePane(); active && active->ThumbnailStripHasFocus())
+        if (NifComparePane* active = AsNif(ActivePane()); active && active->ThumbnailStripHasFocus())
         {
             wchar_t ch = 0;
             if (TryGetPrintableChar(event, ch))
@@ -1992,16 +1974,16 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     switch (event.keyCode)
     {
     case 'F': // Reset View, every pane (same as the PANES button)
-        for (auto& p : m_panes) p->Viewport().ResetCamera();
+        ForEachViewport([](NifViewport& vp) { vp.ResetCamera(); });
         return true;
 
     case 'R': // reset only the active pane's camera
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             active->Viewport().ResetCamera();
         return true;
 
     case 'C': // focus the active pane's selected sub-mesh (whole scene when none)
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             active->Viewport().FocusOnSelection();
         return true;
 
@@ -2039,7 +2021,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         }
         // Ctrl+W: close the active pane (same deferred path as the
         // context menu item; a lone pane is never closed).
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             RequestClosePane(*active);
         return true;
 
@@ -2049,7 +2031,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         // Ctrl+E: show the active pane's file in Explorer (same behavior
         // as the context menu's "Open Containing Folder" - explorer's
         // /select verb needs no COM apartment).
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
         {
             const NifDocument* doc = active->Document();
             if (doc != nullptr && !doc->filePath().empty())
@@ -2061,7 +2043,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         return true;
 
     case VK_DELETE: // clear the active pane's document, keep the pane
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             active->Clear();
         return true;
 
@@ -2072,7 +2054,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
             return true;
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         std::size_t index = 0;
-        NifComparePane* active = ActivePane();
+        NifComparePane* active = AsNif(ActivePane());
         for (std::size_t i = 0; i < m_panes.size(); ++i)
         {
             if (m_panes[i].get() == active)
@@ -2098,11 +2080,11 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_NUMPAD7: m_controls->SetOrientation(ctrl ? 5 : 4); return true; // Top / Bottom
     case VK_NUMPAD5: ToggleProjection(); return true;                   // ortho <-> perspective
     case VK_DECIMAL: // Numpad . : frame the active pane's selection (whole scene when none)
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             active->Viewport().FocusOnSelection();
         return true;
     case VK_NUMPAD0: // frame the whole scene, keeping orientation (View All)
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             active->Viewport().FrameScene();
         return true;
 
@@ -2124,7 +2106,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_RETURN: // Enter: enter the selected folder / ".." tile (arrows load
                     // files immediately; folders are only selected until Enter)
     {
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
         {
             active->FocusThumbnailStrip();
             if (active->ActivateThumbnailSelection())
@@ -2134,7 +2116,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     }
 
     case VK_BACK: // Backspace: browse the active pane's strip to the parent
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
         {
             active->FocusThumbnailStrip();
             active->NavigateThumbnailUp();
@@ -2144,7 +2126,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_UP: // Ctrl+Up: same as Backspace (browse to the parent folder)
         if (ctrl)
         {
-            if (NifComparePane* active = ActivePane())
+            if (NifComparePane* active = AsNif(ActivePane()))
                 active->NavigateThumbnailUp();
             return true;
         }
@@ -2168,14 +2150,14 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         {
             NifComparePane* target = AddPane(); // nullptr at kMaxPanes
             if (target == nullptr)
-                target = ActivePane();          // fall back: reuse the active pane
+                target = AsNif(ActivePane());   // fall back: reuse the active pane
             if (target != nullptr)
             {
                 SetActivePane(target);
                 RequestOpenPane(*target);
             }
         }
-        else if (NifComparePane* target = ActivePane())
+        else if (NifComparePane* target = AsNif(ActivePane()))
         {
             RequestOpenPane(*target);
         }
@@ -2184,14 +2166,14 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_F4: // Ctrl+F4: close the active pane (FICture2's Close; == Ctrl+W)
         if (ctrl)
         {
-            if (NifComparePane* active = ActivePane())
+            if (NifComparePane* active = AsNif(ActivePane()))
                 RequestClosePane(*active);
             return true;
         }
         return false;
 
     case VK_F12:
-        if (NifComparePane* target = ActivePane())
+        if (NifComparePane* target = AsNif(ActivePane()))
         {
             if (m_onScreenshotRequested)
                 m_onScreenshotRequested(*target);
@@ -2415,13 +2397,12 @@ void NifCompareView::ApplyOrientationPreset(int index)
     // there can be up to kMaxPanes - it targets every open pane.)
     if (m_syncViews)
     {
-        if (NifComparePane* active = ActivePane())
+        if (NifComparePane* active = AsNif(ActivePane()))
             active->Viewport().AnimateToPreset(index);
     }
     else
     {
-        for (auto& p : m_panes)
-            p->Viewport().AnimateToPreset(index);
+        ForEachViewport([index](NifViewport& vp) { vp.AnimateToPreset(index); });
     }
 }
 
@@ -2433,8 +2414,7 @@ void NifCompareView::ToggleProjection()
 void NifCompareView::ApplyOrthographic(bool on)
 {
     m_orthographic = on;
-    for (auto& p : m_panes)
-        p->Viewport().SetOrthographic(on);
+    ForEachViewport([on](NifViewport& vp) { vp.SetOrthographic(on); });
     // Reflect the state in the NAVIGATION checkbox (notify=false: this IS the
     // handler's side, and Numpad 5 must not re-enter the checkbox callback).
     m_controls->SetOrthographicChecked(on, /*notify=*/false);
@@ -2475,10 +2455,10 @@ void NifCompareView::ForEachAnimTarget(Fn&& fn)
     if (m_syncAnimation)
     {
         for (auto& p : m_panes)
-            if (p)
-                fn(p->Viewport());
+            if (auto* n = AsNif(p))
+                fn(n->Viewport());
     }
-    else if (NifComparePane* active = ActivePane())
+    else if (NifComparePane* active = AsNif(ActivePane()))
     {
         fn(active->Viewport());
     }
@@ -2486,7 +2466,7 @@ void NifCompareView::ForEachAnimTarget(Fn&& fn)
 
 void NifCompareView::ToggleAnimPlayback()
 {
-    NifComparePane* active = ActivePane();
+    NifComparePane* active = AsNif(ActivePane());
     if (!active || !active->Viewport().HasAnimations())
         return;
     const bool play = !active->Viewport().AnimPlaying();
@@ -2498,7 +2478,7 @@ void NifCompareView::ToggleAnimPlayback()
 
 void NifCompareView::RefreshAnimationControls()
 {
-    NifComparePane* active = ActivePane();
+    NifComparePane* active = AsNif(ActivePane());
     NifViewport* v = active ? &active->Viewport() : nullptr;
     const bool has = (v != nullptr) && v->HasAnimations();
     m_controls->SetAnimEnabled(has);
@@ -2542,18 +2522,14 @@ void NifCompareView::TickCameraAnimations()
     // same on-demand timer; it stops the moment neither has work left.
     const unsigned long long now = GetTickCount64();
     bool any = false;
-    for (auto& p : m_panes)
+    ForEachViewport([&any, now](NifViewport& vp)
     {
-        if (!p)
-            continue;
-        if (p->Viewport().TickCameraAnimation(now))
-            any = true;
-        if (p->Viewport().TickAnimation(now))
-            any = true;
-    }
+        if (vp.TickCameraAnimation(now)) any = true;
+        if (vp.TickAnimation(now)) any = true;
+    });
     // Follow the active pane's clock on the Time slider while playing (also
     // flips the Play button back when a one-shot clip reaches its end).
-    if (NifComparePane* active = ActivePane(); active && active->Viewport().HasAnimations())
+    if (NifComparePane* active = AsNif(ActivePane()); active && active->Viewport().HasAnimations())
     {
         m_controls->SetAnimTimeValue(active->Viewport().AnimTime());
         m_controls->SetAnimPlayingDisplay(active->Viewport().AnimPlaying());
@@ -2576,7 +2552,7 @@ void NifCompareView::ProcessPendingCloses()
         if (m_panes.size() <= kMinPanes)
             break;
         std::erase_if(m_panes,
-            [&](const std::shared_ptr<NifComparePane>& p) { return p->Name() == paneName; });
+            [&](const std::shared_ptr<ComparePane>& p) { return p->Name() == paneName; });
     }
     m_pendingCloseNames.clear();
 
@@ -2591,29 +2567,25 @@ void NifCompareView::SetOnPaneOpenRequested(std::function<void(NifComparePane&)>
 void NifCompareView::SetResourceResolver(ResourceResolver* resolver)
 {
     m_resolver = resolver;
-    for (auto& p : m_panes)
-        p->SetResourceResolver(resolver);
+    ForEachNifPane([resolver](NifComparePane& n) { n.SetResourceResolver(resolver); });
 }
 
 void NifCompareView::SetTextureRepository(TextureRepository* repository)
 {
     m_textureRepository = repository;
-    for (auto& p : m_panes)
-        p->SetTextureRepository(repository);
+    ForEachNifPane([repository](NifComparePane& n) { n.SetTextureRepository(repository); });
 }
 
 void NifCompareView::SetRenderDevice(RenderDevice* device)
 {
     m_renderDevice = device;
-    for (auto& p : m_panes)
-        p->SetRenderDevice(device);
+    ForEachNifPane([device](NifComparePane& n) { n.SetRenderDevice(device); });
 }
 
 void NifCompareView::SetResourceManager(ResourceManager* manager)
 {
     m_resourceManager = manager;
-    for (auto& p : m_panes)
-        p->SetResourceManager(manager);
+    ForEachNifPane([manager](NifComparePane& n) { n.SetResourceManager(manager); });
 }
 
 void NifCompareView::OnRenderD3D(ID3D11DeviceContext* context)
@@ -2667,8 +2639,7 @@ void NifCompareView::InvalidateTextureCaches()
     // pane's resolution memo (memoized Entry pointers die with the pool).
     if (m_textureRepository != nullptr)
         m_textureRepository->Clear();
-    for (auto& p : m_panes)
-        p->InvalidateTextureCache();
+    ForEachNifPane([](NifComparePane& n) { n.InvalidateTextureCache(); });
 }
 
 void NifCompareView::SetOnBrowseGameData(std::function<void()> handler) { m_controls->SetOnBrowseGameData(std::move(handler)); }

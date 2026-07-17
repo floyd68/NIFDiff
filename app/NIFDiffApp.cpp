@@ -452,7 +452,8 @@ namespace
         }
         view.SetPaneCount(paths.size());
         for (std::size_t i = 0; i < paths.size() && i < view.PaneCount(); ++i)
-            view.Pane(i).ShowPendingFile(paths[i]); // named placeholder, no load yet
+            if (auto* nif = dynamic_cast<NifComparePane*>(&view.Pane(i)))
+                nif->ShowPendingFile(paths[i]); // named placeholder, no load yet
 
         // Restore the dragged splitter positions saved with the session (only
         // meaningful for a session restore, not command-line files).

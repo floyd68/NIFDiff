@@ -41,7 +41,7 @@ public:
     static constexpr std::size_t kDefaultInitialPanes = 2;
 
     std::size_t PaneCount() const { return m_panes.size(); }
-    NifComparePane& Pane(std::size_t index) { return *m_panes[index]; }
+    ComparePane& Pane(std::size_t index) { return *m_panes[index]; }
 
     // The ACTIVE pane (FICture2's focused-browser equivalent): set by any
     // click inside a pane, by the 1-8 number keys, and by a drop's target
@@ -49,8 +49,8 @@ public:
     // is the target for pane-context hotkeys (Ctrl+O opens into it, F12
     // screenshots it). Never null while panes exist: a stale pointer
     // (pane closed since) falls back to the first pane.
-    NifComparePane* ActivePane() const;
-    void SetActivePane(NifComparePane* pane);
+    ComparePane* ActivePane() const;
+    void SetActivePane(ComparePane* pane);
 
     // Called by the app shell when a pane's own "Open..." button (or a
     // restored/command-line file) needs a path picked/loaded. The app shell
@@ -248,7 +248,7 @@ public:
 
 private:
     // Reuse a free (empty) pane, else add one; null at kMaxPanes.
-    NifComparePane* AllocatePaneFor();
+    ComparePane* AllocatePaneFor();
     void CreateInitialPanes();
     std::shared_ptr<NifComparePane> CreatePane();
     void WirePaneCallbacks(const std::shared_ptr<NifComparePane>& pane);
@@ -269,7 +269,7 @@ private:
     void ToggleAnimPlayback();
     // Application-wide shortcuts - see OnInputEvent's comment for the map.
     bool HandleShortcutKey(const FD2D::InputEvent& event);
-    NifComparePane* PaneAt(const POINT& clientPt) const;
+    ComparePane* PaneAt(const POINT& clientPt) const;
 
     // Material data diff panel (a diff-oriented take on NifSkope's block
     // inspector): while a sub-mesh is selected in the active pane, an
@@ -301,8 +301,8 @@ private:
     // removed mid-drag cannot dangle into OnRenderOverlay.
     enum class DragOverlayKind { None, Replace, Insert };
     static constexpr float kInsertZoneRatio = 0.75f; // FICture2's insert threshold
-    void SetDragOverlay(NifComparePane* pane, DragOverlayKind kind);
-    NifComparePane* InsertPaneAfter(NifComparePane* after); // nullptr at kMaxPanes
+    void SetDragOverlay(ComparePane* pane, DragOverlayKind kind);
+    ComparePane* InsertPaneAfter(ComparePane* after); // nullptr at kMaxPanes
     // Publishes the loaded documents' file names/count into m_ipcQueue so
     // the IPC worker threads can gate incoming forwards without touching
     // the UI thread. Called wherever the document set changes.
@@ -338,9 +338,44 @@ private:
     static void CALLBACK CameraAnimThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
     bool m_cameraAnimTimerRunning = false;
 
-    std::vector<std::shared_ptr<NifComparePane>> m_panes;
-    NifComparePane* m_activePane = nullptr; // read through ActivePane() - validates + falls back
-    NifComparePane* m_dragOverlayPane = nullptr;
+    // Heterogeneous: NIF panes and (from the texture-view port) image panes,
+    // laid out together in one host tree. NIF-specific work iterates via
+    // ForEachNifPane / AsNif; anything a pane exposes generically (Load,
+    // CurrentPath, Clear, Kind) goes through the ComparePane base.
+    std::vector<std::shared_ptr<ComparePane>> m_panes;
+    ComparePane* m_activePane = nullptr; // read through ActivePane() - validates + falls back
+
+    // NIF-pane helpers for the still-NIF-centric control/sync/material code.
+    // AsNif returns nullptr for a non-NIF (e.g. image) pane; ForEachNifPane /
+    // ForEachViewport skip those, so applying a NIF render setting to "all
+    // panes" quietly ignores image panes.
+    static NifComparePane* AsNif(const std::shared_ptr<ComparePane>& p)
+    {
+        return dynamic_cast<NifComparePane*>(p.get());
+    }
+    static NifComparePane* AsNif(ComparePane* p)
+    {
+        return dynamic_cast<NifComparePane*>(p);
+    }
+    template <class Fn> void ForEachNifPane(Fn&& fn)
+    {
+        for (auto& p : m_panes)
+            if (auto* n = AsNif(p)) fn(*n);
+    }
+    template <class Fn> void ForEachViewport(Fn&& fn)
+    {
+        for (auto& p : m_panes)
+            if (auto* n = AsNif(p)) fn(n->Viewport());
+    }
+    // First NIF pane's viewport (the "apply lighting to pane 1 only" target
+    // when Sync Lighting is off), or null when no NIF pane is present.
+    NifViewport* FirstNifViewport()
+    {
+        for (auto& p : m_panes)
+            if (auto* n = AsNif(p)) return &n->Viewport();
+        return nullptr;
+    }
+    ComparePane* m_dragOverlayPane = nullptr;
     DragOverlayKind m_dragOverlayKind = DragOverlayKind::None;
     std::wstring m_hostName; // current host tree inside m_viewsArea, swapped on rebuild (see RebuildHostTree)
     std::shared_ptr<FD2D::Wnd> m_hostRoot; // same tree, kept for the split-ratio walks
