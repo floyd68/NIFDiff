@@ -169,6 +169,10 @@ private:
         float aspect = 1.0f;    // rendered thumbnail w/h (drives the card width)
         Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;   // persistent copy of the render
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;   // D2D view of tex (built lazily in the D2D pass)
+        // Staged decoded thumbnail pixels for an image tile (BGRA8 premultiplied),
+        // set on the UI thread by AcceptImageThumb; EnsureBitmap builds `bitmap`.
+        std::shared_ptr<std::vector<std::uint8_t>> imgPixels;
+        std::uint32_t imgW = 0, imgH = 0, imgPitch = 0;
     };
 
     // A background-parsed scene ready for the UI thread to render to a
@@ -217,6 +221,11 @@ private:
                                     ParsedThumb& out);
     // UI thread (completion): queue a parsed scene for OnRenderD3D to draw.
     void AcceptParsed(std::shared_ptr<ParsedThumb> parsed);
+    // UI thread: a decoded image thumbnail (BGRA8 premultiplied) for entry
+    // `index`; null `pixels` marks the decode failed. EnsureBitmap builds the
+    // D2D bitmap from it on the next paint.
+    void AcceptImageThumb(std::size_t index, std::shared_ptr<std::vector<std::uint8_t>> pixels,
+                          std::uint32_t w, std::uint32_t h, std::uint32_t pitch);
     // UI thread: render one parsed scene into m_thumbTarget and copy it into
     // the entry's persistent texture (immediate context).
     void RenderParsedThumb(Entry& entry, ParsedThumb& parsed);

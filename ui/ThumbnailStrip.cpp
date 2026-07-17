@@ -13,6 +13,11 @@
 #include <VirtualFileSystem.h>  // Floar: list a folder OR a BSA/BA2's contents
 
 #include "ImageCore/ImageDecodeDispatcher.h" // which extensions are textures
+#include "ImageCore/ImageLoader.h"           // decode image thumbnails
+#include "ImageCore/ImageRequest.h"
+#include "ImageCore/DecodedImage.h"
+
+#include <future>
 #include <algorithm>
 #include <cwctype>
 #include <filesystem>
@@ -314,10 +319,45 @@ void ThumbnailStrip::EnqueuePending()
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
         const Entry& e = m_entries[i];
-        if (e.kind != EntryKind::File || e.rendered || e.isImage)
-            continue; // image tiles aren't 3D-rendered (shown as a placeholder)
+        if (e.kind != EntryKind::File || e.rendered)
+            continue;
         const std::size_t index = i;
         const std::wstring path = e.path; // copy: the job must not touch m_entries
+
+        if (e.isImage)
+        {
+            // Image tile: decode a small thumbnail via ImageCore (CPU BGRA8 for a
+            // D2D bitmap) on the pool, then hand the pixels to the UI thread.
+            mgr->Submit(ResourceManager::Priority::Thumbnail, { self, gen },
+                [mgr, self, gen, index, path]()
+                {
+                    ImageCore::ImageRequest req(path, ImageCore::ImagePurpose::Thumbnail);
+                    req.allowGpuCompressedDDS = false; // CPU BGRA8 for D2D
+                    req.srgb = true;
+                    req.targetSize = { 256.0f, 256.0f };
+                    std::promise<ImageCore::DecodedImage> prom;
+                    auto fut = prom.get_future();
+                    ImageCore::ImageLoader::Instance().RequestDecoded(
+                        req, [&prom](HRESULT hr, ImageCore::DecodedImage img)
+                        { prom.set_value(SUCCEEDED(hr) ? std::move(img) : ImageCore::DecodedImage {}); });
+                    ImageCore::DecodedImage img = fut.get();
+
+                    std::shared_ptr<std::vector<std::uint8_t>> pixels;
+                    std::uint32_t w = 0, h = 0, pitch = 0;
+                    if (img.blocks && !img.blocks->empty() &&
+                        img.dxgiFormat == DXGI_FORMAT_B8G8R8A8_UNORM)
+                    {
+                        pixels = img.blocks;
+                        w = img.width; h = img.height;
+                        pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
+                    }
+                    mgr->PostCompletion({ self, gen },
+                        [self, index, pixels, w, h, pitch]()
+                        { self->AcceptImageThumb(index, pixels, w, h, pitch); });
+                });
+            continue;
+        }
+
         mgr->Submit(ResourceManager::Priority::Thumbnail, { self, gen },
             [mgr, self, gen, index, path]()
             {
@@ -520,6 +560,35 @@ void ThumbnailStrip::AcceptParsed(std::shared_ptr<ParsedThumb> parsed)
     Invalidate();
 }
 
+void ThumbnailStrip::AcceptImageThumb(std::size_t index, std::shared_ptr<std::vector<std::uint8_t>> pixels,
+                                      std::uint32_t w, std::uint32_t h, std::uint32_t pitch)
+{
+    // UI thread (generation-checked completion). Stage the decoded pixels; the
+    // D2D pass (EnsureBitmap) turns them into the tile bitmap.
+    if (index >= m_entries.size())
+        return;
+    Entry& e = m_entries[index];
+    if (!e.isImage)
+        return;
+    e.rendered = true; // decode attempted (success or fail) - don't re-enqueue
+    if (pixels && !pixels->empty() && w > 0 && h > 0)
+    {
+        e.imgPixels = std::move(pixels);
+        e.imgW = w;
+        e.imgH = h;
+        e.imgPitch = pitch;
+        e.aspect = std::clamp(static_cast<float>(w) / static_cast<float>(h), kMinAspect, kMaxAspect);
+        e.bitmap.Reset(); // rebuild from the new pixels on the next paint
+    }
+    else
+    {
+        e.failed = true;
+    }
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->RequestLayout(); // the card aspect may have changed
+    Invalidate();
+}
+
 void ThumbnailStrip::ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
                                          const Vector3& minB, const Vector3& maxB,
                                          ParsedThumb& out)
@@ -706,12 +775,28 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
 
 void ThumbnailStrip::EnsureBitmap(Entry& entry)
 {
-    if (entry.bitmap || !entry.tex || !m_backplate)
+    if (entry.bitmap || !m_backplate)
         return;
     ID2D1RenderTarget* rt = m_backplate->RenderTarget();
     if (!rt) return;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> dc;
     if (FAILED(rt->QueryInterface(IID_PPV_ARGS(&dc))) || !dc) return;
+
+    // Image tile: build the bitmap from the decoded CPU BGRA8 pixels.
+    if (entry.isImage)
+    {
+        if (!entry.imgPixels || entry.imgPixels->empty() || entry.imgW == 0 || entry.imgH == 0)
+            return;
+        D2D1_BITMAP_PROPERTIES1 bp {};
+        bp.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        bp.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+        dc->GetDpi(&bp.dpiX, &bp.dpiY);
+        const D2D1_SIZE_U size { entry.imgW, entry.imgH };
+        (void)dc->CreateBitmap(size, entry.imgPixels->data(), entry.imgPitch, bp, &entry.bitmap);
+        return;
+    }
+
+    if (!entry.tex) return;
     Microsoft::WRL::ComPtr<IDXGISurface> surface;
     if (FAILED(entry.tex->QueryInterface(IID_PPV_ARGS(&surface)))) return;
 
