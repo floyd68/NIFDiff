@@ -1328,7 +1328,7 @@ void NifCompareView::DrawMaterialTooltip(ID2D1RenderTarget* target,
     lines.push_back(cell.fullPath);
     if (!cell.resolved.empty())
         lines.push_back(L"→  " + cell.resolved);
-    lines.push_back(L"우클릭: 경로 복사");
+    lines.push_back(L"Right-click: copy path");
 
     // Measure the widest line to size the box.
     float textW = 0.0f;
@@ -1751,7 +1751,7 @@ bool NifCompareView::HandleMaterialPanelCopy(const POINT& pt)
             continue;
         if (FD2D::Backplate* bp = BackplateRef())
             if (bp->CopyTextToClipboard(cell.fullPath))
-                bp->ShowToast(L"텍스처 경로 복사됨");
+                bp->ShowToast(L"Texture path copied to clipboard");
         return true; // consumed even if the copy failed
     }
     return false;
