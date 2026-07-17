@@ -57,7 +57,7 @@ public:
     // restored/command-line file) needs a path picked/loaded. The app shell
     // owns the actual file dialog + NifComparePane::Load() call; this view
     // just tells it *which* pane requested it.
-    void SetOnPaneOpenRequested(std::function<void(NifComparePane&)> handler);
+    void SetOnPaneOpenRequested(std::function<void(ComparePane&)> handler);
 
     // Fires whenever any pane successfully loads a file (every open path
     // funnels through NifComparePane::Load) - the app shell uses it to keep
@@ -194,7 +194,7 @@ public:
     void OnRenderOverlay(ID2D1RenderTarget* target) override;
 
     // `clientPt` is in window client coordinates.
-    void SetOnContextMenuRequested(std::function<void(POINT clientPt, NifComparePane* pane)> handler);
+    void SetOnContextMenuRequested(std::function<void(POINT clientPt, ComparePane* pane)> handler);
 
     // F12 shortcut target: the app shell owns the Save dialog + the actual
     // write (same flow as the context menu's "Save Pane Screenshot...").
@@ -205,8 +205,8 @@ public:
     // handler (the app owns the file dialog); RequestClosePane goes through
     // the same deferred-removal path as the old per-pane Close button (see
     // QueueClosePane) so it is safe to call from a menu callback too.
-    void RequestOpenPane(NifComparePane& pane);
-    void RequestClosePane(NifComparePane& pane);
+    void RequestOpenPane(ComparePane& pane);
+    void RequestClosePane(ComparePane& pane);
 
     // Splitter-ratio persistence for the SESSION only (FICture2's
     // Capture/ApplyHorizontalSplitRatios pattern, extended to this view's
@@ -431,9 +431,9 @@ private:
     RenderDevice* m_renderDevice = nullptr;
     ResourceManager* m_resourceManager = nullptr;
 
-    std::function<void(NifComparePane&)> m_onPaneOpenRequested;
+    std::function<void(ComparePane&)> m_onPaneOpenRequested;
     std::function<void(const std::wstring&)> m_onFileOpened;
-    std::function<void(POINT, NifComparePane*)> m_onContextMenuRequested;
+    std::function<void(POINT, ComparePane*)> m_onContextMenuRequested;
     std::function<void(NifComparePane&)> m_onScreenshotRequested;
 
     bool m_showMaterialPanel = true; // 'I' toggles; shown only while something is selected

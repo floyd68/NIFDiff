@@ -529,7 +529,7 @@ void NifCompareView::RefreshExtendedMaterialControls()
     m_controls->SetPBRToggleEnabled(anyPBR);
 }
 
-void NifCompareView::RequestOpenPane(NifComparePane& pane)
+void NifCompareView::RequestOpenPane(ComparePane& pane)
 {
     if (m_onPaneOpenRequested)
         m_onPaneOpenRequested(pane);
@@ -540,7 +540,7 @@ void NifCompareView::SetOnFileOpened(std::function<void(const std::wstring&)> ha
     m_onFileOpened = std::move(handler);
 }
 
-void NifCompareView::RequestClosePane(NifComparePane& pane)
+void NifCompareView::RequestClosePane(ComparePane& pane)
 {
     QueueClosePane(pane.Name());
 }
@@ -891,12 +891,9 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
         event.hasPoint &&
         m_onContextMenuRequested)
     {
-        // Per-pane menu items act on the pane under the cursor. The app-facing
-        // menu callback is still NIF-typed; an image pane (once added) yields
-        // null here and the app shows only its non-pane items - generalized in
-        // a later step.
-        NifComparePane* hitPane = AsNif(PaneAt(event.point));
-        m_onContextMenuRequested(event.point, hitPane);
+        // Per-pane menu items act on the pane under the cursor (any kind); the
+        // app grays the NIF-only items for an image pane.
+        m_onContextMenuRequested(event.point, PaneAt(event.point));
         return true;
     }
 
@@ -2132,7 +2129,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         }
         // Ctrl+W: close the active pane (same deferred path as the
         // context menu item; a lone pane is never closed).
-        if (NifComparePane* active = AsNif(ActivePane()))
+        if (ComparePane* active = ActivePane())
             RequestClosePane(*active);
         return true;
 
@@ -2142,19 +2139,19 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         // Ctrl+E: show the active pane's file in Explorer (same behavior
         // as the context menu's "Open Containing Folder" - explorer's
         // /select verb needs no COM apartment).
-        if (NifComparePane* active = AsNif(ActivePane()))
+        if (ComparePane* active = ActivePane())
         {
-            const NifDocument* doc = active->Document();
-            if (doc != nullptr && !doc->filePath().empty())
+            const std::wstring path = active->CurrentPath();
+            if (!path.empty())
             {
-                const std::wstring args = L"/select,\"" + doc->filePath() + L"\"";
+                const std::wstring args = L"/select,\"" + path + L"\"";
                 ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
             }
         }
         return true;
 
-    case VK_DELETE: // clear the active pane's document, keep the pane
-        if (NifComparePane* active = AsNif(ActivePane()))
+    case VK_DELETE: // clear the active pane's document/image, keep the pane
+        if (ComparePane* active = ActivePane())
             active->Clear();
         return true;
 
@@ -2259,16 +2256,16 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         // Ctrl+Shift+O opens into a fresh pane (its OpenImageSplitNew).
         if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
         {
-            NifComparePane* target = AddPane(); // nullptr at kMaxPanes
+            ComparePane* target = AddPane(); // nullptr at kMaxPanes
             if (target == nullptr)
-                target = AsNif(ActivePane());   // fall back: reuse the active pane
+                target = ActivePane();       // fall back: reuse the active pane
             if (target != nullptr)
             {
                 SetActivePane(target);
                 RequestOpenPane(*target);
             }
         }
-        else if (NifComparePane* target = AsNif(ActivePane()))
+        else if (ComparePane* target = ActivePane())
         {
             RequestOpenPane(*target);
         }
@@ -2277,7 +2274,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case VK_F4: // Ctrl+F4: close the active pane (FICture2's Close; == Ctrl+W)
         if (ctrl)
         {
-            if (NifComparePane* active = AsNif(ActivePane()))
+            if (ComparePane* active = ActivePane())
                 RequestClosePane(*active);
             return true;
         }
@@ -2296,7 +2293,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     }
 }
 
-void NifCompareView::SetOnContextMenuRequested(std::function<void(POINT, NifComparePane*)> handler)
+void NifCompareView::SetOnContextMenuRequested(std::function<void(POINT, ComparePane*)> handler)
 {
     m_onContextMenuRequested = std::move(handler);
 }
@@ -2670,7 +2667,7 @@ void NifCompareView::ProcessPendingCloses()
     RebuildHostTree();
 }
 
-void NifCompareView::SetOnPaneOpenRequested(std::function<void(NifComparePane&)> handler)
+void NifCompareView::SetOnPaneOpenRequested(std::function<void(ComparePane&)> handler)
 {
     m_onPaneOpenRequested = std::move(handler);
 }

@@ -154,7 +154,7 @@ namespace
     // click landed outside every pane) - the Open/Close items that used to
     // be a per-pane button row act on exactly that pane.
     void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
-                            NifCompareView* view, NifComparePane* pane,
+                            NifCompareView* view, ComparePane* pane,
                             const std::function<void()>& onToggleThumbnailStrip = {},
                             bool thumbnailStripEnabled = true,
                             const std::function<void(float)>& onSetThumbnailSize = {},
@@ -175,9 +175,12 @@ namespace
         if (menu == nullptr)
             return;
         HMENU recentMenu = nullptr; // owned by `menu` once attached; freed with it
+        // NIF-only actions (folder, screenshot) are gated on the pane kind so
+        // an image pane still gets Open / Recent / Close.
+        NifComparePane* nifPane = dynamic_cast<NifComparePane*>(pane);
         if (view != nullptr && pane != nullptr)
         {
-            AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open .nif in This Pane...");
+            AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open in This Pane...");
 
             // Recent-files (MRU) submenu: open a previously loaded .nif into
             // this pane. Grayed out with no history yet.
@@ -199,12 +202,14 @@ namespace
             const UINT closeFlags = MF_STRING |
                 (view->PaneCount() > NifCompareView::kMinPanes ? MF_ENABLED : MF_GRAYED);
             AppendMenuW(menu, closeFlags, kMenuIdClosePane, L"&Close This Pane");
-            // Only meaningful once a file is loaded in this pane.
-            const NifDocument* doc = pane->Document();
+            // Open Containing Folder works for any loaded file (uses the pane's
+            // current path); only meaningful once something is loaded.
             const UINT folderFlags = MF_STRING |
-                (doc != nullptr && !doc->filePath().empty() ? MF_ENABLED : MF_GRAYED);
+                (!pane->CurrentPath().empty() ? MF_ENABLED : MF_GRAYED);
             AppendMenuW(menu, folderFlags, kMenuIdOpenFolder, L"Open Containing &Folder");
-            AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
+            // Screenshot renders the NIF viewport, so it's a NIF-pane action.
+            if (nifPane != nullptr)
+                AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         if (onToggleThumbnailStrip)
@@ -250,11 +255,9 @@ namespace
         {
             if (view != nullptr && pane != nullptr)
             {
+                // Route by kind (a recent image swaps this pane to an image pane).
                 const std::wstring& path = recentFiles[cmd - kMenuIdRecentBase];
-                std::string error;
-                if (!pane->Load(path, &error))
-                    MessageBoxW(hwnd, (L"Could not open the recent file:\n" + path).c_str(),
-                                L"NIFDiff", MB_OK | MB_ICONWARNING);
+                view->OpenPathInPane(pane, path);
             }
             return;
         }
@@ -272,13 +275,13 @@ namespace
             break;
 
         case kMenuIdOpenFolder:
-            if (pane != nullptr && pane->Document() != nullptr)
-                OpenContainingFolder(pane->Document()->filePath());
+            if (pane != nullptr && !pane->CurrentPath().empty())
+                OpenContainingFolder(pane->CurrentPath());
             break;
 
         case kMenuIdSaveScreenshot:
-            if (pane != nullptr)
-                SavePaneScreenshot(hwnd, *pane);
+            if (nifPane != nullptr)
+                SavePaneScreenshot(hwnd, *nifPane);
             break;
 
         case kMenuIdClearRecent:
@@ -853,7 +856,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         });
 
         compareView->SetOnContextMenuRequested(
-            [weakView, weakBackplate, iniPath](POINT clientPt, NifComparePane* pane)
+            [weakView, weakBackplate, iniPath](POINT clientPt, ComparePane* pane)
         {
             auto view = weakView.lock();
             auto bp = weakBackplate.lock();
@@ -895,7 +898,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                 SavePaneScreenshot(bp->Window(), pane);
         });
 
-        compareView->SetOnPaneOpenRequested([weakView, weakBackplate](NifComparePane& pane)
+        compareView->SetOnPaneOpenRequested([weakView, weakBackplate](ComparePane& pane)
         {
             auto bp = weakBackplate.lock();
             auto view = weakView.lock();
