@@ -8,6 +8,7 @@
 // not in per-pane buttons.
 #pragma once
 
+#include "ComparePane.h"
 #include "NifViewport.h"
 #include "ThumbnailStrip.h"
 #include "../core/NifDocument.h"
@@ -23,11 +24,14 @@
 namespace nsk
 {
 
-class NifComparePane : public FD2D::DockPanel
+class NifComparePane : public ComparePane
 {
 public:
     explicit NifComparePane(const std::wstring& name);
     ~NifComparePane();
+
+    // ComparePane: this is the 3D NIF pane.
+    Kind PaneKind() const override { return Kind::Nif; }
 
     // Load lifecycle: an async Load moves Empty/Ready -> Loading immediately
     // (viewport shows its placeholder grid) and settles on Ready or Failed when
@@ -41,7 +45,7 @@ public:
     // Full path of the .nif loaded (or loading) here, empty only when the pane
     // is truly free - the thumbnail strip follows this, and pane placement
     // treats a still-loading pane as occupied (its pending path is non-empty).
-    std::wstring CurrentPath() const
+    std::wstring CurrentPath() const override
     {
         if (m_state == LoadState::Loading || m_state == LoadState::Failed)
             return m_pendingPath;
@@ -53,8 +57,8 @@ public:
     // the pool completes. Returns false only when the path can't be accepted
     // (empty). Without a resource manager wired it loads synchronously and
     // returns the real parse result (tests / headless).
-    bool Load(const std::wstring& path, std::string* error = nullptr);
-    void Clear();
+    bool Load(const std::wstring& path, std::string* error = nullptr) override;
+    void Clear() override;
 
     // Show a target file name immediately (Loading placeholder) WITHOUT
     // starting the load. Used at startup so every pane appears named before the

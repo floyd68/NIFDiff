@@ -36,7 +36,7 @@ namespace
 }
 
 NifComparePane::NifComparePane(const std::wstring& name)
-    : FD2D::DockPanel(name)
+    : ComparePane(name)
 {
     m_viewport = std::make_shared<NifViewport>(name + L"_Viewport");
 
