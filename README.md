@@ -352,7 +352,13 @@ documents every control in detail.
   panes just like the 3D cameras do, so you can line a diffuse up against its
   normal map or two mods' versions of one texture. Compressed DDS (BC1-BC7) is
   uploaded straight to the GPU as its native block format rather than decoded to
-  RGBA on the CPU, so 4K textures open effectively instantly.
+  RGBA on the CPU, so 4K textures open effectively instantly. Once uploaded, a
+  texture's GPU view is kept in a small **path->SRV cache** (device-generation
+  aware, LRU-capped), so stepping back to a recently-viewed texture in the strip
+  re-shows it synchronously - no decode round-trip, no re-upload. (Textures
+  referenced *by a NIF* have their own richer equivalent: a process-wide
+  `TextureRepository` keyed on the engine-resolved source, so panes comparing
+  the same-named mesh share one upload of each shared texture.)
 
 ### Bethesda resource pipeline
 

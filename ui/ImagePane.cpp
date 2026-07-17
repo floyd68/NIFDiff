@@ -1,5 +1,6 @@
 #include "ImagePane.h"
 
+#include "ImageGpuResourceCache.h" // path -> SRV LRU (fast re-select)
 #include "../core/NifLog.h" // NIFLOG_* (shared app logger)
 
 #include <Backplate.h>
@@ -36,16 +37,44 @@ class ImagePane::ImageView : public FD2D::Image
 public:
     explicit ImageView(const std::wstring& name) : FD2D::Image(name) {}
 
-    // Worker thread: stash the payload and wake the UI to upload it.
-    void StagePayload(ImageCore::DecodedImage img)
+    // Worker thread: stash the payload (with the path it came from, so the GPU
+    // upload can pool its SRV by path) and wake the UI to upload it.
+    void StagePayload(ImageCore::DecodedImage img, std::wstring path)
     {
         {
             std::lock_guard<std::mutex> lk(m_mutex);
             m_payload = std::move(img);
+            m_payloadPath = std::move(path);
             m_needUpload = m_payload.blocks && !m_payload.blocks->empty();
         }
         if (m_redraw)
             m_redraw->RequestAsyncRedraw();
+    }
+
+    // UI thread: if `path`'s uploaded SRV is still cached for this device, show
+    // it synchronously and skip the decode entirely. Returns false on a miss (or
+    // before the view is attached to a device), so the caller decodes normally.
+    bool TryApplyCachedSrv(const std::wstring& path)
+    {
+        FD2D::Backplate* bp = BackplateRef();
+        if (!bp)
+            return false; // no device yet - can't trust the cache's generation
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        UINT w = 0, h = 0;
+        DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
+        if (!ImageGpuResourceCache::Instance().TryGet(
+                path, srv, w, h, fmt, bp->GetGraphicsGeneration().device))
+            return false;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_payload = {}; // no decode round-trip; nothing pending to upload
+            m_payloadPath.clear();
+            m_needUpload = false;
+        }
+        SetShaderResource(srv);
+        m_srvPath = path;
+        Invalidate();
+        return true;
     }
 
     void ClearImage()
@@ -53,11 +82,17 @@ public:
         {
             std::lock_guard<std::mutex> lk(m_mutex);
             m_payload = {};
+            m_payloadPath.clear();
             m_needUpload = false;
         }
+        m_srvPath.clear();
         Clear(); // FD2D::Image::Clear (drops the current bitmap/SRV)
         Invalidate();
     }
+
+    // Called by the owning pane so a device-loss reload (see OnGraphicsInvalidated
+    // when nothing is retained to re-upload) can re-decode the current path.
+    void SetOnNeedReload(std::function<void()> handler) { m_onNeedReload = std::move(handler); }
 
     void OnAttached(FD2D::Backplate& backplate) override
     {
@@ -69,10 +104,20 @@ public:
                                const FD2D::GraphicsGeneration& generation) override
     {
         FD2D::Image::OnGraphicsInvalidated(reason, generation);
-        // The device resource is gone; re-upload the retained payload next render.
-        std::lock_guard<std::mutex> lk(m_mutex);
-        if (m_payload.blocks && !m_payload.blocks->empty())
-            m_needUpload = true;
+        // The device resource is gone. If we still hold the decoded payload,
+        // re-upload it next render. If we were showing a cache-served SRV (no
+        // payload retained), that SRV died with the device - ask the pane to
+        // re-decode the current path (the cache self-flushed on the new gen).
+        bool needReload = false;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            if (m_payload.blocks && !m_payload.blocks->empty())
+                m_needUpload = true;
+            else if (!m_srvPath.empty())
+                needReload = true;
+        }
+        if (needReload && m_onNeedReload)
+            m_onNeedReload();
     }
 
     // D3D pass (runs first): upload a compressed BCn payload straight to a GPU
@@ -81,7 +126,8 @@ public:
     void OnRenderD3D(ID3D11DeviceContext* context) override
     {
         ImageCore::DecodedImage img;
-        if (context && TakePending(img, /*wantCompressed=*/true))
+        std::wstring path;
+        if (context && TakePending(img, path, /*wantCompressed=*/true))
         {
             Microsoft::WRL::ComPtr<ID3D11Device> device;
             context->GetDevice(&device);
@@ -104,7 +150,20 @@ public:
                 {
                     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
                     if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
+                    {
                         SetShaderResource(srv);
+                        // Pool the uploaded SRV so re-selecting this texture is a
+                        // synchronous cache hit (see TryApplyCachedSrv).
+                        m_srvPath = path;
+                        if (!path.empty())
+                        {
+                            uint64_t gen = 0;
+                            if (FD2D::Backplate* bp = BackplateRef())
+                                gen = bp->GetGraphicsGeneration().device;
+                            ImageGpuResourceCache::Instance().Put(
+                                path, srv, img.width, img.height, img.dxgiFormat, gen);
+                        }
+                    }
                 }
             }
         }
@@ -115,7 +174,8 @@ public:
     void OnRender(ID2D1RenderTarget* target) override
     {
         ImageCore::DecodedImage img;
-        if (target && TakePending(img, /*wantCompressed=*/false))
+        std::wstring path;
+        if (target && TakePending(img, path, /*wantCompressed=*/false))
         {
             const uint32_t pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
             const D2D1_SIZE_U size { img.width, img.height };
@@ -263,29 +323,51 @@ private:
         Invalidate();
     }
 
-    static bool IsBgra8(DXGI_FORMAT f)
+    // True for the block-compressed DDS formats (BC1..BC7, all TYPELESS/UNORM/
+    // SRORM/SNORM/UF16/SF16 variants). These are the DXGI 70..99 range - the ones
+    // uploaded straight to a GPU texture; everything else ImageCore hands back as
+    // BGRA8 for the D2D bitmap path. Explicit so the classification doesn't rely
+    // on "not BGRA8" catching every case.
+    static bool IsBlockCompressed(DXGI_FORMAT f)
     {
-        return f == DXGI_FORMAT_B8G8R8A8_UNORM || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        switch (f)
+        {
+        case DXGI_FORMAT_BC1_TYPELESS: case DXGI_FORMAT_BC1_UNORM: case DXGI_FORMAT_BC1_UNORM_SRGB:
+        case DXGI_FORMAT_BC2_TYPELESS: case DXGI_FORMAT_BC2_UNORM: case DXGI_FORMAT_BC2_UNORM_SRGB:
+        case DXGI_FORMAT_BC3_TYPELESS: case DXGI_FORMAT_BC3_UNORM: case DXGI_FORMAT_BC3_UNORM_SRGB:
+        case DXGI_FORMAT_BC4_TYPELESS: case DXGI_FORMAT_BC4_UNORM: case DXGI_FORMAT_BC4_SNORM:
+        case DXGI_FORMAT_BC5_TYPELESS: case DXGI_FORMAT_BC5_UNORM: case DXGI_FORMAT_BC5_SNORM:
+        case DXGI_FORMAT_BC6H_TYPELESS: case DXGI_FORMAT_BC6H_UF16: case DXGI_FORMAT_BC6H_SF16:
+        case DXGI_FORMAT_BC7_TYPELESS: case DXGI_FORMAT_BC7_UNORM: case DXGI_FORMAT_BC7_UNORM_SRGB:
+            return true;
+        default:
+            return false;
+        }
     }
 
-    // Hand the pending payload to whichever render pass matches its format
-    // (compressed BCn -> D3D pass, BGRA8 -> D2D pass), consuming the upload flag.
-    bool TakePending(ImageCore::DecodedImage& out, bool wantCompressed)
+    // Hand the pending payload (and the path it came from) to whichever render
+    // pass matches its format (compressed BCn -> D3D pass, BGRA8 -> D2D pass),
+    // consuming the upload flag.
+    bool TakePending(ImageCore::DecodedImage& out, std::wstring& outPath, bool wantCompressed)
     {
         std::lock_guard<std::mutex> lk(m_mutex);
         if (!m_needUpload || !m_payload.blocks || m_payload.blocks->empty())
             return false;
-        const bool isCompressed = !IsBgra8(m_payload.dxgiFormat);
+        const bool isCompressed = IsBlockCompressed(m_payload.dxgiFormat);
         if (isCompressed != wantCompressed)
             return false;
         out = m_payload; // shared_ptr blob: cheap copy
+        outPath = m_payloadPath;
         m_needUpload = false;
         return true;
     }
 
     std::mutex m_mutex;
     ImageCore::DecodedImage m_payload;            // retained for re-upload
+    std::wstring m_payloadPath;                   // path the payload decoded from
     bool m_needUpload = false;
+    std::wstring m_srvPath;                        // path of the SRV on screen now
+    std::function<void()> m_onNeedReload;          // device-loss re-decode request
     std::shared_ptr<FD2D::AsyncRedrawToken> m_redraw;
 
     // View transform (aspect-fit at zoom 1; pan in client pixels).
@@ -333,6 +415,15 @@ ImagePane::ImagePane(const std::wstring& name)
     m_guard = std::make_shared<LoadGuard>();
     m_guard->view = m_image;
 
+    // On device loss a cache-served SRV (no retained payload) can't be
+    // re-uploaded - re-decode the current path instead (the pooled cache has
+    // already self-flushed for the new device generation).
+    m_image->SetOnNeedReload([this]
+    {
+        if (!m_path.empty())
+            Load(m_path);
+    });
+
     UpdatePathLabel();
 }
 
@@ -365,6 +456,15 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
     }
     const uint64_t myGen = m_guard->gen.fetch_add(1, std::memory_order_relaxed) + 1;
 
+    // Fast re-select: if this texture's uploaded SRV is still pooled for the
+    // live device, show it now and skip the whole decode round-trip. Only the
+    // GPU (BCn) path is pooled, so PNG/JPG always fall through to a decode.
+    if (m_image && m_image->TryApplyCachedSrv(path))
+    {
+        Invalidate();
+        return true;
+    }
+
     ImageCore::ImageRequest request(path, ImageCore::ImagePurpose::FullResolution);
     // Keep BCn DDS compressed: upload the blocks straight to a GPU texture
     // (ImageView's D3D pass) instead of CPU-decompressing to BGRA8 - ~200x
@@ -374,7 +474,7 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
 
     std::shared_ptr<LoadGuard> guard = m_guard;
     m_handle = ImageCore::ImageLoader::Instance().RequestDecoded(
-        request, [guard, myGen](HRESULT hr, ImageCore::DecodedImage image)
+        request, [guard, myGen, path](HRESULT hr, ImageCore::DecodedImage image)
         {
             // Worker thread. Drop if superseded/stale or the pane is gone.
             if (guard->gen.load(std::memory_order_relaxed) != myGen)
@@ -382,7 +482,7 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
             if (FAILED(hr) || !image.blocks || image.blocks->empty())
                 return;
             if (auto view = guard->view.lock())
-                view->StagePayload(std::move(image));
+                view->StagePayload(std::move(image), path);
         });
 
     Invalidate();

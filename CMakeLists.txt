@@ -225,6 +225,8 @@ add_executable(NIFDiff WIN32
     ui/ComparePane.cpp
     ui/ImagePane.h
     ui/ImagePane.cpp
+    ui/ImageGpuResourceCache.h
+    ui/ImageGpuResourceCache.cpp
     ui/NifComparePane.h
     ui/NifComparePane.cpp
     ui/NifCompareSplitCoordinator.h
