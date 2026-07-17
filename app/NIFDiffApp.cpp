@@ -2,6 +2,7 @@
 
 #include "AppIpc.h"
 #include "IniStore.h"
+#include "res/resource.h"
 #include "AppSetup.h"
 #include "FileDialog.h"
 #include "../ui/IpcOpenRequest.h"
@@ -747,6 +748,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     opts.title = L"NIFDiff - NIF Model Compare";
     opts.instance = hInstance;
     opts.chrome = FD2D::ChromeStyle::Standard;
+    // App icon (title bar / taskbar / Alt+Tab). LoadImage picks the closest
+    // size from the multi-resolution .ico embedded via app/res/NIFDiff.rc;
+    // shared class icons are freed by the system at process exit.
+    opts.iconLarge = static_cast<HICON>(LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_NIFDIFF),
+        IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR | LR_SHARED));
+    opts.iconSmall = static_cast<HICON>(LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_NIFDIFF),
+        IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR | LR_SHARED));
     if (hasSavedPlacement)
     {
         opts.x = savedRect.left;

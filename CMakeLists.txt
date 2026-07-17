@@ -149,6 +149,8 @@ add_executable(NIFDiff WIN32
     app/NIFDiffApp.h
     app/NIFDiffApp.cpp
     app/main.cpp
+    app/res/resource.h
+    app/res/NIFDiff.rc
     core/NifTypes.h
     core/NifStream.h
     core/NifValue.h

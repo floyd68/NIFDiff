@@ -1,0 +1,5 @@
+#include "resource.h"
+
+// Application icon. The lowest-ID icon in the executable is also what
+// Explorer and the file-association DefaultIcon ("<exe>,0") display.
+IDI_NIFDIFF ICON "NIFDiff.ico"
