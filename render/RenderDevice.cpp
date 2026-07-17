@@ -381,6 +381,46 @@ namespace
         }
         return h;
     }
+
+    constexpr const wchar_t* kOverrideFiles[3] = { L"Lit.hlsl", L"Unlit.hlsl", L"Highlight.hlsl" };
+
+    // 0 = no override file; otherwise its last-write time in filesystem ticks.
+    long long OverrideStamp(const wchar_t* hlslName)
+    {
+        const fs::path p = FindShaderOverride(hlslName);
+        if (p.empty())
+            return 0;
+        std::error_code ec;
+        const auto t = fs::last_write_time(p, ec);
+        return ec ? 0 : static_cast<long long>(t.time_since_epoch().count());
+    }
+}
+
+void RenderDevice::CaptureShaderStamps()
+{
+    for (int i = 0; i < 3; ++i)
+        m_shaderStamps[i] = OverrideStamp(kOverrideFiles[i]);
+}
+
+bool RenderDevice::ReloadShadersIfChanged()
+{
+    if (!m_device)
+        return false;
+    bool changed = false;
+    for (int i = 0; i < 3; ++i)
+        if (OverrideStamp(kOverrideFiles[i]) != m_shaderStamps[i])
+            changed = true;
+    if (!changed)
+        return false;
+
+    // Rebuild all six shader objects + input layouts. Unchanged files fly
+    // through the bytecode cache; edited ones recompile (and a broken edit
+    // falls back to the embedded copy, so a live typo never blanks the view).
+    NIFLOG_INFO("[SHADER] override change detected - reloading shaders");
+    // CreateShaders re-captures the stamps BEFORE reading the sources, so an
+    // edit landing mid-compile still differs from the baseline next poll.
+    CreateShaders(nullptr);
+    return true;
 }
 
 std::vector<std::uint8_t> RenderDevice::LoadShaderBytecode(const wchar_t* hlslName,
@@ -461,6 +501,7 @@ bool RenderDevice::CreateShaders(std::string* error)
     // with no overrides this is the embedded bytecode, sub-millisecond.
     (void)error;
     m_shaderOverrideStatus.clear();
+    CaptureShaderStamps(); // hot-reload baseline (before reads, so a mid-read edit re-triggers)
 
     const auto litVS = LoadShaderBytecode(L"Lit.hlsl", "VSMain", "vs_5_0", g_LitVS, sizeof(g_LitVS));
     const auto litPS = LoadShaderBytecode(L"Lit.hlsl", "PSMain", "ps_5_0", g_LitPS, sizeof(g_LitPS));

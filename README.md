@@ -399,6 +399,17 @@ documents every control in detail.
   pane carries material it would affect. OFF renders the closest legacy
   interpretation instead: no POM/displacement, complex materials as
   plain env-mapped surfaces, True PBR through the vanilla lit path.
+- **User-editable shaders**: the HLSL sources ship next to the exe in
+  `shaders\` (`Lit.hlsl` - the uber-shader covering every material path -,
+  `Unlit.hlsl`, `Highlight.hlsl`). Edit one and save: the app **hot-reloads**
+  it within a second, no restart. A compile error keeps the previous shaders,
+  falls back to the built-in (embedded) copies and shows a toast with the log
+  pointer - a broken edit can never blank the viewer. Compiled bytecode is
+  cached per content hash under `%LOCALAPPDATA%\NIFDiff\shadercache\`, so only
+  the first launch after an edit pays the compile; untouched installs skip the
+  whole machinery (embedded bytecode, zero startup cost). Overrides are also
+  picked up from `%LOCALAPPDATA%\NIFDiff\shaders\` when the install dir is
+  read-only.
 - **Render-channel toggles** (CHANNELS group): switch Diffuse (white),
   Vertex Colors, Specular (legacy AND PBR GGX), Emissive, or Lighting
   (raw unlit texture) off one at a time to isolate which shading input

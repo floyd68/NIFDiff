@@ -454,6 +454,12 @@ private:
     // coords, captured while drawing the overlay for the input hit-test).
     bool m_controlsCollapsed = false;
     D2D1_RECT_F m_collapseTabRect {};
+    // Shader hot-reload: a 1s Win32 timer polls the loose override files
+    // (render is on-demand, so a frame-callback poll would stall while idle).
+    void EnsureShaderReloadTimer();
+    static void CALLBACK ShaderReloadThunk(HWND hwnd, UINT msg, UINT_PTR idEvent, DWORD dwTime);
+    void PollShaderHotReload();
+    bool m_shaderReloadTimerRunning = false;
     std::function<void(bool)> m_onControlsCollapsedChanged;
     bool m_enableTextures = true;        // render-channel toggles, mirrored onto new panes
     bool m_enableVertexColors = true;

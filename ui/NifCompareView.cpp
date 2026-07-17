@@ -2621,7 +2621,43 @@ void NifCompareView::OnRenderD3D(ID3D11DeviceContext* context)
     // Apply completed async loads before the strips render this frame.
     if (m_resourceManager)
         m_resourceManager->DrainCompletions();
+
+    // Start the shader hot-reload poll timer once a window exists (rendering
+    // is on-demand, so the poll cannot live in this frame callback - an idle
+    // window would stop noticing edits). Three file stats a second is noise.
+    EnsureShaderReloadTimer();
+
     FD2D::SplitPanel::OnRenderD3D(context); // propagate to panes/strips
+}
+
+void NifCompareView::EnsureShaderReloadTimer()
+{
+    if (m_shaderReloadTimerRunning || m_renderDevice == nullptr)
+        return;
+    FD2D::Backplate* bp = BackplateRef();
+    if (!bp || !bp->Window())
+        return;
+    m_shaderReloadTimerRunning = true;
+    // nIDEvent = this+2 (this = pending-close, this+1 = camera/anim stepper).
+    ::SetTimer(bp->Window(), reinterpret_cast<UINT_PTR>(this) + 2, 1000, &NifCompareView::ShaderReloadThunk);
+}
+
+void CALLBACK NifCompareView::ShaderReloadThunk(HWND, UINT, UINT_PTR idEvent, DWORD)
+{
+    reinterpret_cast<NifCompareView*>(idEvent - 2)->PollShaderHotReload();
+}
+
+void NifCompareView::PollShaderHotReload()
+{
+    // Saving an edit to shaders\*.hlsl shows up without restarting; a broken
+    // edit falls back to the embedded shaders and surfaces a toast.
+    if (m_renderDevice == nullptr || !m_renderDevice->ReloadShadersIfChanged())
+        return;
+    if (FD2D::Backplate* bp = BackplateRef())
+        bp->ShowToast(m_renderDevice->ShaderOverrideStatus().empty()
+            ? L"Shaders reloaded"
+            : L"Shader compile error - embedded fallback active (see log)");
+    Invalidate();
 }
 
 void NifCompareView::InvalidateTextureCaches()

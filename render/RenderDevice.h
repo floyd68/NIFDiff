@@ -104,6 +104,12 @@ public:
     // when every override compiled (or none exist). The UI surfaces this.
     const std::string& ShaderOverrideStatus() const { return m_shaderOverrideStatus; }
 
+    // Hot reload: re-stat the loose override files (call ~once a second from
+    // the render loop) and rebuild the shader objects when any appeared,
+    // changed or vanished. Returns true when a reload happened - the caller
+    // repaints and can surface ShaderOverrideStatus() for compile errors.
+    bool ReloadShadersIfChanged();
+
 private:
     bool CreateShaders(std::string* error);
     // One entry point's final bytecode: a user override from exe\shaders\ or
@@ -112,6 +118,9 @@ private:
     // pays the compile), else a copy of the embedded fxc blob. Never empty.
     std::vector<std::uint8_t> LoadShaderBytecode(const wchar_t* hlslName, const char* entry,
         const char* profile, const void* embedded, std::size_t embeddedSize);
+    // Snapshot the override files' (exists, mtime) so ReloadShadersIfChanged
+    // can detect edits/appearance/deletion cheaply.
+    void CaptureShaderStamps();
     bool CreateStateObjects();
     const GpuMesh* GetOrCreateGpuMesh(RenderMeshCache& cache, const NifGeometry* geometry);
     const GpuLineMesh* GetOrCreateLineMesh(RenderMeshCache& cache, const NifGeometry* geometry);
@@ -128,6 +137,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_unlitPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_unlitLayout;
     std::string m_shaderOverrideStatus; // see ShaderOverrideStatus()
+    // (exists, last_write_time ticks) per override file: Lit, Unlit, Highlight.
+    long long m_shaderStamps[3] { 0, 0, 0 };
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_highlightVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_highlightPS;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> m_highlightLayout;
