@@ -61,8 +61,9 @@ public:
     void Clear() override;
 
     // While the pane browses a container with nothing viewable to load, show the
-    // folder name in the path label (over the empty-grid placeholder) instead of
-    // "(no file)". Overwritten by the next real load's UpdatePathLabel().
+    // folder/archive full path in the path label (over the empty-grid
+    // placeholder) instead of "(no file)", like a loaded file's path. Overwritten
+    // by the next real load's UpdatePathLabel().
     void SetBrowsingLabel(const std::wstring& text) override
     {
         m_pathLabel->SetText(text);

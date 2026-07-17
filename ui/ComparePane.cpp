@@ -32,17 +32,6 @@ namespace
                 return true;
         return false;
     }
-
-    // The display name for a browsed folder/archive: its last path component
-    // (e.g. "browsemix", "textures.bsa"), falling back to the whole path.
-    std::wstring ContainerLabel(const std::wstring& path)
-    {
-        std::filesystem::path p(path);
-        std::wstring name = p.filename().wstring();
-        if (name.empty()) // a trailing separator hides the name in filename()
-            name = p.parent_path().filename().wstring();
-        return name.empty() ? path : name;
-    }
 }
 
 ComparePane::ComparePane(const std::wstring& name)
@@ -156,7 +145,7 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
             //    subfolder (or the Up tile) for the user to step in from.
             EnsureContent(Kind::Nif);
             m_content->Clear();
-            m_content->SetBrowsingLabel(ContainerLabel(path));
+            m_content->SetBrowsingLabel(path); // full folder/archive path, like a file's
         }
         if (m_onFileOpened) // the browsed folder/archive is the "open" (MRU/session)
             m_onFileOpened(path);
