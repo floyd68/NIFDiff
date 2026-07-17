@@ -4,6 +4,7 @@
 
 #include <Backplate.h>
 #include <Image.h>
+#include <Util.h> // FD2D::Util::RectContainsPoint
 
 #include "ImageCore/ImageLoader.h"
 #include "ImageCore/ImageRequest.h"
@@ -13,7 +14,9 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <mutex>
 #include <utility>
 
@@ -124,7 +127,105 @@ public:
         FD2D::Image::OnRender(target);
     }
 
+    // Reset to aspect-fit, unrotated. Called when a new image loads.
+    void ResetView()
+    {
+        m_zoom = 1.0f;
+        m_panX = 0.0f;
+        m_panY = 0.0f;
+        m_rotation = 0;
+        ApplyDrawState();
+    }
+
+    void RotateCW()  { m_rotation = (m_rotation + 1) & 3; ApplyDrawState(); }
+    void RotateCCW() { m_rotation = (m_rotation + 3) & 3; ApplyDrawState(); }
+    void ToggleCheckerboard() { m_checkerboard = !m_checkerboard; ApplyDrawState(); }
+
+    // Mouse wheel zooms toward the cursor; left-drag pans; double-click resets.
+    bool OnInputEvent(const FD2D::InputEvent& event) override
+    {
+        switch (event.type)
+        {
+        case FD2D::InputEventType::MouseWheel:
+            if (event.hasPoint && FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
+            {
+                const float oldZoom = m_zoom;
+                const float notches = static_cast<float>(event.wheelDelta) / 120.0f;
+                m_zoom = std::clamp(m_zoom * std::pow(1.2f, notches), kMinZoom, kMaxZoom);
+                // Keep the texel under the cursor pinned: pan' = pan + rel*(1 - z'/z),
+                // rel = cursor - content-center (content is centred + panned).
+                const D2D1_RECT_F rc = LayoutRect();
+                const float cx = (rc.left + rc.right) * 0.5f;
+                const float cy = (rc.top + rc.bottom) * 0.5f;
+                const float relX = static_cast<float>(event.point.x) - cx - m_panX;
+                const float relY = static_cast<float>(event.point.y) - cy - m_panY;
+                const float k = 1.0f - m_zoom / oldZoom;
+                m_panX += relX * k;
+                m_panY += relY * k;
+                ApplyDrawState();
+                return true;
+            }
+            return false;
+
+        case FD2D::InputEventType::MouseDown:
+            if (event.button == FD2D::MouseButton::Left && event.hasPoint &&
+                FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
+            {
+                m_panning = true;
+                m_dragStartX = event.point.x;
+                m_dragStartY = event.point.y;
+                m_panStartX = m_panX;
+                m_panStartY = m_panY;
+                return true;
+            }
+            return false;
+
+        case FD2D::InputEventType::MouseMove:
+            if (m_panning)
+            {
+                if (!event.modifiers.leftButton) { m_panning = false; return false; }
+                m_panX = m_panStartX + static_cast<float>(event.point.x - m_dragStartX);
+                m_panY = m_panStartY + static_cast<float>(event.point.y - m_dragStartY);
+                ApplyDrawState();
+                return true;
+            }
+            return false;
+
+        case FD2D::InputEventType::MouseUp:
+            if (event.button == FD2D::MouseButton::Left && m_panning)
+            {
+                m_panning = false;
+                return true;
+            }
+            return false;
+
+        case FD2D::InputEventType::MouseDoubleClick:
+            if (event.hasPoint && FD2D::Util::RectContainsPoint(LayoutRect(), event.point))
+            {
+                ResetView();
+                return true;
+            }
+            return false;
+
+        default:
+            return false;
+        }
+    }
+
 private:
+    void ApplyDrawState()
+    {
+        FD2D::Image::DrawState ds;
+        ds.zoomScale = m_zoom;
+        ds.panX = m_panX;
+        ds.panY = m_panY;
+        ds.rotationQuarters = m_rotation;
+        ds.highQualitySampling = true;
+        ds.alphaCheckerboardEnabled = m_checkerboard;
+        SetDrawState(ds);
+        Invalidate();
+    }
+
     static bool IsBgra8(DXGI_FORMAT f)
     {
         return f == DXGI_FORMAT_B8G8R8A8_UNORM || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
@@ -149,6 +250,20 @@ private:
     ImageCore::DecodedImage m_payload;            // retained for re-upload
     bool m_needUpload = false;
     std::shared_ptr<FD2D::AsyncRedrawToken> m_redraw;
+
+    // View transform (aspect-fit at zoom 1; pan in client pixels).
+    static constexpr float kMinZoom = 0.02f;
+    static constexpr float kMaxZoom = 64.0f;
+    float m_zoom = 1.0f;
+    float m_panX = 0.0f;
+    float m_panY = 0.0f;
+    int m_rotation = 0;      // 0/1/2/3 quarter-turns CW
+    bool m_checkerboard = false;
+    bool m_panning = false;
+    LONG m_dragStartX = 0;
+    LONG m_dragStartY = 0;
+    float m_panStartX = 0.0f;
+    float m_panStartY = 0.0f;
 };
 
 struct ImagePane::LoadGuard
@@ -198,6 +313,8 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
 
     m_path = path;
     UpdatePathLabel();
+    if (m_image)
+        m_image->ResetView(); // each new image starts aspect-fit, unrotated
 
     // Supersede any previous load: cancel it and bump the generation so a late
     // completion for the old path is dropped.
