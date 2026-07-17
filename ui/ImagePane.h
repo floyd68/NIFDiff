@@ -32,6 +32,14 @@ public:
     bool Load(const std::wstring& path, std::string* error = nullptr) override;
     void Clear() override;
 
+    // Texture-view controls (forwarded to the image display), driven by the
+    // view's keyboard shortcuts while an image pane is active.
+    void SetChannelMode(int mode);      // 0=RGBA,1=R,2=G,3=B,4=A; re-select toggles off
+    void ToggleAlphaCheckerboard();
+    void RotateCW();
+    void RotateCCW();
+    void ResetView();
+
 private:
     // FD2D::Image subclass that stages a decoded payload off-thread and uploads
     // it to a device bitmap at render time; defined in the .cpp.

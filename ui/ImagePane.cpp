@@ -134,12 +134,16 @@ public:
         m_panX = 0.0f;
         m_panY = 0.0f;
         m_rotation = 0;
+        m_channelMode = 0;
         ApplyDrawState();
     }
 
     void RotateCW()  { m_rotation = (m_rotation + 1) & 3; ApplyDrawState(); }
     void RotateCCW() { m_rotation = (m_rotation + 3) & 3; ApplyDrawState(); }
     void ToggleCheckerboard() { m_checkerboard = !m_checkerboard; ApplyDrawState(); }
+    // 0=RGBA, 1=R, 2=G, 3=B, 4=A. Toggling the current channel off returns to RGBA.
+    void SetChannelMode(int mode) { m_channelMode = (m_channelMode == mode) ? 0 : mode; ApplyDrawState(); }
+    int ChannelMode() const { return m_channelMode; }
 
     // Mouse wheel zooms toward the cursor; left-drag pans; double-click resets.
     bool OnInputEvent(const FD2D::InputEvent& event) override
@@ -222,6 +226,7 @@ private:
         ds.rotationQuarters = m_rotation;
         ds.highQualitySampling = true;
         ds.alphaCheckerboardEnabled = m_checkerboard;
+        ds.channelMode = m_channelMode;
         SetDrawState(ds);
         Invalidate();
     }
@@ -258,6 +263,7 @@ private:
     float m_panX = 0.0f;
     float m_panY = 0.0f;
     int m_rotation = 0;      // 0/1/2/3 quarter-turns CW
+    int m_channelMode = 0;   // 0=RGBA, 1=R, 2=G, 3=B, 4=A
     bool m_checkerboard = false;
     bool m_panning = false;
     LONG m_dragStartX = 0;
@@ -364,6 +370,12 @@ void ImagePane::Clear()
     UpdatePathLabel();
     Invalidate();
 }
+
+void ImagePane::SetChannelMode(int mode) { if (m_image) m_image->SetChannelMode(mode); }
+void ImagePane::ToggleAlphaCheckerboard() { if (m_image) m_image->ToggleCheckerboard(); }
+void ImagePane::RotateCW() { if (m_image) m_image->RotateCW(); }
+void ImagePane::RotateCCW() { if (m_image) m_image->RotateCCW(); }
+void ImagePane::ResetView() { if (m_image) m_image->ResetView(); }
 
 void ImagePane::UpdatePathLabel()
 {

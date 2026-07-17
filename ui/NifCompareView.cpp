@@ -2079,6 +2079,30 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         }
     }
 
+    // Image-pane shortcuts (active pane is an ImagePane): channel isolation
+    // (R/G/B/A as grayscale, N back to RGBA), K alpha checkerboard, [ / ]
+    // rotate, F / Home fit. Claimed before the NIF switch so the letter keys
+    // mean channels here instead of NIF display toggles.
+    if (!ctrl && !alt)
+    {
+        if (ImagePane* img = AsImage(ActivePane()))
+        {
+            switch (event.keyCode)
+            {
+            case 'R': img->SetChannelMode(1); return true;
+            case 'G': img->SetChannelMode(2); return true;
+            case 'B': img->SetChannelMode(3); return true;
+            case 'A': img->SetChannelMode(4); return true;
+            case 'N': img->SetChannelMode(0); return true;
+            case 'K': img->ToggleAlphaCheckerboard(); return true;
+            case VK_OEM_4: img->RotateCCW(); return true; // '['
+            case VK_OEM_6: img->RotateCW(); return true;  // ']'
+            case 'F': case VK_HOME: img->ResetView(); return true;
+            default: break;
+            }
+        }
+    }
+
     switch (event.keyCode)
     {
     case 'F': // Reset View, every pane (same as the PANES button)

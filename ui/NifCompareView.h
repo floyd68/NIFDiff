@@ -386,6 +386,10 @@ private:
     {
         return dynamic_cast<NifComparePane*>(p);
     }
+    static ImagePane* AsImage(ComparePane* p)
+    {
+        return dynamic_cast<ImagePane*>(p);
+    }
     template <class Fn> void ForEachNifPane(Fn&& fn)
     {
         for (auto& p : m_panes)
