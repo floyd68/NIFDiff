@@ -75,8 +75,11 @@ public:
             m_needUpload = false;
         }
         SetShaderResource(srv);
+        // The cached format tells us premultiplied (BGRA8) vs straight (BCn), so
+        // channel isolation stays correct on a cache-hit re-select too.
+        m_srvPremultiplied = !IsBlockCompressed(fmt);
         m_srvPath = path;
-        Invalidate();
+        PushDrawState();
         return true;
     }
 
@@ -88,6 +91,7 @@ public:
             m_payloadPath.clear();
             m_needUpload = false;
         }
+        m_srvPremultiplied = false;
         m_srvPath.clear();
         Clear(); // FD2D::Image::Clear (drops the current bitmap/SRV)
         Invalidate();
@@ -166,6 +170,10 @@ public:
                     if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
                     {
                         SetShaderResource(srv);
+                        // BGRA8 is premultiplied, BCn is straight - drives the
+                        // isolation shader's unpremultiply (see PushDrawState).
+                        m_srvPremultiplied = !compressed;
+                        PushDrawState();
                         // Pool the uploaded SRV so re-selecting this texture is a
                         // synchronous cache hit (see TryApplyCachedSrv) - now for
                         // BGRA8 images too, not only BCn.
@@ -341,6 +349,10 @@ private:
         ds.highQualitySampling = true;
         ds.alphaCheckerboardEnabled = m_checkerboard;
         ds.channelMode = m_channelMode;
+        // BGRA8 (CPU path) is premultiplied; BCn is straight (see DecodedImage).
+        // Tells the isolation shader to unpremultiply color channels for accurate
+        // straight-alpha readout - consistent across formats.
+        ds.sourcePremultiplied = m_srvPremultiplied;
         SetDrawState(ds);
         Invalidate();
     }
@@ -417,6 +429,7 @@ private:
     float m_panY = 0.0f;
     int m_rotation = 0;      // 0/1/2/3 quarter-turns CW
     int m_channelMode = 0;   // 0=RGBA, 1=R, 2=G, 3=B, 4=A
+    bool m_srvPremultiplied = false; // current SRV holds premultiplied color (BGRA8)
     bool m_checkerboard = false;
     bool m_panning = false;
     LONG m_dragStartX = 0;
