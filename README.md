@@ -486,8 +486,10 @@ documents every control in detail.
   `[Programs] MyToon=custom\MyToon.hlsl` plus first-match `[Bind.Mesh]` rules
   with selectors `pbr` / `complexmat` / `parallax` / `envmap` / `effect` /
   `decal` / `node:<substring>` / `tex:<substring>` / `*`. Custom programs
-  `#include "Common.hlsli"` and provide VSMain/PSMain; a rule naming a broken
-  or missing program falls back to the built-in Lit. The manifest and every
+  `#include "Common.hlsli"` and provide VSMain/PSMain. Includes are searched
+  beside the custom source and then at the `shaders\` root, so programs in
+  subfolders need no copied contract file. A rule naming a broken or missing
+  program falls back to the built-in Lit. The manifest and every
   program source hot-reload live, so e.g. `Rule1=pbr -> MyToon` restyles only
   the True PBR meshes of a compare - thumbnails included - while everything
   else keeps the stock shading. Delete the file (or leave it commented, the

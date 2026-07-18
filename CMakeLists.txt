@@ -216,6 +216,8 @@ add_executable(NIFDiff WIN32
     core/ResourceManager.cpp
     render/RenderDevice.h
     render/RenderDevice.cpp
+    render/ShaderIncludeResolver.h
+    render/ShaderIncludeResolver.cpp
     render/RenderTarget.h
     render/RenderTarget.cpp
     render/RenderMeshCache.h
@@ -458,3 +460,18 @@ if(MSVC)
     target_compile_options(VirtualFileSystemTest PRIVATE /permissive- /utf-8 /W3)
 endif()
 add_test(NAME VirtualFileSystemTest COMMAND VirtualFileSystemTest)
+
+# ---------------------------------------------------------------------------
+# ShaderIncludeResolverTest - source-directory + shader-root include lookup
+# ---------------------------------------------------------------------------
+add_executable(ShaderIncludeResolverTest
+    app/ShaderIncludeResolverTest.cpp
+    render/ShaderIncludeResolver.h
+    render/ShaderIncludeResolver.cpp
+)
+target_link_libraries(ShaderIncludeResolverTest PRIVATE d3dcompiler)
+target_compile_definitions(ShaderIncludeResolverTest PRIVATE NOMINMAX)
+if(MSVC)
+    target_compile_options(ShaderIncludeResolverTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME ShaderIncludeResolverTest COMMAND ShaderIncludeResolverTest)
