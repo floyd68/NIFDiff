@@ -4,6 +4,7 @@
 // DirectXTex handles full mip chains / cube maps / legacy DDS variants and
 // takes wide paths natively).
 #include "TextureRepository.h"
+#include "TexturePipelineState.h"
 #include "../core/ResourceResolver.h"
 #include "../core/StartupTrace.h"
 
@@ -63,8 +64,10 @@ void TextureRepository::DecodeEntry(ID3D11Device* device, Entry& entry, const Re
     // (a cube map DDS yields a TEXTURECUBE-dimension SRV, which the lit
     // shader's TextureCube at t4 requires). CreateShaderResourceView is
     // free-threaded, so this is safe on a worker thread.
+    DirectX::TexMetadata srvMetadata = metadata;
+    srvMetadata.format = DefaultTypedTextureSrvFormat(metadata.format);
     (void)DirectX::CreateShaderResourceView(
-        device, scratch.GetImages(), scratch.GetImageCount(), metadata, &entry.srv);
+        device, scratch.GetImages(), scratch.GetImageCount(), srvMetadata, &entry.srv);
 }
 
 void TextureRepository::SetResourceManager(ResourceManager* manager)
@@ -75,6 +78,30 @@ void TextureRepository::SetResourceManager(ResourceManager* manager)
     // in-flight placeholder - regardless of which viewport triggered it.
     if (manager)
         m_token = { this, manager->BumpGeneration(this) };
+}
+
+void TextureRepository::Clear()
+{
+    ++m_publicationGeneration;
+    m_bySource.clear();
+}
+
+void TextureRepository::BindDevice(ID3D11Device* device, std::uint64_t deviceGeneration)
+{
+    if (m_device == device && m_deviceGeneration == deviceGeneration)
+    {
+        return;
+    }
+    Clear();
+    m_device = device;
+    m_deviceGeneration = deviceGeneration;
+}
+
+void TextureRepository::InvalidateDevice(std::uint64_t nextDeviceGeneration)
+{
+    Clear();
+    m_device = nullptr;
+    m_deviceGeneration = nextDeviceGeneration;
 }
 
 TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relativePath,
@@ -197,6 +224,9 @@ struct TextureRepository::PendingTex
     std::string relativePath;
     std::wstring nifDirectory;
     ResourceLocation loc;
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    std::uint64_t deviceGeneration = 0;
+    std::uint64_t publicationGeneration = 0;
     Entry decoded;
 };
 
@@ -216,7 +246,6 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
     // already pooled (loaded OR a pending placeholder) is skipped, which
     // coalesces overlapping prefetches onto one decode.
     int submitted = 0;
-    ID3D11Device* const device = m_device;
     ResourceManager* const mgr = m_manager;
     ResourceResolver* const resolver = m_resolver;
     const ResourceManager::Token token = m_token;
@@ -245,9 +274,12 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
         job->relativePath = rel;
         job->nifDirectory = nifDirectory;
         job->loc = std::move(loc);
+        job->device = m_device;
+        job->deviceGeneration = m_deviceGeneration;
+        job->publicationGeneration = m_publicationGeneration;
 
         mgr->Submit(ResourceManager::Priority::TexturePrefetch, token,
-            [mgr, self, resolver, device, job, token]()
+            [mgr, self, resolver, job, token]()
             {
                 // Worker: read the bytes (archive extract, or loose-file read
                 // inside DecodeEntry) + decode + SRV create, all off the UI
@@ -259,7 +291,7 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
                     bytes.diskPath = job->loc.diskPath;
                     if (!job->loc.isLoose())
                         bytes.data = resolver->Extract(job->loc);
-                    DecodeEntry(device, job->decoded, bytes);
+                    DecodeEntry(job->device.Get(), job->decoded, bytes);
                 }
                 mgr->PostCompletion(token, [self, job]() { self->PublishPrefetched(job); });
             });
@@ -276,6 +308,16 @@ void TextureRepository::PublishPrefetched(const std::shared_ptr<PendingTex>& job
     // pooled placeholder in place. The Entry* the memos/renderer hold is
     // stable, so filling srv here makes the texture appear on the next paint
     // (PostCompletion already requested a redraw) with no memo invalidation.
+    if (!IsTexturePublicationCurrent(
+            job->device.Get(),
+            job->deviceGeneration,
+            job->publicationGeneration,
+            m_device,
+            m_deviceGeneration,
+            m_publicationGeneration))
+    {
+        return;
+    }
     auto it = m_bySource.find(job->sourceKey);
     if (it == m_bySource.end())
         return; // pool was cleared (document changed) - drop the stale result

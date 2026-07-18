@@ -179,6 +179,9 @@ public:
     // Drains the ResourceManager's completed loads once per frame (before the
     // pane/strip children render), then propagates the D3D pass to them.
     void OnRenderD3D(ID3D11DeviceContext* context) override;
+    void OnGraphicsInvalidated(
+        FD2D::GraphicsInvalidationReason reason,
+        const FD2D::GraphicsGeneration& generation) override;
 
     // Explorer drag&drop (Backplate's OLE drop target, enabled by the app
     // shell via EnsureDropTargetRegistered), FICture2's drag-controller
@@ -315,11 +318,14 @@ private:
     // the panel are consumed in OnInputEvent via the rects captured at
     // draw time.
     void DrawTextureInspector(ID2D1RenderTarget* target);
+    bool ResolveTextureInspectorPreview(
+        TextureRepository::Entry*& entry,
+        D2D1_RECT_F& previewRect,
+        float& aspect);
     // Per-pane badge distinguishing panes that show the SAME file name as
     // another pane (a synced compare group) from ones whose file is unique.
     void DrawSyncBadges(ID2D1RenderTarget* target);
     bool HandleTextureInspectorClick(const POINT& pt);
-    bool EnsureTexturePreview(ID2D1RenderTarget* target, NifComparePane& pane, const std::string& relPath);
 
     // Drag&drop internals (see the OnFileDrag comment above). The overlay
     // pane pointer is validated against m_panes at draw time, so a pane
@@ -434,6 +440,7 @@ private:
     TextureRepository* m_textureRepository = nullptr;
     RenderDevice* m_renderDevice = nullptr;
     ResourceManager* m_resourceManager = nullptr;
+    std::uint64_t m_graphicsDeviceGeneration = 0;
 
     std::function<void(ComparePane&)> m_onPaneOpenRequested;
     std::function<void(const std::wstring&)> m_onFileOpened;
@@ -478,9 +485,6 @@ private:
     bool m_showTextureInspector = false; // 'T' toggles
     int m_texInspectorRow = 0;           // which listed slot is previewed
     int m_texChannelMode = 0;            // 0=RGBA 1=R 2=G 3=B 4=A
-    std::wstring m_texPreviewKey;        // nifDir|relPath|channel of the cached bitmap
-    Microsoft::WRL::ComPtr<ID2D1Bitmap> m_texPreviewBitmap;
-    ID2D1RenderTarget* m_texPreviewOwner = nullptr; // bitmap is target-bound
     float m_texPreviewAspect = 1.0f;
     // Hit rects captured during the last draw (client coords).
     bool m_texPanelLive = false;

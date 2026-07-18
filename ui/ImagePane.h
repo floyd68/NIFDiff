@@ -1,21 +1,11 @@
-// ImagePane.h - a ComparePane that shows a decoded texture/image.
-//
-// The image counterpart to NifComparePane, so NifCompareView can lay a
-// texture pane out beside a 3D NIF pane. Decoding runs on ImageCore's own
-// worker pool (WIC + DirectXTex); the decoded CPU BGRA8 payload is marshalled
-// back to the UI thread via the backplate's async-redraw token and uploaded
-// into an FD2D::Image (which handles aspect-fit draw, and later zoom/pan).
-// Lifetime-safe: a decode completion is dropped if it is stale (generation)
-// or the pane is gone (weak_ptr), so no callback ever touches a dead pane.
+// ImagePane.h - pane metadata and controls around ImagePresentation.
 #pragma once
 
+#include "ImagePresentation.h"
 #include "PaneContent.h"
-
-#include "ImageCore/DecodedImage.h" // ImageCore::AlphaUsage (per-pane override)
 
 #include <Text.h>
 
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -52,38 +42,17 @@ public:
     ImageCore::AlphaUsage AlphaUsageOverride() const;
     ImageCore::AlphaUsage EffectiveAlphaUsage() const;
 
-    // Shareable view transform, for syncing zoom/pan/channel across image panes
-    // (the "Sync Views" compare mode). Pan is in client pixels - fine for the
-    // equal-width grid where panes are the same size.
-    struct ImageViewState
-    {
-        float zoom { 1.0f };
-        float panX { 0.0f };
-        float panY { 0.0f };
-        int rotation { 0 };
-        int channelMode { 0 };
-        bool checkerboard { false };
-    };
+    using ImageViewState = ImagePresentation::ViewState;
     ImageViewState ViewState() const;
     void SetViewState(const ImageViewState& state);          // applies without re-notifying
     void SetOnViewChanged(std::function<void(const ImageViewState&)> handler);
 
 private:
-    // FD2D::Image subclass that stages a decoded payload off-thread and uploads
-    // it to a device bitmap at render time; defined in the .cpp.
-    class ImageView;
-    // Shared with the decode callback: a generation to drop superseded/stale
-    // completions and a weak view so a completion after destruction is a no-op.
-    struct LoadGuard;
-
     void UpdatePathLabel();
 
-    std::shared_ptr<ImageView> m_image;
+    std::shared_ptr<ImagePresentation> m_image;
     std::shared_ptr<FD2D::Text> m_pathLabel;
     std::wstring m_path;
-
-    std::shared_ptr<LoadGuard> m_guard;
-    std::uint64_t m_handle = 0; // last ImageCore request; cancelled on retarget
 };
 
 } // namespace nsk

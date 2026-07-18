@@ -94,6 +94,9 @@ void NifViewport::OnAttached(FD2D::Backplate& backplate)
 
     ID3D11Device* device = backplate.D3DDevice();
     ID3D11DeviceContext* context = backplate.D3DContext();
+    const FD2D::GraphicsGeneration generation = backplate.GetGraphicsGeneration();
+    m_boundDeviceGeneration = generation.device;
+    m_boundTargetGeneration = generation.target;
     m_device = device;
     m_context = context;
     if (device && context && m_renderDevice)
@@ -102,14 +105,43 @@ void NifViewport::OnAttached(FD2D::Backplate& backplate)
         std::string err;
         // Idempotent: only the first attached viewport actually builds the
         // shared shaders/states/IBL; the rest reuse them.
-        if (m_renderDevice->EnsureInitialized(device, context, &err) && m_textureRepository != nullptr)
+        if (m_renderDevice->EnsureInitialized(device, context, generation.device, &err) &&
+            m_textureRepository != nullptr)
         {
-            m_textureRepository->SetDevice(device);
+            m_textureRepository->BindDevice(device, generation.device);
             m_textures = std::make_unique<TextureCache>(m_textureRepository);
             if (!m_nifDirectory.empty())
                 m_textures->SetNifDirectory(m_nifDirectory);
         }
     }
+}
+
+void NifViewport::OnGraphicsInvalidated(
+    FD2D::GraphicsInvalidationReason reason,
+    const FD2D::GraphicsGeneration& generation)
+{
+    const bool targetChanged = generation.target != m_boundTargetGeneration;
+    const bool deviceChanged = generation.device != m_boundDeviceGeneration;
+
+    if (targetChanged || deviceChanged)
+    {
+        m_d2dBitmap.Reset();
+        m_d2dBitmapWidth = 0;
+        m_d2dBitmapHeight = 0;
+        m_d2dBitmapTex = nullptr;
+    }
+    if (deviceChanged)
+    {
+        m_target = {};
+        m_meshCache.Clear();
+        m_textures.reset();
+        m_device = nullptr;
+        m_context = nullptr;
+    }
+
+    m_boundDeviceGeneration = generation.device;
+    m_boundTargetGeneration = generation.target;
+    FD2D::Wnd::OnGraphicsInvalidated(reason, generation);
 }
 
 void NifViewport::SetResourceResolver(ResourceResolver* resolver)
@@ -383,10 +415,36 @@ void NifViewport::UpdateFrontalLight()
     Invalidate();
 }
 
-void NifViewport::OnRenderD3D(ID3D11DeviceContext* /*context*/)
+void NifViewport::OnRenderD3D(ID3D11DeviceContext* context)
 {
-    if (!m_renderDevice || !m_renderDevice->IsInitialized() || !m_device)
+    if (!context || !m_renderDevice || !m_textureRepository || !m_backplate)
         return;
+
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    context->GetDevice(&device);
+    if (!device)
+        return;
+    const std::uint64_t deviceGeneration =
+        m_backplate->GetGraphicsGeneration().device;
+    std::string error;
+    if (!m_renderDevice->EnsureInitialized(
+            device.Get(),
+            context,
+            deviceGeneration,
+            &error))
+        return;
+
+    m_textureRepository->BindDevice(device.Get(), deviceGeneration);
+    m_device = device.Get();
+    m_context = context;
+    m_boundDeviceGeneration = deviceGeneration;
+    if (!m_textures)
+    {
+        m_textures = std::make_unique<TextureCache>(m_textureRepository);
+        if (!m_nifDirectory.empty())
+            m_textures->SetNifDirectory(m_nifDirectory);
+        PrefetchSceneTextures();
+    }
 
     D2D1_RECT_F rect = LayoutRect();
     UINT w = static_cast<UINT>((std::max)(1.0f, rect.right - rect.left));

@@ -18,13 +18,101 @@
 #include "ImageCore/ImageRequest.h"
 #include "ImageCore/DecodedImage.h"
 
-#include <future>
 #include <algorithm>
 #include <cwctype>
 #include <filesystem>
 
 namespace nsk
 {
+
+struct ThumbnailStrip::AsyncState
+{
+    ThumbnailStrip* owner = nullptr; // UI-thread access only
+};
+
+struct ThumbnailStrip::ImageThumbRequest
+{
+    enum class Phase
+    {
+        Starting,
+        Active,
+        CallbackClaimed,
+        Cancelled
+    };
+
+    ImageThumbRequest(std::uint64_t gen, std::size_t entryIndex, std::wstring source)
+        : generation(gen), index(entryIndex), path(std::move(source))
+    {
+    }
+
+    void PublishHandle(ImageCore::ImageHandle newHandle)
+    {
+        bool cancelNow = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (phase == Phase::Starting)
+            {
+                handle = newHandle;
+                phase = Phase::Active;
+            }
+            else if (phase == Phase::Cancelled)
+            {
+                cancelNow = newHandle != 0;
+            }
+        }
+        if (cancelNow)
+        {
+            ImageCore::ImageLoader::Instance().Cancel(newHandle);
+        }
+    }
+
+    bool ClaimCallback()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (phase == Phase::Cancelled)
+        {
+            return false;
+        }
+        phase = Phase::CallbackClaimed;
+        handle = 0;
+        return true;
+    }
+
+    bool FailedToStart()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return phase == Phase::Active && handle == 0;
+    }
+
+    void Cancel()
+    {
+        ImageCore::ImageHandle cancelHandle = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (phase == Phase::Cancelled)
+            {
+                return;
+            }
+            if (phase == Phase::Active)
+            {
+                cancelHandle = handle;
+            }
+            phase = Phase::Cancelled;
+            handle = 0;
+        }
+        if (cancelHandle != 0)
+        {
+            ImageCore::ImageLoader::Instance().Cancel(cancelHandle);
+        }
+    }
+
+    const std::uint64_t generation;
+    const std::size_t index;
+    const std::wstring path;
+    std::mutex mutex;
+    Phase phase { Phase::Starting };
+    ImageCore::ImageHandle handle { 0 };
+};
 
 namespace
 {
@@ -54,16 +142,35 @@ namespace
 }
 
 ThumbnailStrip::ThumbnailStrip(const std::wstring& name)
-    : FD2D::Wnd(name)
+    : FD2D::Wnd(name),
+      m_asyncState(std::make_shared<AsyncState>())
 {
+    m_asyncState->owner = this;
 }
 
 ThumbnailStrip::~ThumbnailStrip()
 {
-    // Drop the manager's generation for us so any in-flight parse job's result
-    // is discarded instead of delivered to this (now dead) strip.
+    m_asyncState->owner = nullptr;
+    InvalidatePendingRequests(true);
     if (m_manager)
-        m_manager->Cancel(this);
+        m_manager->Cancel(m_asyncState.get());
+}
+
+void ThumbnailStrip::InvalidatePendingRequests(bool clearReady)
+{
+    for (Entry& entry : m_entries)
+    {
+        std::shared_ptr<ImageThumbRequest> request = std::move(entry.imageRequest);
+        entry.pending = false;
+        if (request)
+        {
+            request->Cancel();
+        }
+    }
+    if (clearReady)
+    {
+        m_ready.clear();
+    }
 }
 
 void ThumbnailStrip::SetOrientation(Orientation o)
@@ -100,8 +207,8 @@ void ThumbnailStrip::SetEnabled(bool enabled)
         // Idle the loader: cancel queued/in-flight parses (bump our generation
         // so the manager drops their results) and drop pending scenes.
         if (m_manager)
-            m_gen = m_manager->BumpGeneration(this);
-        m_ready.clear();
+            m_gen = m_manager->BumpGeneration(m_asyncState.get());
+        InvalidatePendingRequests(true);
     }
     else
     {
@@ -162,6 +269,48 @@ void ThumbnailStrip::OnAttached(FD2D::Backplate& backplate)
     FD2D::Wnd::OnAttached(backplate);
     m_device = backplate.D3DDevice();
     m_context = backplate.D3DContext();
+    const FD2D::GraphicsGeneration generation =
+        backplate.GetGraphicsGeneration();
+    m_boundDeviceGeneration = generation.device;
+    m_boundTargetGeneration = generation.target;
+}
+
+void ThumbnailStrip::OnGraphicsInvalidated(
+    FD2D::GraphicsInvalidationReason reason,
+    const FD2D::GraphicsGeneration& generation)
+{
+    const bool targetChanged =
+        generation.target != m_boundTargetGeneration;
+    const bool deviceChanged =
+        generation.device != m_boundDeviceGeneration;
+
+    if (targetChanged || deviceChanged)
+    {
+        for (Entry& entry : m_entries)
+        {
+            entry.bitmap.Reset();
+        }
+    }
+    if (deviceChanged)
+    {
+        m_device = nullptr;
+        m_context = nullptr;
+        m_thumbTarget = {};
+        m_thumbCache.Clear();
+        for (Entry& entry : m_entries)
+        {
+            entry.tex.Reset();
+            if (entry.kind == EntryKind::File && !entry.isImage)
+            {
+                entry.rendered = false;
+                entry.failed = false;
+            }
+        }
+    }
+
+    m_boundDeviceGeneration = generation.device;
+    m_boundTargetGeneration = generation.target;
+    FD2D::Wnd::OnGraphicsInvalidated(reason, generation);
 }
 
 void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
@@ -232,8 +381,8 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
     // generation (the manager drops older jobs + results) and drop any parsed
     // scenes already queued for render.
     if (m_manager)
-        m_gen = m_manager->BumpGeneration(this);
-    m_ready.clear();
+        m_gen = m_manager->BumpGeneration(m_asyncState.get());
+    InvalidatePendingRequests(true);
 
     m_entries.clear();
     m_scroll = 0.0f;
@@ -344,37 +493,43 @@ void ThumbnailStrip::EnqueuePending()
     if (!m_enabled || !m_manager)
         return;
     ResourceManager* const mgr = m_manager;
-    ThumbnailStrip* const self = this;
     const std::uint64_t gen = m_gen;
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
-        const Entry& e = m_entries[i];
-        if (e.kind != EntryKind::File || e.rendered)
+        Entry& e = m_entries[i];
+        if (e.kind != EntryKind::File || e.rendered || e.pending)
             continue;
         const std::size_t index = i;
         const std::wstring path = e.path; // copy: the job must not touch m_entries
+        e.pending = true;
 
         if (e.isImage)
         {
-            // Image tile: decode a small thumbnail via ImageCore (CPU BGRA8 for a
-            // D2D bitmap) on the pool, then hand the pixels to the UI thread.
-            mgr->Submit(ResourceManager::Priority::Thumbnail, { self, gen },
-                [mgr, self, gen, index, path]()
+            // Submit directly to ImageCore. ResourceManager is used only to
+            // marshal the completion back to the UI thread; no pool worker is
+            // occupied waiting on ImageCore's scheduler.
+            auto request = std::make_shared<ImageThumbRequest>(gen, index, path);
+            e.imageRequest = request;
+            std::shared_ptr<AsyncState> state = m_asyncState;
+            const ResourceManager::Token token { state.get(), gen };
+
+            ImageCore::ImageRequest imageRequest(path, ImageCore::ImagePurpose::Thumbnail);
+            imageRequest.allowGpuCompressedDDS = false;
+            imageRequest.srgb = true;
+            imageRequest.targetSize = { 256.0f, 256.0f };
+            const ImageCore::ImageHandle handle =
+                ImageCore::ImageLoader::Instance().RequestDecoded(
+                imageRequest,
+                [mgr, state, request, token](HRESULT hr, ImageCore::DecodedImage img)
                 {
-                    ImageCore::ImageRequest req(path, ImageCore::ImagePurpose::Thumbnail);
-                    req.allowGpuCompressedDDS = false; // CPU BGRA8 for D2D
-                    req.srgb = true;
-                    req.targetSize = { 256.0f, 256.0f };
-                    std::promise<ImageCore::DecodedImage> prom;
-                    auto fut = prom.get_future();
-                    ImageCore::ImageLoader::Instance().RequestDecoded(
-                        req, [&prom](HRESULT hr, ImageCore::DecodedImage img)
-                        { prom.set_value(SUCCEEDED(hr) ? std::move(img) : ImageCore::DecodedImage {}); });
-                    ImageCore::DecodedImage img = fut.get();
+                    if (!request->ClaimCallback())
+                    {
+                        return;
+                    }
 
                     std::shared_ptr<std::vector<std::uint8_t>> pixels;
                     std::uint32_t w = 0, h = 0, pitch = 0;
-                    if (img.blocks && !img.blocks->empty() &&
+                    if (SUCCEEDED(hr) && img.blocks && !img.blocks->empty() &&
                         img.dxgiFormat == DXGI_FORMAT_B8G8R8A8_UNORM)
                     {
                         // Resolve the same Auto policy as ImagePane and build a
@@ -393,24 +548,47 @@ void ThumbnailStrip::EnqueuePending()
                             pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
                         }
                     }
-                    mgr->PostCompletion({ self, gen },
-                        [self, index, pixels, w, h, pitch]()
-                        { self->AcceptImageThumb(index, pixels, w, h, pitch); });
+                    mgr->PostCompletion(
+                        token,
+                        [state, request, pixels, w, h, pitch]()
+                        {
+                            if (ThumbnailStrip* owner = state->owner)
+                            {
+                                owner->AcceptImageThumb(request, pixels, w, h, pitch);
+                            }
+                        });
                 });
+            request->PublishHandle(handle);
+            if (request->FailedToStart() && e.imageRequest == request)
+            {
+                e.imageRequest.reset();
+                e.pending = false;
+                e.rendered = true;
+                e.failed = true;
+            }
             continue;
         }
 
-        mgr->Submit(ResourceManager::Priority::Thumbnail, { self, gen },
-            [mgr, self, gen, index, path]()
+        std::shared_ptr<AsyncState> state = m_asyncState;
+        const ResourceManager::Token token { state.get(), gen };
+        mgr->Submit(ResourceManager::Priority::Thumbnail, token,
+            [mgr, state, gen, index, path, token]()
             {
-                // Pool thread: self-contained parse (no `self` dereference).
+                // Pool thread: self-contained parse (no strip dereference).
                 auto parsed = std::make_shared<ParsedThumb>();
                 parsed->generation = gen;
                 parsed->index = index;
                 BuildParsedThumb(mgr, path, *parsed);
                 // UI apply, delivered only while this strip's gen is current.
-                mgr->PostCompletion({ self, gen },
-                    [self, parsed]() { self->AcceptParsed(parsed); });
+                mgr->PostCompletion(
+                    token,
+                    [state, parsed]()
+                    {
+                        if (ThumbnailStrip* owner = state->owner)
+                        {
+                            owner->AcceptParsed(parsed);
+                        }
+                    });
             });
     }
 }
@@ -596,22 +774,31 @@ void ThumbnailStrip::AcceptParsed(std::shared_ptr<ParsedThumb> parsed)
 {
     // UI thread (a manager completion, already generation-checked so this strip
     // is current). Queue it for OnRenderD3D's immediate-context render.
-    if (!parsed)
+    if (!parsed || parsed->generation != m_gen || parsed->index >= m_entries.size())
+        return;
+    Entry& entry = m_entries[parsed->index];
+    if (entry.kind != EntryKind::File || entry.isImage || !entry.pending)
         return;
     m_ready.push_back(std::move(*parsed));
     Invalidate();
 }
 
-void ThumbnailStrip::AcceptImageThumb(std::size_t index, std::shared_ptr<std::vector<std::uint8_t>> pixels,
-                                      std::uint32_t w, std::uint32_t h, std::uint32_t pitch)
+void ThumbnailStrip::AcceptImageThumb(
+    const std::shared_ptr<ImageThumbRequest>& request,
+    std::shared_ptr<std::vector<std::uint8_t>> pixels,
+    std::uint32_t w,
+    std::uint32_t h,
+    std::uint32_t pitch)
 {
     // UI thread (generation-checked completion). Stage the decoded pixels; the
     // D2D pass (EnsureBitmap) turns them into the tile bitmap.
-    if (index >= m_entries.size())
+    if (!request || request->generation != m_gen || request->index >= m_entries.size())
         return;
-    Entry& e = m_entries[index];
-    if (!e.isImage)
+    Entry& e = m_entries[request->index];
+    if (!e.isImage || e.path != request->path || e.imageRequest != request)
         return;
+    e.imageRequest.reset();
+    e.pending = false;
     e.rendered = true; // decode attempted (success or fail) - don't re-enqueue
     if (pixels && !pixels->empty() && w > 0 && h > 0)
     {
@@ -692,6 +879,7 @@ void ThumbnailStrip::ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
 
 void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
 {
+    e.pending = false;
     e.rendered = true;
     if (pt.failed || !pt.doc || pt.meshes.empty())
     {
@@ -764,6 +952,31 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
     {
         FD2D::Wnd::OnRenderD3D(context);
         return;
+    }
+    if (context && m_renderDevice && m_textureRepository && m_backplate)
+    {
+        Microsoft::WRL::ComPtr<ID3D11Device> device;
+        context->GetDevice(&device);
+        if (device)
+        {
+            const std::uint64_t deviceGeneration =
+                m_backplate->GetGraphicsGeneration().device;
+            std::string error;
+            if (m_renderDevice->EnsureInitialized(
+                    device.Get(),
+                    context,
+                    deviceGeneration,
+                    &error))
+            {
+                m_textureRepository->BindDevice(
+                    device.Get(),
+                    deviceGeneration);
+                m_device = device.Get();
+                m_context = context;
+                m_boundDeviceGeneration = deviceGeneration;
+                EnqueuePending();
+            }
+        }
     }
     // Render a few of the pool's freshly parsed scenes per frame (RenderScene
     // needs the immediate context, so it must run here on the UI thread).

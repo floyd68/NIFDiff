@@ -8,8 +8,8 @@
 
 #include <Backplate.h>
 #include <Core.h>
+#include <ShaderResourcePresenter.h>
 #include <Util.h>
-#include <DirectXTex.h>
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
@@ -1522,100 +1522,54 @@ namespace
     const wchar_t* kChannelNames[] = { L"RGB", L"R", L"G", L"B", L"A" };
 }
 
-bool NifCompareView::EnsureTexturePreview(ID2D1RenderTarget* target, NifComparePane& pane, const std::string& relPath)
+bool NifCompareView::ResolveTextureInspectorPreview(
+    TextureRepository::Entry*& entry,
+    D2D1_RECT_F& previewRect,
+    float& aspect)
 {
-    const std::wstring key = pane.Viewport().NifDirectory() + L"|" + Utf8ToWideStr(relPath)
-                           + L"|" + std::to_wstring(m_texChannelMode);
-    if (m_texPreviewBitmap && m_texPreviewOwner == target && m_texPreviewKey == key)
-        return true;
-    m_texPreviewBitmap.Reset();
-    m_texPreviewOwner = nullptr;
-    m_texPreviewKey.clear();
-
-    if (m_resolver == nullptr)
+    entry = nullptr;
+    previewRect = {};
+    aspect = 1.0f;
+    if (!m_showTextureInspector)
         return false;
-    ResourceBytes found = m_resolver->Find(relPath, pane.Viewport().NifDirectory());
-    if (!found.ok())
+    NifComparePane* active = AsNif(ActivePane());
+    if (active == nullptr)
         return false;
-
-    DirectX::TexMetadata meta {};
-    DirectX::ScratchImage img;
-    HRESULT hr = !found.diskPath.empty()
-        ? DirectX::LoadFromDDSFile(found.diskPath.c_str(), DirectX::DDS_FLAGS_NONE, &meta, img)
-        : DirectX::LoadFromDDSMemory(found.data.data(), found.data.size(), DirectX::DDS_FLAGS_NONE, &meta, img);
-    if (FAILED(hr) || meta.mipLevels == 0)
+    const RenderMesh* selected = active->Viewport().SelectedMesh();
+    if (selected == nullptr)
         return false;
-
-    // Pick the smallest mip that still fills the preview box, keeping the
-    // CPU decode cheap for 4K sources.
-    std::size_t mip = 0;
-    while (mip + 1 < meta.mipLevels &&
-           (std::max)(meta.width >> (mip + 1), meta.height >> (mip + 1)) >= 256)
-        ++mip;
-
-    const DirectX::Image* src = img.GetImage(mip, 0, 0);
-    if (src == nullptr)
+    const std::vector<TexSlotRef> slots = GatherTexSlots(selected->material);
+    if (slots.empty())
         return false;
-    DirectX::ScratchImage decoded;
-    const DirectX::Image* px = nullptr;
-    if (DirectX::IsCompressed(meta.format))
+    m_texInspectorRow = std::clamp(
+        m_texInspectorRow,
+        0,
+        static_cast<int>(slots.size()) - 1);
+
+    constexpr float rowHeight = 17.0f;
+    constexpr float padding = 8.0f;
+    constexpr float previewSize = 256.0f;
+    const D2D1_RECT_F view = LayoutRect();
+    const float panelLeft = view.left + 12.0f;
+    const float panelTop = view.top + 34.0f;
+    const float previewTop =
+        panelTop + padding + rowHeight + rowHeight * static_cast<float>(slots.size())
+        + padding * 0.5f + rowHeight;
+    previewRect =
     {
-        if (FAILED(DirectX::Decompress(*src, DXGI_FORMAT_R8G8B8A8_UNORM, decoded)))
-            return false;
-        px = decoded.GetImage(0, 0, 0);
-    }
-    else if (meta.format != DXGI_FORMAT_R8G8B8A8_UNORM)
-    {
-        if (FAILED(DirectX::Convert(*src, DXGI_FORMAT_R8G8B8A8_UNORM,
-                       DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, decoded)))
-            return false;
-        px = decoded.GetImage(0, 0, 0);
-    }
-    else
-    {
-        px = src;
-    }
-    if (px == nullptr || px->pixels == nullptr)
-        return false;
+        panelLeft + padding,
+        previewTop,
+        panelLeft + padding + previewSize,
+        previewTop + previewSize
+    };
 
-    // RGBA8 -> BGRA8 with the channel transform baked in.
-    std::vector<std::uint8_t> bgra(px->width * px->height * 4);
-    for (std::size_t y = 0; y < px->height; ++y)
+    const std::string& path = *slots[static_cast<std::size_t>(m_texInspectorRow)].path;
+    entry = active->Viewport().TextureEntry(path);
+    if (entry != nullptr && entry->width > 0 && entry->height > 0)
     {
-        const std::uint8_t* srow = px->pixels + y * px->rowPitch;
-        std::uint8_t* drow = bgra.data() + y * px->width * 4;
-        for (std::size_t x = 0; x < px->width; ++x)
-        {
-            const std::uint8_t r = srow[x * 4 + 0], g = srow[x * 4 + 1];
-            const std::uint8_t b = srow[x * 4 + 2], a = srow[x * 4 + 3];
-            std::uint8_t db = b, dg = g, dr = r;
-            switch (m_texChannelMode)
-            {
-            case 1: db = dg = dr = r; break;
-            case 2: db = dg = dr = g; break;
-            case 3: db = dg = dr = b; break;
-            case 4: db = dg = dr = a; break;
-            default: break;
-            }
-            drow[x * 4 + 0] = db;
-            drow[x * 4 + 1] = dg;
-            drow[x * 4 + 2] = dr;
-            drow[x * 4 + 3] = 0xFF;
-        }
+        aspect = static_cast<float>(entry->width) / static_cast<float>(entry->height);
     }
-
-    const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
-    if (FAILED(target->CreateBitmap(
-            D2D1::SizeU(static_cast<UINT32>(px->width), static_cast<UINT32>(px->height)),
-            bgra.data(), static_cast<UINT32>(px->width * 4), props, &m_texPreviewBitmap)))
-        return false;
-
-    m_texPreviewOwner = target;
-    m_texPreviewKey = key;
-    m_texPreviewAspect = px->height > 0
-        ? static_cast<float>(px->width) / static_cast<float>(px->height) : 1.0f;
-    return true;
+    return entry != nullptr && entry->srv != nullptr;
 }
 
 void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
@@ -1660,11 +1614,35 @@ void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
     const D2D1_RECT_F view = LayoutRect();
     const D2D1_RECT_F panel { view.left + 12.0f, view.top + 34.0f,
                               view.left + 12.0f + panelW, view.top + 34.0f + panelH };
+    TextureRepository::Entry* previewEntry = nullptr;
+    D2D1_RECT_F previewBox {};
+    float previewAspect = 1.0f;
+    const bool hasPreview =
+        ResolveTextureInspectorPreview(previewEntry, previewBox, previewAspect);
+    m_texPreviewAspect = previewAspect;
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0.05f, 0.05f, 0.06f, 0.90f), &brush)))
         return;
-    target->FillRectangle(panel, brush.Get());
+    if (hasPreview)
+    {
+        target->FillRectangle(
+            { panel.left, panel.top, panel.right, previewBox.top },
+            brush.Get());
+        target->FillRectangle(
+            { panel.left, previewBox.bottom, panel.right, panel.bottom },
+            brush.Get());
+        target->FillRectangle(
+            { panel.left, previewBox.top, previewBox.left, previewBox.bottom },
+            brush.Get());
+        target->FillRectangle(
+            { previewBox.right, previewBox.top, panel.right, previewBox.bottom },
+            brush.Get());
+    }
+    else
+    {
+        target->FillRectangle(panel, brush.Get());
+    }
     brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f));
     target->DrawRectangle(panel, brush.Get(), 1.0f);
 
@@ -1718,28 +1696,37 @@ void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
     drawCell(PathTail(previewPath, 52), panel.left + kPad, y, panelW - kPad * 2.0f, kLabelCol);
     y += kRowH;
 
-    D2D1_RECT_F box { panel.left + kPad, y, panel.left + kPad + kPreview, y + kPreview };
+    D2D1_RECT_F box = previewBox;
     m_texPreviewHitRect = box;
     brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f));
-    target->FillRectangle(box, brush.Get());
-    if (EnsureTexturePreview(target, *active, previewPath) && m_texPreviewBitmap)
+    if (hasPreview)
     {
-        // Fit the bitmap into the box, preserving aspect.
-        D2D1_RECT_F dst = box;
         if (m_texPreviewAspect >= 1.0f)
         {
-            const float h = kPreview / m_texPreviewAspect;
-            dst.top = box.top + (kPreview - h) * 0.5f;
-            dst.bottom = dst.top + h;
+            const float imageHeight = kPreview / m_texPreviewAspect;
+            const float inset = (kPreview - imageHeight) * 0.5f;
+            target->FillRectangle(
+                { box.left, box.top, box.right, box.top + inset },
+                brush.Get());
+            target->FillRectangle(
+                { box.left, box.bottom - inset, box.right, box.bottom },
+                brush.Get());
         }
         else
         {
-            const float w = kPreview * m_texPreviewAspect;
-            dst.left = box.left + (kPreview - w) * 0.5f;
-            dst.right = dst.left + w;
+            const float imageWidth = kPreview * m_texPreviewAspect;
+            const float inset = (kPreview - imageWidth) * 0.5f;
+            target->FillRectangle(
+                { box.left, box.top, box.left + inset, box.bottom },
+                brush.Get());
+            target->FillRectangle(
+                { box.right - inset, box.top, box.right, box.bottom },
+                brush.Get());
         }
-        target->DrawBitmap(m_texPreviewBitmap.Get(), dst, 1.0f,
-                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+    else
+    {
+        target->FillRectangle(box, brush.Get());
     }
     brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f));
     target->DrawRectangle(box, brush.Get(), 1.0f);
@@ -2709,6 +2696,12 @@ void NifCompareView::SetResourceManager(ResourceManager* manager)
 
 void NifCompareView::OnRenderD3D(ID3D11DeviceContext* context)
 {
+    if (FD2D::Backplate* backplate = BackplateRef())
+    {
+        m_graphicsDeviceGeneration =
+            backplate->GetGraphicsGeneration().device;
+    }
+
     // Apply completed async loads before the strips render this frame.
     if (m_resourceManager)
         m_resourceManager->DrainCompletions();
@@ -2719,6 +2712,49 @@ void NifCompareView::OnRenderD3D(ID3D11DeviceContext* context)
     EnsureShaderReloadTimer();
 
     FD2D::SplitPanel::OnRenderD3D(context); // propagate to panes/strips
+
+    TextureRepository::Entry* previewEntry = nullptr;
+    D2D1_RECT_F previewRect {};
+    float previewAspect = 1.0f;
+    FD2D::Backplate* backplate = BackplateRef();
+    if (context && backplate &&
+        ResolveTextureInspectorPreview(previewEntry, previewRect, previewAspect) &&
+        previewEntry != nullptr && previewEntry->srv)
+    {
+        FD2D::ShaderResourceDraw draw;
+        draw.layout = previewRect;
+        draw.contentWidth = previewEntry->width;
+        draw.contentHeight = previewEntry->height;
+        draw.highQualitySampling = true;
+        draw.channelMode = m_texChannelMode;
+        draw.sourceAlphaUsage = 1; // Inspector displays stored channels as opaque data.
+        (void)FD2D::DrawShaderResource(
+            context,
+            *backplate,
+            previewEntry->srv.Get(),
+            draw);
+    }
+}
+
+void NifCompareView::OnGraphicsInvalidated(
+    FD2D::GraphicsInvalidationReason reason,
+    const FD2D::GraphicsGeneration& generation)
+{
+    const bool deviceChanged =
+        generation.device != m_graphicsDeviceGeneration;
+    if (deviceChanged)
+    {
+        if (m_renderDevice)
+        {
+            m_renderDevice->ResetDeviceResources();
+        }
+        if (m_textureRepository)
+        {
+            m_textureRepository->InvalidateDevice(generation.device);
+        }
+    }
+    m_graphicsDeviceGeneration = generation.device;
+    FD2D::SplitPanel::OnGraphicsInvalidated(reason, generation);
 }
 
 void NifCompareView::EnsureShaderReloadTimer()

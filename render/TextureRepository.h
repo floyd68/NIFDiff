@@ -74,8 +74,10 @@ public:
         bool pending = false;
     };
 
-    // Set from NifViewport::OnAttached; idempotent (single shared device).
-    void SetDevice(ID3D11Device* device) { m_device = device; }
+    // Bind to the live backplate device. A generation/device change drops all
+    // pooled SRVs and invalidates async publications decoded for the old device.
+    void BindDevice(ID3D11Device* device, std::uint64_t deviceGeneration);
+    void InvalidateDevice(std::uint64_t nextDeviceGeneration);
 
     // Wire the shared load pool for async prefetch (registers a stable
     // cancellation token so completions always publish + clear in-flight).
@@ -119,7 +121,7 @@ public:
     // are skipped.
     void PrefetchAsync(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory);
 
-    void Clear() { m_bySource.clear(); }
+    void Clear();
 
 private:
     // Fills srv/format/width/height/mipLevels of `entry` from the resolved
@@ -135,6 +137,8 @@ private:
     void PublishPrefetched(const std::shared_ptr<PendingTex>& job); // UI thread
 
     ID3D11Device* m_device = nullptr;
+    std::uint64_t m_deviceGeneration { 0 };
+    std::uint64_t m_publicationGeneration { 1 };
     ResourceResolver* m_resolver = nullptr;
     ResourceManager* m_manager = nullptr;
     ResourceManager::Token m_token {}; // stable (never re-bumped) so texture completions always run

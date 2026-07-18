@@ -243,6 +243,9 @@ public:
     bool HasPBRMaterials() const;
 
     void OnAttached(FD2D::Backplate& backplate) override;
+    void OnGraphicsInvalidated(
+        FD2D::GraphicsInvalidationReason reason,
+        const FD2D::GraphicsGeneration& generation) override;
     FD2D::Size Measure(FD2D::Size available) override;
     void OnRenderD3D(ID3D11DeviceContext* context) override;
     void OnRender(ID2D1RenderTarget* target) override;
@@ -338,6 +341,8 @@ private:
     RenderMeshCache m_meshCache;
     ID3D11Device* m_device = nullptr;
     ID3D11DeviceContext* m_context = nullptr;
+    std::uint64_t m_boundDeviceGeneration = 0;
+    std::uint64_t m_boundTargetGeneration = 0;
     std::unique_ptr<TextureCache> m_textures;
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;

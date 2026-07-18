@@ -39,6 +39,7 @@ cmake_minimum_required(VERSION 3.21)
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.cmake")
 
 project(NIFDiff VERSION ${NIFDIFF_VERSION_MAJOR}.${NIFDIFF_VERSION_MINOR} LANGUAGES C CXX)
+enable_testing()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -217,6 +218,8 @@ add_executable(NIFDiff WIN32
     render/RenderTarget.cpp
     render/RenderMeshCache.h
     render/TextureCache.h
+    render/TexturePipelineState.h
+    render/TexturePipelineState.cpp
     render/TextureRepository.h
     render/TextureRepository.cpp
     ui/IpcOpenRequest.h
@@ -227,6 +230,8 @@ add_executable(NIFDiff WIN32
     ui/ComparePane.cpp
     ui/ImageAlphaPresentation.h
     ui/ImageAlphaPresentation.cpp
+    ui/ImagePresentation.h
+    ui/ImagePresentation.cpp
     ui/ImagePane.h
     ui/ImagePane.cpp
     ui/ImageGpuResourceCache.h
@@ -392,3 +397,20 @@ endif()
 if(MSVC)
     target_compile_options(ResourceResolveTest PRIVATE /permissive- /utf-8 /W3)
 endif()
+
+# ---------------------------------------------------------------------------
+# TexturePipelineTest - pure format/publication-generation invariants
+# ---------------------------------------------------------------------------
+add_executable(TexturePipelineTest
+    app/TexturePipelineTest.cpp
+    render/TexturePipelineState.h
+    render/TexturePipelineState.cpp
+)
+target_include_directories(TexturePipelineTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/render
+)
+target_compile_definitions(TexturePipelineTest PRIVATE NOMINMAX)
+if(MSVC)
+    target_compile_options(TexturePipelineTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME TexturePipelineTest COMMAND TexturePipelineTest)

@@ -123,23 +123,42 @@ namespace
     }
 }
 
-bool RenderDevice::EnsureInitialized(ID3D11Device* device, ID3D11DeviceContext* context, std::string* error)
+void RenderDevice::ResetDeviceResources()
 {
-    if (m_device) // already built by an earlier viewport attach; shared
+    RenderDevice empty;
+    *this = std::move(empty);
+}
+
+bool RenderDevice::EnsureInitialized(
+    ID3D11Device* device,
+    ID3D11DeviceContext* context,
+    std::uint64_t deviceGeneration,
+    std::string* error)
+{
+    if (m_device && m_device.Get() == device && m_deviceGeneration == deviceGeneration)
         return true;
     if (!device || !context)
     {
         if (error) *error = "RenderDevice::EnsureInitialized: null device/context";
         return false;
     }
+    if (m_device)
+    {
+        ResetDeviceResources();
+    }
     m_device = device;
     m_context = context;
+    m_deviceGeneration = deviceGeneration;
 
     if (!CreateShaders(error))
+    {
+        ResetDeviceResources();
         return false;
+    }
     if (!CreateStateObjects())
     {
         if (error) *error = "RenderDevice: failed to create state objects";
+        ResetDeviceResources();
         return false;
     }
 

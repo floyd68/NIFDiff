@@ -88,8 +88,14 @@ public:
     // device+context; later calls (each viewport's OnAttached passes the same
     // backplate device) are no-ops. Returns false only if the first build
     // fails.
-    bool EnsureInitialized(ID3D11Device* device, ID3D11DeviceContext* context, std::string* error = nullptr);
+    bool EnsureInitialized(
+        ID3D11Device* device,
+        ID3D11DeviceContext* context,
+        std::uint64_t deviceGeneration,
+        std::string* error = nullptr);
+    void ResetDeviceResources();
     bool IsInitialized() const { return m_device != nullptr; }
+    std::uint64_t DeviceGeneration() const { return m_deviceGeneration; }
 
     ID3D11Device* Device() const { return m_device.Get(); }
     ID3D11DeviceContext* Context() const { return m_context.Get(); }
@@ -163,6 +169,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Device> m_device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
+    std::uint64_t m_deviceGeneration { 0 };
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_litVS;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_litPS;

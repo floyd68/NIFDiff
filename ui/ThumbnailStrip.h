@@ -148,12 +148,18 @@ public:
     std::wstring TooltipText() const override;
 
     void OnAttached(FD2D::Backplate& backplate) override;
+    void OnGraphicsInvalidated(
+        FD2D::GraphicsInvalidationReason reason,
+        const FD2D::GraphicsGeneration& generation) override;
     FD2D::Size Measure(FD2D::Size available) override;
     void OnRenderD3D(ID3D11DeviceContext* context) override;
     void OnRender(ID2D1RenderTarget* target) override;
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
 private:
+    struct AsyncState;
+    struct ImageThumbRequest;
+
     // File = a .nif rendered to a 3D thumbnail; Folder = a subfolder icon that
     // navigates the strip into it; Up = the ".." tile to the parent folder.
     enum class EntryKind { File, Folder, Up };
@@ -168,6 +174,7 @@ private:
         std::wstring path;      // File: .nif/image path; Folder/Up: target directory
         std::wstring name;      // label (file/folder name, or "..")
         bool rendered = false;  // 3D pass produced a texture (File only)
+        bool pending = false;   // queued/in flight; prevents duplicate scheduling
         bool failed = false;    // parse/build failed - show a placeholder
         // Rendered while the background archive scan was still running, so
         // BSA-backed textures were "not resolved yet" and baked absent. The
@@ -180,6 +187,7 @@ private:
         // set on the UI thread by AcceptImageThumb; EnsureBitmap builds `bitmap`.
         std::shared_ptr<std::vector<std::uint8_t>> imgPixels;
         std::uint32_t imgW = 0, imgH = 0, imgPitch = 0;
+        std::shared_ptr<ImageThumbRequest> imageRequest;
     };
 
     // A background-parsed scene ready for the UI thread to render to a
@@ -231,8 +239,10 @@ private:
     // UI thread: a decoded image thumbnail (BGRA8 premultiplied) for entry
     // `index`; null `pixels` marks the decode failed. EnsureBitmap builds the
     // D2D bitmap from it on the next paint.
-    void AcceptImageThumb(std::size_t index, std::shared_ptr<std::vector<std::uint8_t>> pixels,
+    void AcceptImageThumb(const std::shared_ptr<ImageThumbRequest>& request,
+                          std::shared_ptr<std::vector<std::uint8_t>> pixels,
                           std::uint32_t w, std::uint32_t h, std::uint32_t pitch);
+    void InvalidatePendingRequests(bool clearReady);
     // UI thread: render one parsed scene into m_thumbTarget and copy it into
     // the entry's persistent texture (immediate context).
     void RenderParsedThumb(Entry& entry, ParsedThumb& parsed);
@@ -267,6 +277,8 @@ private:
     ResourceManager* m_manager = nullptr; // shared async load pool
     ID3D11Device* m_device = nullptr;
     ID3D11DeviceContext* m_context = nullptr;
+    std::uint64_t m_boundDeviceGeneration = 0;
+    std::uint64_t m_boundTargetGeneration = 0;
 
     RenderTarget m_thumbTarget;   // reused for every thumbnail render
     RenderMeshCache m_thumbCache; // cleared per model
@@ -299,6 +311,7 @@ private:
     // only touched on the UI thread (completions + OnRenderD3D), so no lock.
     std::uint64_t m_gen = 0;
     std::deque<ParsedThumb> m_ready;
+    std::shared_ptr<AsyncState> m_asyncState;
 
     std::function<void(const std::wstring&)> m_onActivated;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_textFormat;
