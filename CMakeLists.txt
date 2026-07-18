@@ -478,7 +478,7 @@ endif()
 add_test(NAME RenderSurfaceCaptureTest COMMAND RenderSurfaceCaptureTest)
 
 # ---------------------------------------------------------------------------
-# VirtualFileSystemTest - archive-member existence used by session restore
+# VirtualFileSystemTest - archive existence + root/subdirectory listing
 # ---------------------------------------------------------------------------
 add_executable(VirtualFileSystemTest
     app/VirtualFileSystemTest.cpp

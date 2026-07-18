@@ -79,9 +79,18 @@ public:
     // listing its contents with no file highlighted. Used when the user opens an
     // archive: the strip descends into it so they can pick a mesh inside. A
     // regular folder lists its .nif files + subfolders as usual.
-    void ShowForFolder(const std::wstring& folder);
+    // Returns true when the listing was applied synchronously. Archive listings
+    // use ResourceManager so walking a very large file table cannot stall the UI;
+    // they return false and fire SetOnListingCompleted after the current
+    // generation is applied.
+    bool ShowForFolder(const std::wstring& folder);
     const std::wstring& Folder() const { return m_folder; }
     bool HasContent() const { return !m_entries.empty(); }
+    bool IsListing() const { return m_listing; }
+    void SetOnListingCompleted(std::function<void(const std::wstring&)> handler)
+    {
+        m_onListingCompleted = std::move(handler);
+    }
 
     // Pick a sensible default tile after listing a container (see
     // ComparePane::Load). Returns the FIRST viewable file's path (nif/texture)
@@ -163,10 +172,12 @@ private:
     // File = a .nif rendered to a 3D thumbnail; Folder = a subfolder icon that
     // navigates the strip into it; Up = the ".." tile to the parent folder.
     enum class EntryKind { File, Folder, Up };
+    enum class ArchiveKind { None, Bsa, Ba2, Zip, SevenZip, Rar, Other };
 
     struct Entry
     {
         EntryKind kind = EntryKind::File;
+        ArchiveKind archiveKind = ArchiveKind::None; // Folder entries only; None = ordinary directory
         // A File entry that is a texture (dds/png/...) rather than a .nif: shown
         // with an image placeholder tile and opened into an image pane on click,
         // never 3D-rendered. (Decoded thumbnails come in a later step.)
@@ -188,6 +199,13 @@ private:
         std::shared_ptr<std::vector<std::uint8_t>> imgPixels;
         std::uint32_t imgW = 0, imgH = 0, imgPitch = 0;
         std::shared_ptr<ImageThumbRequest> imageRequest;
+    };
+
+    struct DirectoryListing
+    {
+        std::uint64_t generation = 0;
+        std::wstring folder;
+        std::vector<Entry> entries;
     };
 
     // A background-parsed scene ready for the UI thread to render to a
@@ -214,9 +232,19 @@ private:
     // Args are taken BY VALUE: the first thing this does is clear m_entries, so
     // a caller passing an entry's own path/name (a folder/Up tile) would be
     // handing us a reference into the vector we are about to free.
-    void NavigateTo(std::wstring folder, std::wstring selectPath);
-    // Draws a folder / up-arrow glyph inside rc for Folder/Up tiles.
-    void DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const;
+    bool NavigateTo(std::wstring folder, std::wstring selectPath);
+    static std::shared_ptr<DirectoryListing> BuildDirectoryListing(
+        std::uint64_t generation,
+        std::wstring folder);
+    void ApplyDirectoryListing(
+        std::shared_ptr<DirectoryListing> listing,
+        bool notifyCompletion);
+    // Draws an up-arrow, ordinary folder, or format-colored archive package.
+    void DrawFolderIcon(
+        ID2D1RenderTarget* target,
+        const D2D1_RECT_F& rc,
+        bool up,
+        ArchiveKind archiveKind) const;
     // Photo glyph drawn on an image (texture) placeholder tile.
     void DrawImageIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc) const;
 
@@ -296,6 +324,7 @@ private:
     float m_scroll = 0.0f;          // offset along the scroll axis (Y or X)
     bool m_autoCenter = false;      // keep the selection centered as cards settle, until the user scrolls
     int m_hoverCard = -1;
+    bool m_listing = false;         // an archive directory is being enumerated on the shared pool
 
     // Drag-to-resize state (grip on the strip's inner edge).
     bool m_resizing = false;
@@ -314,7 +343,9 @@ private:
     std::shared_ptr<AsyncState> m_asyncState;
 
     std::function<void(const std::wstring&)> m_onActivated;
+    std::function<void(const std::wstring&)> m_onListingCompleted;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_textFormat;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_archiveBadgeFormat;
 };
 
 } // namespace nsk

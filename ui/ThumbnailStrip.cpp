@@ -208,12 +208,22 @@ void ThumbnailStrip::SetEnabled(bool enabled)
         // so the manager drops their results) and drop pending scenes.
         if (m_manager)
             m_gen = m_manager->BumpGeneration(m_asyncState.get());
+        m_listing = false;
         InvalidatePendingRequests(true);
     }
     else
     {
-        // Resume: re-submit any files not rendered before we were turned off.
-        EnqueuePending();
+        // A disabled strip may have cancelled an archive enumeration before it
+        // produced entries. Re-list that folder; otherwise only the thumbnail
+        // work needs to resume.
+        if (m_entries.empty() && !m_folder.empty())
+        {
+            NavigateTo(m_folder, m_currentFile);
+        }
+        else
+        {
+            EnqueuePending();
+        }
     }
     // Toggling presence changes our measured extent (0 when off), so relayout.
     if (FD2D::Backplate* bp = BackplateRef())
@@ -324,7 +334,7 @@ void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
     }
     std::filesystem::path p(nifPath);
     const std::wstring dir = p.has_parent_path() ? p.parent_path().wstring() : std::wstring();
-    if (dir == m_folder && !m_entries.empty())
+    if (dir == m_folder && (m_listing || !m_entries.empty()))
     {
         // Same folder already listed - just move the highlight, no re-list.
         if (m_currentFile != nifPath)
@@ -338,12 +348,12 @@ void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
     NavigateTo(dir, nifPath);
 }
 
-void ThumbnailStrip::ShowForFolder(const std::wstring& folder)
+bool ThumbnailStrip::ShowForFolder(const std::wstring& folder)
 {
     if (folder.empty())
-        return;
+        return true;
     // List the folder/archive itself (not a file's parent), no highlight.
-    NavigateTo(folder, std::wstring());
+    return NavigateTo(folder, std::wstring());
 }
 
 std::wstring ThumbnailStrip::PickDefaultEntry()
@@ -375,7 +385,7 @@ std::wstring ThumbnailStrip::PickDefaultEntry()
     return std::wstring();
 }
 
-void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
+bool ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
 {
     // Cancel in-flight/queued parses from the previous folder: bump our
     // generation (the manager drops older jobs + results) and drop any parsed
@@ -392,85 +402,210 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
     m_folder = folder;
     m_currentFile = selectPath;
     m_thumbCache.Clear();
+    m_listing = false;
+
+    if (!folder.empty())
+    {
+        auto vpOpt = Floar::VirtualPath::Parse(folder);
+        const bool isArchivePath = vpOpt && (vpOpt->IsArchiveFile() || vpOpt->IsInArchive());
+
+        // Archive readers expose a flat entry table. Even with the reader cache,
+        // finding one directory's immediate children walks that entire table
+        // (about 95 ms for a 42k-entry BA2), so never do it on the UI thread.
+        if (isArchivePath && m_manager)
+        {
+            m_listing = true;
+            ResourceManager* const mgr = m_manager;
+            std::shared_ptr<AsyncState> state = m_asyncState;
+            const ResourceManager::Token token { state.get(), m_gen };
+            const std::uint64_t generation = m_gen;
+            mgr->Submit(
+                ResourceManager::Priority::OtherPane,
+                token,
+                [mgr, state, token, generation,
+                 folder = std::move(folder)]() mutable
+                {
+                    std::shared_ptr<DirectoryListing> listing =
+                        BuildDirectoryListing(
+                            generation,
+                            std::move(folder));
+                    mgr->PostCompletion(
+                        token,
+                        [state, listing = std::move(listing)]() mutable
+                        {
+                            if (ThumbnailStrip* owner = state->owner)
+                            {
+                                owner->ApplyDirectoryListing(
+                                    std::move(listing),
+                                    true);
+                            }
+                        });
+                });
+
+            if (FD2D::Backplate* bp = BackplateRef())
+            {
+                bp->RequestLayout();
+            }
+            Invalidate();
+            return false;
+        }
+    }
+
+    ApplyDirectoryListing(
+        BuildDirectoryListing(m_gen, std::move(folder)),
+        false);
+    return true;
+}
+
+std::shared_ptr<ThumbnailStrip::DirectoryListing>
+ThumbnailStrip::BuildDirectoryListing(
+    std::uint64_t generation,
+    std::wstring folder)
+{
+    auto listing = std::make_shared<DirectoryListing>();
+    listing->generation = generation;
+    listing->folder = std::move(folder);
+
+    if (listing->folder.empty())
+    {
+        return listing;
+    }
+
+    // List through Floar's VFS so the strip descends into BSA/BA2/common
+    // archives as if they were folders. The resulting paths remain VFS display
+    // paths and are routed back through Floar when a member is opened.
+    auto vpOpt = Floar::VirtualPath::Parse(listing->folder);
+    if (!vpOpt)
+    {
+        return listing;
+    }
+
+    const Floar::VirtualPath vp = *vpOpt;
+    const bool isArchivePath = vp.IsArchiveFile() || vp.IsInArchive();
+    // IsDirectory itself scans archive entry tables, so archive paths go
+    // directly to ListDirectory. Filesystem directories keep the cheap guard.
+    if (!isArchivePath && !Floar::VirtualFileSystem::IsDirectory(vp))
+    {
+        return listing;
+    }
+
+    const Floar::VirtualPath parent = vp.GetParent();
+    if (parent != vp)
+    {
+        Entry up;
+        up.kind = EntryKind::Up;
+        up.path = parent.wstring();
+        up.name = L"..";
+        up.rendered = true;
+        listing->entries.push_back(std::move(up));
+    }
+
+    std::vector<Entry> folders;
+    std::vector<Entry> files;
+    for (const auto& de : Floar::VirtualFileSystem::ListDirectory(vp))
+    {
+        const bool isArchive = de.path.IsArchiveFile();
+        if (de.isDirectory || isArchive)
+        {
+            Entry entry;
+            entry.kind = EntryKind::Folder;
+            entry.path = de.path.wstring();
+            entry.name = de.path.GetFilename();
+            entry.rendered = true;
+            if (isArchive)
+            {
+                std::wstring ext = de.path.GetExtension();
+                std::transform(
+                    ext.begin(),
+                    ext.end(),
+                    ext.begin(),
+                    [](wchar_t c)
+                    {
+                        return static_cast<wchar_t>(std::towlower(c));
+                    });
+                if (ext == L".bsa")
+                {
+                    entry.archiveKind = ArchiveKind::Bsa;
+                }
+                else if (ext == L".ba2")
+                {
+                    entry.archiveKind = ArchiveKind::Ba2;
+                }
+                else if (ext == L".zip")
+                {
+                    entry.archiveKind = ArchiveKind::Zip;
+                }
+                else if (ext == L".7z")
+                {
+                    entry.archiveKind = ArchiveKind::SevenZip;
+                }
+                else if (ext == L".rar")
+                {
+                    entry.archiveKind = ArchiveKind::Rar;
+                }
+                else
+                {
+                    entry.archiveKind = ArchiveKind::Other;
+                }
+            }
+            folders.push_back(std::move(entry));
+            continue;
+        }
+
+        std::wstring ext = de.path.GetExtension();
+        std::transform(
+            ext.begin(),
+            ext.end(),
+            ext.begin(),
+            [](wchar_t c)
+            {
+                return static_cast<wchar_t>(std::towlower(c));
+            });
+        const bool isNif = ext == L".nif";
+        const bool isImage = !isNif && IsImageExt(ext);
+        if (!isNif && !isImage)
+        {
+            continue;
+        }
+
+        Entry entry;
+        entry.kind = EntryKind::File;
+        entry.isImage = isImage;
+        entry.path = de.path.wstring();
+        entry.name = de.path.GetFilename();
+        files.push_back(std::move(entry));
+    }
 
     auto lessNoCase = [](const Entry& a, const Entry& b)
     {
         return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
     };
+    std::sort(folders.begin(), folders.end(), lessNoCase);
+    std::sort(files.begin(), files.end(), lessNoCase);
+    listing->entries.insert(
+        listing->entries.end(),
+        std::make_move_iterator(folders.begin()),
+        std::make_move_iterator(folders.end()));
+    listing->entries.insert(
+        listing->entries.end(),
+        std::make_move_iterator(files.begin()),
+        std::make_move_iterator(files.end()));
+    return listing;
+}
 
-    if (!folder.empty())
+void ThumbnailStrip::ApplyDirectoryListing(
+    std::shared_ptr<DirectoryListing> listing,
+    bool notifyCompletion)
+{
+    if (!listing ||
+        listing->generation != m_gen ||
+        listing->folder != m_folder)
     {
-        // List through Floar's VFS so the strip descends into BSA/BA2 archives
-        // as if they were folders: a plain directory lists its files, a .ba2/
-        // .bsa lists its root, and a folder *inside* an archive lists that
-        // subtree. m_folder / Entry::path carry VFS display paths (e.g.
-        // "...\foo.ba2\meshes\x.nif"); LoadNifDocument routes those back through
-        // the VFS on open, and std::filesystem name/parent helpers still work on
-        // the string form.
-        auto vpOpt = Floar::VirtualPath::Parse(folder);
-        // For an archive path, IsDirectory would scan the whole entry table just
-        // to answer yes - so skip it and let ListDirectory (one cached-reader
-        // pass) be the single scan. For a plain folder, is_directory is cheap.
-        // NavigateTo is only ever handed folders/archives (folder/Up tiles,
-        // ShowForFolder, a file's parent), never a file, so listing directly is
-        // safe: a non-directory just yields no entries.
-        const bool isArchivePath = vpOpt && (vpOpt->IsArchiveFile() || vpOpt->IsInArchive());
-        if (vpOpt && (isArchivePath || Floar::VirtualFileSystem::IsDirectory(*vpOpt)))
-        {
-            const Floar::VirtualPath vp = *vpOpt;
-
-            // ".." to the parent: a folder's parent dir, an archive's own folder
-            // (exiting the archive), or a subfolder's parent inside the archive.
-            // GetParent returns *this at a filesystem root - suppress that tile.
-            const Floar::VirtualPath parent = vp.GetParent();
-            if (parent != vp)
-            {
-                Entry up;
-                up.kind = EntryKind::Up;
-                up.path = parent.wstring();
-                up.name = L"..";
-                up.rendered = true;
-                m_entries.push_back(std::move(up));
-            }
-
-            std::vector<Entry> folders, files;
-            for (const auto& de : Floar::VirtualFileSystem::ListDirectory(vp))
-            {
-                // A directory, OR an archive file itself (.ba2/.bsa) - both are
-                // navigable folder tiles that NavigateTo descends into.
-                if (de.isDirectory || de.path.IsArchiveFile())
-                {
-                    Entry f;
-                    f.kind = EntryKind::Folder;
-                    f.path = de.path.wstring();
-                    f.name = de.path.GetFilename();
-                    f.rendered = true;
-                    folders.push_back(std::move(f));
-                }
-                else
-                {
-                    std::wstring ext = de.path.GetExtension();
-                    std::transform(ext.begin(), ext.end(), ext.begin(),
-                                   [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-                    const bool isNif = (ext == L".nif");
-                    const bool isImg = !isNif && IsImageExt(ext);
-                    if (!isNif && !isImg) continue;
-                    Entry e;
-                    e.kind = EntryKind::File;
-                    e.isImage = isImg;
-                    e.path = de.path.wstring();
-                    e.name = de.path.GetFilename();
-                    files.push_back(std::move(e));
-                }
-            }
-            std::sort(folders.begin(), folders.end(), lessNoCase);
-            std::sort(files.begin(), files.end(), lessNoCase);
-            m_entries.insert(m_entries.end(), std::make_move_iterator(folders.begin()),
-                             std::make_move_iterator(folders.end()));
-            m_entries.insert(m_entries.end(), std::make_move_iterator(files.begin()),
-                             std::make_move_iterator(files.end()));
-        }
+        return;
     }
+
+    m_listing = false;
+    m_entries = std::move(listing->entries);
 
     // Queue the new folder's files for the background worker.
     EnqueuePending();
@@ -484,6 +619,11 @@ void ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
     if (FD2D::Backplate* bp = BackplateRef())
         bp->RequestLayout();
     Invalidate();
+
+    if (notifyCompletion && m_onListingCompleted)
+    {
+        m_onListingCompleted(m_folder);
+    }
 }
 
 void ThumbnailStrip::EnqueuePending()
@@ -1064,19 +1204,53 @@ void ThumbnailStrip::EnsureBitmap(Entry& entry)
 
 void ThumbnailStrip::EnsureTextFormat()
 {
-    if (m_textFormat) return;
-    IDWriteFactory* dw = FD2D::Core::DWriteFactory();
-    if (!dw) return;
-    (void)dw->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"", &m_textFormat);
-    if (m_textFormat)
+    if (m_textFormat && m_archiveBadgeFormat)
     {
-        m_textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
-        if (SUCCEEDED(dw->CreateEllipsisTrimmingSign(m_textFormat.Get(), &ellipsis)))
+        return;
+    }
+    IDWriteFactory* dw = FD2D::Core::DWriteFactory();
+    if (!dw)
+    {
+        return;
+    }
+    if (!m_textFormat)
+    {
+        (void)dw->CreateTextFormat(
+            L"Segoe UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            12.0f,
+            L"",
+            &m_textFormat);
+        if (m_textFormat)
         {
-            DWRITE_TRIMMING trim { DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
-            m_textFormat->SetTrimming(&trim, ellipsis.Get());
+            m_textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
+            if (SUCCEEDED(dw->CreateEllipsisTrimmingSign(m_textFormat.Get(), &ellipsis)))
+            {
+                DWRITE_TRIMMING trim { DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
+                m_textFormat->SetTrimming(&trim, ellipsis.Get());
+            }
+        }
+    }
+    if (!m_archiveBadgeFormat)
+    {
+        (void)dw->CreateTextFormat(
+            L"Segoe UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            11.0f,
+            L"",
+            &m_archiveBadgeFormat);
+        if (m_archiveBadgeFormat)
+        {
+            m_archiveBadgeFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            m_archiveBadgeFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_archiveBadgeFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
 }
@@ -1151,11 +1325,64 @@ void ThumbnailStrip::CenterEntry(int idx)
     Invalidate();
 }
 
-void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc, bool up) const
+void ThumbnailStrip::DrawFolderIcon(
+    ID2D1RenderTarget* target,
+    const D2D1_RECT_F& rc,
+    bool up,
+    ArchiveKind archiveKind) const
 {
+    D2D1_COLOR_F background = D2D1::ColorF(0.15f, 0.16f, 0.19f);
+    D2D1_COLOR_F accent = D2D1::ColorF(0.83f, 0.70f, 0.36f);
+    const wchar_t* badge = nullptr;
+    UINT32 badgeLength = 0;
+    switch (archiveKind)
+    {
+    case ArchiveKind::Bsa:
+        background = D2D1::ColorF(0.12f, 0.17f, 0.26f);
+        accent = D2D1::ColorF(0.34f, 0.58f, 0.90f);
+        badge = L"BSA";
+        badgeLength = 3;
+        break;
+    case ArchiveKind::Ba2:
+        background = D2D1::ColorF(0.18f, 0.14f, 0.27f);
+        accent = D2D1::ColorF(0.62f, 0.45f, 0.88f);
+        badge = L"BA2";
+        badgeLength = 3;
+        break;
+    case ArchiveKind::Zip:
+        background = D2D1::ColorF(0.10f, 0.21f, 0.23f);
+        accent = D2D1::ColorF(0.25f, 0.70f, 0.76f);
+        badge = L"ZIP";
+        badgeLength = 3;
+        break;
+    case ArchiveKind::SevenZip:
+        background = D2D1::ColorF(0.12f, 0.22f, 0.16f);
+        accent = D2D1::ColorF(0.36f, 0.74f, 0.48f);
+        badge = L"7Z";
+        badgeLength = 2;
+        break;
+    case ArchiveKind::Rar:
+        background = D2D1::ColorF(0.24f, 0.12f, 0.21f);
+        accent = D2D1::ColorF(0.80f, 0.39f, 0.68f);
+        badge = L"RAR";
+        badgeLength = 3;
+        break;
+    case ArchiveKind::Other:
+        background = D2D1::ColorF(0.23f, 0.17f, 0.11f);
+        accent = D2D1::ColorF(0.82f, 0.56f, 0.28f);
+        badge = L"ARC";
+        badgeLength = 3;
+        break;
+    case ArchiveKind::None:
+    default:
+        break;
+    }
+
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
-    if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.16f, 0.19f), &brush)))
+    if (SUCCEEDED(target->CreateSolidColorBrush(background, &brush)))
+    {
         target->FillRectangle(rc, brush.Get());
+    }
 
     const float w = rc.right - rc.left, h = rc.bottom - rc.top;
     const float cx = (rc.left + rc.right) * 0.5f, cy = (rc.top + rc.bottom) * 0.5f;
@@ -1169,10 +1396,10 @@ void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F
             target->DrawLine({ cx, cy - s * 0.75f }, { cx + s, cy + s * 0.55f }, brush.Get(), 3.5f);
         }
     }
-    else
+    else if (archiveKind == ArchiveKind::None)
     {
         // Folder glyph: a body rect with a small tab on top-left.
-        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.83f, 0.70f, 0.36f), &brush)))
+        if (SUCCEEDED(target->CreateSolidColorBrush(accent, &brush)))
         {
             const float fw = w * 0.52f, fh = h * 0.36f;
             const float l = cx - fw * 0.5f, t = cy - fh * 0.42f;
@@ -1180,6 +1407,67 @@ void ThumbnailStrip::DrawFolderIcon(ID2D1RenderTarget* target, const D2D1_RECT_F
             const D2D1_RECT_F body { l, t, l + fw, t + fh };
             target->FillRectangle(tab, brush.Get());
             target->FillRectangle(body, brush.Get());
+        }
+    }
+    else
+    {
+        // Archive package: a rounded colored box with a zipper and an explicit
+        // format badge. The silhouette and color both differ from directories,
+        // while BSA/BA2/common archive formats remain distinguishable.
+        const float boxW = w * 0.56f;
+        const float boxH = h * 0.48f;
+        const float left = cx - boxW * 0.5f;
+        const float top = cy - boxH * 0.5f;
+        const D2D1_ROUNDED_RECT package {
+            { left, top, left + boxW, top + boxH },
+            5.0f,
+            5.0f
+        };
+        if (SUCCEEDED(target->CreateSolidColorBrush(accent, &brush)))
+        {
+            target->FillRoundedRectangle(package, brush.Get());
+        }
+
+        if (SUCCEEDED(target->CreateSolidColorBrush(
+            D2D1::ColorF(0.08f, 0.09f, 0.11f, 0.72f),
+            &brush)))
+        {
+            const float zipperW = (std::max)(2.0f, boxW * 0.055f);
+            target->FillRectangle(
+                D2D1::RectF(
+                    cx - zipperW * 0.5f,
+                    top,
+                    cx + zipperW * 0.5f,
+                    top + boxH * 0.48f),
+                brush.Get());
+            target->FillRoundedRectangle(
+                D2D1::RoundedRect(
+                    D2D1::RectF(
+                        cx - boxW * 0.10f,
+                        top + boxH * 0.43f,
+                        cx + boxW * 0.10f,
+                        top + boxH * 0.54f),
+                    2.0f,
+                    2.0f),
+                brush.Get());
+        }
+
+        if (badge && m_archiveBadgeFormat &&
+            SUCCEEDED(target->CreateSolidColorBrush(
+                D2D1::ColorF(0.97f, 0.98f, 1.0f),
+                &brush)))
+        {
+            target->DrawTextW(
+                badge,
+                badgeLength,
+                m_archiveBadgeFormat.Get(),
+                D2D1::RectF(
+                    left + 2.0f,
+                    top + boxH * 0.48f,
+                    left + boxW - 2.0f,
+                    top + boxH - 2.0f),
+                brush.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
 }
@@ -1265,6 +1553,26 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
     if (m_textFormat)
         m_textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
 
+    if (m_listing && m_textFormat &&
+        SUCCEEDED(target->CreateSolidColorBrush(
+            D2D1::ColorF(0.62f, 0.66f, 0.72f),
+            &brush)))
+    {
+        constexpr wchar_t kLoadingText[] = L"Loading archive...";
+        target->DrawTextW(
+            kLoadingText,
+            static_cast<UINT32>(
+                sizeof(kLoadingText) / sizeof(kLoadingText[0]) - 1),
+            m_textFormat.Get(),
+            D2D1::RectF(
+                r.left + kPad,
+                r.top + kPad,
+                r.right - kPad,
+                r.bottom - kPad),
+            brush.Get(),
+            D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
     // Cards vary in size, so accumulate the offset along the scroll axis.
     float cursor = LeadGutter() - m_scroll;
     for (std::size_t i = 0; i < m_entries.size(); ++i)
@@ -1303,8 +1611,12 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 
         if (e.kind != EntryKind::File)
         {
-            // Folder / ".." navigation tile.
-            DrawFolderIcon(target, thumbRect, e.kind == EntryKind::Up);
+            // Folder, archive package, or ".." navigation tile.
+            DrawFolderIcon(
+                target,
+                thumbRect,
+                e.kind == EntryKind::Up,
+                e.archiveKind);
         }
         else
         {

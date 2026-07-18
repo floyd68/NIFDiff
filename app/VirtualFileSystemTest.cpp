@@ -4,6 +4,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 int main()
 {
@@ -72,6 +73,30 @@ int main()
     if (Floar::VirtualFileSystem::Exists(*missing))
     {
         return 6;
+    }
+
+    const auto archiveRoot = Floar::VirtualPath::Parse(archive.wstring());
+    if (!archiveRoot)
+    {
+        return 7;
+    }
+
+    const std::vector<Floar::VirtualFileEntry> rootEntries =
+        Floar::VirtualFileSystem::ListDirectory(*archiveRoot);
+    if (rootEntries.size() != 1 ||
+        !rootEntries.front().isDirectory ||
+        rootEntries.front().path.GetFilename() != L"meshes")
+    {
+        return 8;
+    }
+
+    const std::vector<Floar::VirtualFileEntry> meshEntries =
+        Floar::VirtualFileSystem::ListDirectory(*directory);
+    if (meshEntries.size() != 1 ||
+        meshEntries.front().isDirectory ||
+        meshEntries.front().path.GetFilename() != L"test.nif")
+    {
+        return 9;
     }
 
     fs::remove_all(root, ec);

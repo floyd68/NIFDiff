@@ -56,6 +56,16 @@ ComparePane::ComparePane(const std::wstring& name)
         if (m_onThumbStripResize)
             m_onThumbStripResize(ext, committed);
     });
+    m_thumbStrip->SetOnListingCompleted([this](const std::wstring& path)
+    {
+        // Only an archive opened as a top-level container requests automatic
+        // first-entry selection. Ordinary in-strip folder navigation also
+        // completes here but deliberately keeps browsing.
+        if (m_browsingContainer && path == m_pendingContainerListing)
+        {
+            FinishContainerListing(path);
+        }
+    });
 
     // Start with empty NIF content (shows the viewport's placeholder grid).
     EnsureContent(Kind::Nif);
@@ -130,30 +140,29 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
         // archive scan) keeps the strip up instead of collapsing it for an empty
         // CurrentPath.
         m_browsingContainer = true;
+        m_pendingContainerListing = path;
         if (m_thumbStrip)
         {
             m_thumbStrip->SetActive(true);
-            m_thumbStrip->ShowForFolder(path);
+            const bool listingReady = m_thumbStrip->ShowForFolder(path);
 
-            // 1) A viewable file inside (nif/texture) -> load the first one so the
-            //    pane shows real content and its name (this leaves browse mode).
-            if (std::wstring firstFile = m_thumbStrip->PickDefaultEntry(); !firstFile.empty())
-                return Load(firstFile, error);
-
-            // 2) No viewable file -> stay browsing: name the current folder over
-            //    the placeholder grid, and the strip has highlighted the first
-            //    subfolder (or the Up tile) for the user to step in from.
+            // While an archive's flat entry table is enumerated on the shared
+            // pool, clear stale content and identify the container immediately.
             EnsureContent(Kind::Nif);
             m_content->Clear();
             m_content->SetBrowsingLabel(path); // full folder/archive path, like a file's
+
+            if (!listingReady)
+            {
+                Invalidate();
+                return true;
+            }
         }
-        if (m_onFileOpened) // the browsed folder/archive is the "open" (MRU/session)
-            m_onFileOpened(path);
-        Invalidate();
-        return true;
+        return FinishContainerListing(path, error);
     }
 
     m_browsingContainer = false; // a real file is loading - leave browse mode
+    m_pendingContainerListing.clear();
     EnsureContent(PathIsImage(path) ? Kind::Image : Kind::Nif);
     const bool ok = m_content->Load(path, error);
     ShowThumbnailFolder(); // strip follows the loaded file's folder
@@ -163,9 +172,45 @@ bool ComparePane::Load(const std::wstring& path, std::string* error)
 void ComparePane::Clear()
 {
     m_browsingContainer = false;
+    m_pendingContainerListing.clear();
     if (m_content)
         m_content->Clear();
     ShowThumbnailFolder(); // now empty -> clears/collapses the strip
+}
+
+bool ComparePane::FinishContainerListing(
+    const std::wstring& path,
+    std::string* error)
+{
+    if (!m_browsingContainer ||
+        path != m_pendingContainerListing ||
+        !m_thumbStrip ||
+        m_thumbStrip->Folder() != path)
+    {
+        return false;
+    }
+
+    m_pendingContainerListing.clear();
+
+    // A viewable file inside wins: load it so the pane shows real content and
+    // its name. Load leaves browse mode and reports the file to MRU.
+    if (std::wstring firstFile = m_thumbStrip->PickDefaultEntry();
+        !firstFile.empty())
+    {
+        return Load(firstFile, error);
+    }
+
+    // No viewable file: remain in browse mode with the first subfolder (or Up)
+    // selected, and report the container itself to MRU/session state.
+    EnsureContent(Kind::Nif);
+    m_content->Clear();
+    m_content->SetBrowsingLabel(path);
+    if (m_onFileOpened)
+    {
+        m_onFileOpened(path);
+    }
+    Invalidate();
+    return true;
 }
 
 void ComparePane::SetRenderDevice(RenderDevice* device)

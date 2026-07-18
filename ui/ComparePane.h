@@ -105,12 +105,16 @@ public:
     void SetOnFileOpened(std::function<void(const std::wstring&)> handler) { m_onFileOpened = std::move(handler); }
 
 private:
+    bool FinishContainerListing(
+        const std::wstring& path,
+        std::string* error = nullptr);
     void Redock();     // ClearDocks + re-add strip (Bottom) then content (Fill)
     void WireContent(); // apply remembered resources + fire m_onContentCreated
 
     std::shared_ptr<ThumbnailStrip> m_thumbStrip; // persistent across content swaps
     std::shared_ptr<PaneContent> m_content;       // NifComparePane XOR ImagePane
     bool m_browsingContainer = false;             // strip is showing a folder/archive, no file loaded
+    std::wstring m_pendingContainerListing;       // initial async archive listing awaiting default selection
 
     RenderDevice* m_renderDevice = nullptr;
     ResourceManager* m_resourceManager = nullptr;
