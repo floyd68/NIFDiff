@@ -87,7 +87,10 @@ documents every control in detail.
   vertical scrollbar appears only as a last resort - every control stays
   reachable at any window size.
 - The **active pane** (the last one you clicked) carries an accent border;
-  pane-specific keys and the right-click context menu act on it.
+  pane-specific keys and the right-click context menu act on it. The
+  **window title** follows it too - it shows the active pane's file name
+  ahead of the app name, so a taskbar full of NIFDiff windows (or a bug-report
+  screenshot) is still identifiable at a glance.
 
 ### 3. Navigate a model
 
@@ -337,7 +340,8 @@ documents every control in detail.
   yaw off dead-on frontal) with an orthographic camera fitted tightly to the
   model's non-hidden bounds with equal margins, so cards take the model's own aspect
   ratio - wide meshes get wide cards, tall meshes tall ones - all sized to the
-  strip height.
+  strip height. Sibling texture files get the same treatment: a real decoded
+  preview of the image, not a placeholder glyph.
   subfolders and an ".." tile appear as folder icons, and the pane's current
   file is drawn with a blue highlight. Clicking a sibling loads it into that pane (the highlight
   follows); clicking a folder or ".." navigates that pane's strip in place.

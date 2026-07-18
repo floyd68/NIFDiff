@@ -7,7 +7,7 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
-## 1.1.161
+## 1.1.162
 
 ### Textures
 - Any pane can show a texture (`.dds`/`.png`/`.tga`/`.bmp`/...) in place of a
@@ -42,9 +42,12 @@ the app, not which files moved.
 - A saved session's file living inside a BSA/BA2/archive now restores
   correctly on restart (previously only plain filesystem paths did)
 
+### Shell
+- The window title now follows the active pane's file, not just the app name
+- The thumbnail strip shows real decoded preview thumbnails for image files
+  too, not just NIF 3D renders
+
 ### Fixes
-- Texture Inspector previews render correctly again (a prior refactor let a
-  NIF pane's own 3D render silently cover them)
 - A custom shader placed in a subfolder can `#include "Common.hlsli"` and
   its own nested includes correctly, instead of silently falling back to the
   built-in shader
