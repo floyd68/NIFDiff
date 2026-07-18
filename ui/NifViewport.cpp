@@ -2,6 +2,7 @@
 #include "../core/StartupTrace.h"
 #include <Backplate.h>
 #include <Core.h> // FD2D::Core::DWriteFactory (Loading overlay text)
+#include <ShaderResourcePresenter.h>
 #include <Util.h>
 #include <cmath>
 #include <cstdlib>
@@ -510,6 +511,27 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* context)
     {
         m_renderDevice->RenderScene(m_target, m_meshCache, m_meshes, m_settings, m_textures.get());
     }
+
+    // RenderScene resolves and unbinds its private offscreen target. Present
+    // that SRV back into Backplate's composed D3D surface through the same
+    // state-safe presenter used by standalone images and texture previews.
+    // Keeping the scene in the D3D pass also lets later GPU overlays (such as
+    // the Texture Inspector) remain above it instead of being covered by a
+    // subsequent full-pane D2D bitmap blit.
+    if (ID3D11ShaderResourceView* scene = m_target.ColorSRV())
+    {
+        FD2D::ShaderResourceDraw draw;
+        draw.layout = rect;
+        draw.contentWidth = m_target.Width();
+        draw.contentHeight = m_target.Height();
+        draw.highQualitySampling = true;
+        draw.sourceAlphaUsage = 1;
+        (void)FD2D::DrawShaderResource(
+            context,
+            *m_backplate,
+            scene,
+            draw);
+    }
 }
 
 void NifViewport::EnsureD2DTarget()
@@ -551,11 +573,22 @@ void NifViewport::OnRender(ID2D1RenderTarget* target)
 {
     if (!target)
         return;
-    EnsureD2DTarget();
 
     const D2D1_RECT_F destRect = LayoutRect();
-    if (m_d2dBitmap)
-        target->DrawBitmap(m_d2dBitmap.Get(), destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    // The normal renderer composites the scene SRV during OnRenderD3D.
+    // Retain this bitmap bridge only for a D2D-only fallback.
+    if (!m_backplate || !m_backplate->D3DDevice())
+    {
+        EnsureD2DTarget();
+        if (m_d2dBitmap)
+        {
+            target->DrawBitmap(
+                m_d2dBitmap.Get(),
+                destRect,
+                1.0f,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        }
+    }
 
     // Centered "Loading..." overlay while the model is still parsing/building
     // on the pool (the scene bitmap under it is just the placeholder grid).
