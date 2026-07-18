@@ -50,10 +50,10 @@ public:
     virtual void SetResourceResolver(ResourceResolver*) {}
     virtual void SetTextureRepository(TextureRepository*) {}
 
-    // Fired when the content has (successfully) opened a file - a NIF once its
-    // async parse lands, an image when its decode is dispatched. The frame wires
-    // this so the app can record the file (MRU / session). Every content kind
-    // reports through the same channel.
+    // Fired when the content has successfully opened and can present a file -
+    // a NIF once its async parse lands, an image after decode and presentation
+    // resource creation succeed. The frame wires this so the app can record the
+    // file (MRU / session). Every content kind reports through the same channel.
     void SetOnFileOpened(std::function<void(const std::wstring&)> handler)
     {
         m_onFileOpened = std::move(handler);

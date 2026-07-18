@@ -53,6 +53,8 @@ public:
     ViewState GetState() const;
     void SetState(const ViewState& state);
     void SetOnViewChanged(std::function<void(const ViewState&)> handler);
+    void SetOnLoadCompleted(
+        std::function<void(const std::wstring&, HRESULT)> handler);
 
     void OnAttached(FD2D::Backplate& backplate) override;
     void OnGraphicsInvalidated(
@@ -86,6 +88,15 @@ private:
         ImageCore::DecodedImage image,
         const std::wstring& path,
         std::uint64_t generation);
+    void StageLoadFailure(
+        const std::wstring& path,
+        std::uint64_t generation,
+        HRESULT result);
+    void PublishLoadResult(
+        const std::wstring& path,
+        std::uint64_t generation,
+        HRESULT result);
+    void PublishPendingFailure();
     bool IsCurrent(
         const std::wstring& path,
         std::uint64_t generation) const;
@@ -111,6 +122,10 @@ private:
     std::wstring m_payloadPath;
     std::uint64_t m_payloadGeneration { 0 };
     bool m_needUpload { false };
+    std::wstring m_failurePath;
+    std::uint64_t m_failureGeneration { 0 };
+    HRESULT m_failureResult { S_OK };
+    bool m_hasPendingFailure { false };
 
     std::wstring m_srvPath;
     bool m_usingD2DBitmap { false };
@@ -132,6 +147,7 @@ private:
     float m_panStartX { 0.0f };
     float m_panStartY { 0.0f };
     std::function<void(const ViewState&)> m_onViewChanged;
+    std::function<void(const std::wstring&, HRESULT)> m_onLoadCompleted;
 };
 
 } // namespace nsk

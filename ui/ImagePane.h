@@ -21,7 +21,7 @@ public:
 
     // PaneContent: this is the 2D image content.
     Kind PaneKind() const override { return Kind::Image; }
-    std::wstring CurrentPath() const override { return m_path; }
+    std::wstring CurrentPath() const override;
     bool Load(const std::wstring& path, std::string* error = nullptr) override;
     void Clear() override;
 
@@ -48,11 +48,25 @@ public:
     void SetOnViewChanged(std::function<void(const ImageViewState&)> handler);
 
 private:
+    enum class LoadStatus
+    {
+        Empty,
+        Loading,
+        Ready,
+        Failed
+    };
+
+    void OnLoadCompleted(
+        const std::wstring& path,
+        HRESULT result);
     void UpdatePathLabel();
 
     std::shared_ptr<ImagePresentation> m_image;
     std::shared_ptr<FD2D::Text> m_pathLabel;
     std::wstring m_path;
+    std::wstring m_pendingPath;
+    std::wstring m_failedPath;
+    LoadStatus m_loadStatus { LoadStatus::Empty };
 };
 
 } // namespace nsk

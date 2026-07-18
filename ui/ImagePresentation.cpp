@@ -26,6 +26,7 @@ struct ImagePresentation::LoadState
     std::uint64_t generation { 0 };
     ImageCore::ImageHandle handle { 0 };
     std::uint64_t cpuRetryGeneration { 0 };
+    bool loadReported { true };
     bool shuttingDown { false };
     std::weak_ptr<ImagePresentation> presentation;
 };
@@ -74,6 +75,7 @@ bool ImagePresentation::Load(const std::wstring& path)
         m_loadState->path = path;
         generation = ++m_loadState->generation;
         m_loadState->cpuRetryGeneration = 0;
+        m_loadState->loadReported = false;
         m_loadState->presentation =
             std::static_pointer_cast<ImagePresentation>(
                 FD2D::Wnd::shared_from_this());
@@ -90,13 +92,22 @@ bool ImagePresentation::Load(const std::wstring& path)
         m_payloadPath.clear();
         m_payloadGeneration = 0;
         m_needUpload = false;
+        m_failurePath.clear();
+        m_failureGeneration = 0;
+        m_failureResult = S_OK;
+        m_hasPendingFailure = false;
     }
 
+    m_srvAlpha = {};
+    m_usingD2DBitmap = false;
+    m_srvPath.clear();
+    FD2D::Image::Clear();
     ResetView();
     SetAlphaUsageOverride(ImageCore::AlphaUsage::Auto);
 
     if (TryApplyCachedSrv(path, generation))
     {
+        PublishLoadResult(path, generation, S_OK);
         Invalidate();
         return true;
     }
@@ -117,6 +128,7 @@ void ImagePresentation::ClearImage()
         ++m_loadState->generation;
         m_loadState->path.clear();
         m_loadState->cpuRetryGeneration = 0;
+        m_loadState->loadReported = true;
         handle = std::exchange(m_loadState->handle, 0);
     }
 
@@ -131,6 +143,10 @@ void ImagePresentation::ClearImage()
         m_payloadPath.clear();
         m_payloadGeneration = 0;
         m_needUpload = false;
+        m_failurePath.clear();
+        m_failureGeneration = 0;
+        m_failureResult = S_OK;
+        m_hasPendingFailure = false;
     }
 
     m_srvAlpha = {};
@@ -227,11 +243,19 @@ void ImagePresentation::StartDecode(
                     presentation = state->presentation.lock();
                 }
 
+                if (!presentation)
+                {
+                    return;
+                }
+
                 if (FAILED(result) ||
                     !image.blocks ||
-                    image.blocks->empty() ||
-                    !presentation)
+                    image.blocks->empty())
                 {
+                    presentation->StageLoadFailure(
+                        path,
+                        generation,
+                        FAILED(result) ? result : E_FAIL);
                     return;
                 }
 
@@ -360,6 +384,94 @@ void ImagePresentation::StagePayload(
     }
 }
 
+void ImagePresentation::StageLoadFailure(
+    const std::wstring& path,
+    std::uint64_t generation,
+    HRESULT result)
+{
+    std::shared_ptr<FD2D::AsyncRedrawToken> redraw;
+    {
+        std::lock_guard<std::mutex> lock(m_loadState->mutex);
+        if (m_loadState->shuttingDown ||
+            m_loadState->generation != generation ||
+            m_loadState->path != path ||
+            m_loadState->loadReported)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> payloadLock(m_payloadMutex);
+        m_payload = {};
+        m_payloadPath.clear();
+        m_payloadGeneration = 0;
+        m_needUpload = false;
+        m_failurePath = path;
+        m_failureGeneration = generation;
+        m_failureResult = FAILED(result) ? result : E_FAIL;
+        m_hasPendingFailure = true;
+        redraw = m_redraw;
+    }
+
+    if (redraw)
+    {
+        redraw->RequestAsyncRedraw();
+    }
+}
+
+void ImagePresentation::PublishLoadResult(
+    const std::wstring& path,
+    std::uint64_t generation,
+    HRESULT result)
+{
+    std::function<void(const std::wstring&, HRESULT)> handler;
+    {
+        std::lock_guard<std::mutex> lock(m_loadState->mutex);
+        if (m_loadState->shuttingDown ||
+            m_loadState->generation != generation ||
+            m_loadState->path != path ||
+            m_loadState->loadReported)
+        {
+            return;
+        }
+
+        m_loadState->loadReported = true;
+        m_loadState->handle = 0;
+        if (FAILED(result))
+        {
+            m_loadState->path.clear();
+        }
+        handler = m_onLoadCompleted;
+    }
+
+    if (handler)
+    {
+        handler(path, result);
+    }
+}
+
+void ImagePresentation::PublishPendingFailure()
+{
+    std::wstring path;
+    std::uint64_t generation = 0;
+    HRESULT result = S_OK;
+    {
+        std::lock_guard<std::mutex> lock(m_payloadMutex);
+        if (!m_hasPendingFailure)
+        {
+            return;
+        }
+
+        path = std::move(m_failurePath);
+        generation = m_failureGeneration;
+        result = m_failureResult;
+        m_failureGeneration = 0;
+        m_failureResult = S_OK;
+        m_hasPendingFailure = false;
+    }
+
+    PublishLoadResult(path, generation, result);
+}
+
 bool ImagePresentation::IsCurrent(
     const std::wstring& path,
     std::uint64_t generation) const
@@ -374,14 +486,25 @@ void ImagePresentation::OnAttached(FD2D::Backplate& backplate)
 {
     FD2D::Image::OnAttached(backplate);
 
-    std::lock_guard<std::mutex> lock(m_loadState->mutex);
-    if (!m_loadState->shuttingDown)
+    std::shared_ptr<FD2D::AsyncRedrawToken> redraw;
+    bool requestRedraw = false;
     {
-        std::lock_guard<std::mutex> payloadLock(m_payloadMutex);
-        m_redraw = backplate.GetAsyncRedrawToken();
-        m_loadState->presentation =
-            std::static_pointer_cast<ImagePresentation>(
-                FD2D::Wnd::shared_from_this());
+        std::lock_guard<std::mutex> lock(m_loadState->mutex);
+        if (!m_loadState->shuttingDown)
+        {
+            std::lock_guard<std::mutex> payloadLock(m_payloadMutex);
+            m_redraw = backplate.GetAsyncRedrawToken();
+            m_loadState->presentation =
+                std::static_pointer_cast<ImagePresentation>(
+                    FD2D::Wnd::shared_from_this());
+            redraw = m_redraw;
+            requestRedraw = m_needUpload || m_hasPendingFailure;
+        }
+    }
+
+    if (requestRedraw && redraw)
+    {
+        redraw->RequestAsyncRedraw();
     }
 }
 
@@ -461,6 +584,8 @@ void ImagePresentation::OnGraphicsInvalidated(
 
 void ImagePresentation::OnRenderD3D(ID3D11DeviceContext* context)
 {
+    PublishPendingFailure();
+
     ImageCore::DecodedImage image;
     std::wstring path;
     std::uint64_t generation = 0;
@@ -539,6 +664,10 @@ void ImagePresentation::OnRenderD3D(ID3D11DeviceContext* context)
                         m_srvAlpha,
                         deviceGeneration);
                     uploaded = true;
+                    PublishLoadResult(
+                        path,
+                        generation,
+                        S_OK);
                 }
             }
         }
@@ -561,6 +690,8 @@ void ImagePresentation::OnRenderD3D(ID3D11DeviceContext* context)
 
 void ImagePresentation::OnRender(ID2D1RenderTarget* target)
 {
+    PublishPendingFailure();
+
     ImageCore::DecodedImage image;
     std::wstring path;
     std::uint64_t generation = 0;
@@ -593,18 +724,34 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
                 DXGI_FORMAT_B8G8R8A8_UNORM,
                 D2D1_ALPHA_MODE_PREMULTIPLIED));
         Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
-        if (!presentation.empty() &&
-            SUCCEEDED(target->CreateBitmap(
+        HRESULT bitmapResult = E_FAIL;
+        if (!presentation.empty())
+        {
+            bitmapResult = target->CreateBitmap(
                 size,
                 presentation.data(),
                 pitch,
                 properties,
-                &bitmap)) &&
+                &bitmap);
+        }
+        if (SUCCEEDED(bitmapResult) &&
             IsCurrent(path, generation))
         {
             SetBitmap(bitmap);
             m_usingD2DBitmap = true;
             m_srvPath = path;
+            PublishLoadResult(
+                path,
+                generation,
+                S_OK);
+        }
+        else if (FAILED(bitmapResult) &&
+                 IsCurrent(path, generation))
+        {
+            PublishLoadResult(
+                path,
+                generation,
+                bitmapResult);
         }
     }
 
@@ -675,6 +822,12 @@ void ImagePresentation::SetOnViewChanged(
     std::function<void(const ViewState&)> handler)
 {
     m_onViewChanged = std::move(handler);
+}
+
+void ImagePresentation::SetOnLoadCompleted(
+    std::function<void(const std::wstring&, HRESULT)> handler)
+{
+    m_onLoadCompleted = std::move(handler);
 }
 
 bool ImagePresentation::OnInputEvent(

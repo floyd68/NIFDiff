@@ -22,6 +22,13 @@ ImagePane::ImagePane(const std::wstring& name)
     m_image =
         std::make_shared<ImagePresentation>(
             name + L"_Image");
+    m_image->SetOnLoadCompleted(
+        [this](
+            const std::wstring& path,
+            HRESULT result)
+        {
+            OnLoadCompleted(path, result);
+        });
 
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
@@ -35,23 +42,54 @@ ImagePane::~ImagePane() = default;
 
 bool ImagePane::Load(
     const std::wstring& path,
-    std::string* /*error*/)
+    std::string* error)
 {
-    if (path.empty() || !m_image->Load(path))
+    if (path.empty())
     {
+        if (error)
+        {
+            *error = "ImagePane::Load: empty path";
+        }
         return false;
     }
 
-    m_path = path;
+    m_path.clear();
+    m_pendingPath = path;
+    m_failedPath.clear();
+    m_loadStatus = LoadStatus::Loading;
     UpdatePathLabel();
-    NotifyFileOpened(path);
+
+    if (!m_image->Load(path))
+    {
+        m_pendingPath.clear();
+        m_failedPath = path;
+        m_loadStatus = LoadStatus::Failed;
+        UpdatePathLabel();
+        if (error)
+        {
+            *error = "ImagePane::Load: decode request rejected";
+        }
+        Invalidate();
+        return false;
+    }
+
     Invalidate();
     return true;
+}
+
+std::wstring ImagePane::CurrentPath() const
+{
+    return m_loadStatus == LoadStatus::Loading
+        ? m_pendingPath
+        : m_path;
 }
 
 void ImagePane::Clear()
 {
     m_path.clear();
+    m_pendingPath.clear();
+    m_failedPath.clear();
+    m_loadStatus = LoadStatus::Empty;
     if (m_image)
     {
         m_image->ClearImage();
@@ -151,13 +189,72 @@ void ImagePane::SetOnViewChanged(
     }
 }
 
+void ImagePane::OnLoadCompleted(
+    const std::wstring& path,
+    HRESULT result)
+{
+    if (m_loadStatus != LoadStatus::Loading ||
+        m_pendingPath != path)
+    {
+        return;
+    }
+
+    m_pendingPath.clear();
+    if (SUCCEEDED(result))
+    {
+        m_path = path;
+        m_failedPath.clear();
+        m_loadStatus = LoadStatus::Ready;
+        NotifyFileOpened(path);
+    }
+    else
+    {
+        m_path.clear();
+        m_failedPath = path;
+        m_loadStatus = LoadStatus::Failed;
+    }
+
+    UpdatePathLabel();
+    Invalidate();
+}
+
 void ImagePane::UpdatePathLabel()
 {
-    m_pathLabel->SetText(
-        m_path.empty()
-            ? L"(no image)"
-            : m_path);
-    m_pathLabel->SetCopyText(m_path);
+    std::wstring text;
+    std::wstring copyText;
+    switch (m_loadStatus)
+    {
+    case LoadStatus::Loading:
+        text = L"Loading " + m_pendingPath;
+        copyText = m_pendingPath;
+        m_pathLabel->SetColor(
+            D2D1::ColorF(0.75f, 0.75f, 0.78f));
+        break;
+
+    case LoadStatus::Ready:
+        text = m_path;
+        copyText = m_path;
+        m_pathLabel->SetColor(
+            D2D1::ColorF(0.75f, 0.75f, 0.78f));
+        break;
+
+    case LoadStatus::Failed:
+        text = L"Failed to load " + m_failedPath;
+        copyText = m_failedPath;
+        m_pathLabel->SetColor(
+            D2D1::ColorF(0.95f, 0.42f, 0.42f));
+        break;
+
+    case LoadStatus::Empty:
+    default:
+        text = L"(no image)";
+        m_pathLabel->SetColor(
+            D2D1::ColorF(0.75f, 0.75f, 0.78f));
+        break;
+    }
+
+    m_pathLabel->SetText(text);
+    m_pathLabel->SetCopyText(copyText);
     m_pathLabel->Invalidate();
 }
 
