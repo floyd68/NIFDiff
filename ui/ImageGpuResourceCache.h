@@ -27,7 +27,7 @@
 // path here vs. a resolved engine-order source there).
 #pragma once
 
-#include "ImageCore/DecodedImage.h" // ImageCore::AlphaMode (stored per entry)
+#include "ImageAlphaPresentation.h"
 
 #include <d3d11.h>
 #include <dxgiformat.h>
@@ -41,16 +41,6 @@
 
 namespace nsk
 {
-
-// The decoder-determined alpha facts a consumer needs to resolve display
-// behavior (see ImagePane's AlphaUsage resolver). Cached alongside the SRV so a
-// cache-hit re-select resolves identically - including after a per-pane override.
-struct ImageAlphaInfo
-{
-    ImageCore::AlphaEncoding encoding { ImageCore::AlphaEncoding::Unknown };
-    ImageCore::AlphaUsage usageHint { ImageCore::AlphaUsage::Auto };
-    bool sourceWasBlockCompressed { false };
-};
 
 class ImageGpuResourceCache
 {

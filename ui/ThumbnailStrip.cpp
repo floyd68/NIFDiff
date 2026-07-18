@@ -1,5 +1,6 @@
 #include "ThumbnailStrip.h"
 
+#include "ImageAlphaPresentation.h"
 #include "../core/NifDocument.h"
 #include "../core/SceneBuilder.h"
 #include "../core/Camera.h"
@@ -376,36 +377,21 @@ void ThumbnailStrip::EnqueuePending()
                     if (img.blocks && !img.blocks->empty() &&
                         img.dxgiFormat == DXGI_FORMAT_B8G8R8A8_UNORM)
                     {
-                        // Make the straight pixels presentation-ready for the D2D
-                        // PREMULTIPLIED bitmap, resolving the Auto alpha usage (no
-                        // per-tile override): a compressed straight/unknown or DDS
-                        // CUSTOM alpha is DATA -> opaque (show RGB, don't fade by a
-                        // parallax/spec alpha); everything else is coverage ->
-                        // premultiply. (Own copy; the decode blob isn't retained.)
-                        using E = ImageCore::AlphaEncoding;
-                        using U = ImageCore::AlphaUsage;
-                        const bool premul = (img.alphaEncoding == E::Premultiplied);
-                        const bool data =
-                            (img.alphaUsageHint == U::Data) ||
-                            (img.alphaEncoding == E::Opaque) ||
-                            (img.sourceWasBlockCompressed &&
-                             (img.alphaEncoding == E::Straight || img.alphaEncoding == E::Unknown));
-                        pixels = std::make_shared<std::vector<std::uint8_t>>(*img.blocks);
-                        auto& px = *pixels;
-                        for (size_t i = 0; i + 3 < px.size(); i += 4)
+                        // Resolve the same Auto policy as ImagePane and build a
+                        // D2D PREMULTIPLIED presentation copy. The decoded source
+                        // remains lossless and no per-tile override is applied.
+                        const ImageAlphaInfo alpha = AlphaInfoFromDecodedImage(img);
+                        const ImageCore::AlphaUsage usage = ResolveAlphaUsage(alpha);
+                        std::vector<std::uint8_t> presentation =
+                            BuildBgra8Presentation(img, usage);
+                        if (!presentation.empty())
                         {
-                            const std::uint8_t a = px[i + 3];
-                            if (data)
-                                px[i + 3] = 255;
-                            else if (!premul)
-                            {
-                                px[i]     = static_cast<std::uint8_t>((px[i]     * a + 127) / 255);
-                                px[i + 1] = static_cast<std::uint8_t>((px[i + 1] * a + 127) / 255);
-                                px[i + 2] = static_cast<std::uint8_t>((px[i + 2] * a + 127) / 255);
-                            }
+                            pixels = std::make_shared<std::vector<std::uint8_t>>(
+                                std::move(presentation));
+                            w = img.width;
+                            h = img.height;
+                            pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
                         }
-                        w = img.width; h = img.height;
-                        pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
                     }
                     mgr->PostCompletion({ self, gen },
                         [self, index, pixels, w, h, pitch]()

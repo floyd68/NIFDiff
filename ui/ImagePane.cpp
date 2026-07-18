@@ -1,5 +1,6 @@
 #include "ImagePane.h"
 
+#include "ImageAlphaPresentation.h"
 #include "ImageGpuResourceCache.h" // path -> SRV LRU (fast re-select)
 #include "../core/NifLog.h" // NIFLOG_* (shared app logger)
 
@@ -76,6 +77,7 @@ public:
             m_needUpload = false;
         }
         SetShaderResource(srv);
+        m_usingD2DBitmap = false;
         // The cached alpha facts keep display + isolation correct on a cache-hit
         // re-select too (re-resolved with the pane's current usage override).
         m_srvAlpha = alpha;
@@ -93,6 +95,7 @@ public:
             m_needUpload = false;
         }
         m_srvAlpha = {};
+        m_usingD2DBitmap = false;
         m_srvPath.clear();
         Clear(); // FD2D::Image::Clear (drops the current bitmap/SRV)
         Invalidate();
@@ -112,6 +115,7 @@ public:
                                const FD2D::GraphicsGeneration& generation) override
     {
         FD2D::Image::OnGraphicsInvalidated(reason, generation);
+        m_usingD2DBitmap = false;
         // The device resource is gone. If we still hold the decoded payload,
         // re-upload it next render. If we were showing a cache-served SRV (no
         // payload retained), that SRV died with the device - ask the pane to
@@ -171,11 +175,11 @@ public:
                     if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
                     {
                         SetShaderResource(srv);
+                        m_usingD2DBitmap = false;
                         // Record the decoder's alpha FACTS (encoding + hint +
                         // provenance) - the pane resolves usage from them (see
                         // PushDrawState), never guessing from the pixel format.
-                        m_srvAlpha = { img.alphaEncoding, img.alphaUsageHint,
-                                       img.sourceWasBlockCompressed };
+                        m_srvAlpha = AlphaInfoFromDecodedImage(img);
                         PushDrawState();
                         // Pool the uploaded SRV so re-selecting this texture is a
                         // synchronous cache hit (see TryApplyCachedSrv) - now for
@@ -212,10 +216,10 @@ public:
         std::wstring path;
         if (target && TakePending(img, path, TakeMode::UncompressedForD2D))
         {
-            m_srvAlpha = { img.alphaEncoding, img.alphaUsageHint, img.sourceWasBlockCompressed };
-            const ImageCore::AlphaUsage usage = ResolveUsage(m_srvAlpha, m_alphaUsageOverride);
-            const bool premul = (img.alphaEncoding == ImageCore::AlphaEncoding::Premultiplied);
-            const std::vector<uint8_t> pres = MakePresentationBgra8(img, usage, premul);
+            m_srvAlpha = AlphaInfoFromDecodedImage(img);
+            const ImageCore::AlphaUsage usage =
+                ResolveAlphaUsage(m_srvAlpha, m_alphaUsageOverride);
+            const std::vector<std::uint8_t> pres = BuildBgra8Presentation(img, usage);
 
             const uint32_t pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
             const D2D1_SIZE_U size { img.width, img.height };
@@ -223,37 +227,13 @@ public:
                 D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
             Microsoft::WRL::ComPtr<ID2D1Bitmap> bmp;
             if (!pres.empty() && SUCCEEDED(target->CreateBitmap(size, pres.data(), pitch, props, &bmp)))
+            {
                 SetBitmap(bmp);
+                m_usingD2DBitmap = true;
+                m_srvPath = path;
+            }
         }
         FD2D::Image::OnRender(target);
-    }
-
-    // A premultiplied-for-D2D copy of a straight (or premultiplied) BGRA8 payload,
-    // resolved to the requested usage. Data => force alpha opaque (show straight
-    // RGB, don't fade by non-coverage alpha); Coverage => premultiply straight
-    // (premultiplied stays). Never touches the source blob.
-    static std::vector<uint8_t> MakePresentationBgra8(
-        const ImageCore::DecodedImage& img, ImageCore::AlphaUsage usage, bool premultipliedEncoding)
-    {
-        if (!img.blocks || img.blocks->empty())
-            return {};
-        std::vector<uint8_t> out(*img.blocks); // copy - original preserved
-        const bool data = (usage == ImageCore::AlphaUsage::Data);
-        for (size_t i = 0; i + 3 < out.size(); i += 4)
-        {
-            uint8_t& b = out[i]; uint8_t& g = out[i + 1]; uint8_t& r = out[i + 2]; uint8_t& a = out[i + 3];
-            if (data)
-            {
-                a = 255; // opaque: show straight RGB, ignore non-coverage alpha
-            }
-            else if (!premultipliedEncoding)
-            {
-                b = static_cast<uint8_t>((b * a + 127) / 255); // straight coverage -> premultiply
-                g = static_cast<uint8_t>((g * a + 127) / 255);
-                r = static_cast<uint8_t>((r * a + 127) / 255);
-            }
-        }
-        return out;
     }
 
     // Reset to aspect-fit, unrotated. Called when a new image loads; does NOT
@@ -393,38 +373,43 @@ private:
         ds.sourceAlphaEncoding =
             (m_srvAlpha.encoding == ImageCore::AlphaEncoding::Premultiplied) ? 1 : 0;
         ds.sourceAlphaUsage =
-            (ResolveUsage(m_srvAlpha, m_alphaUsageOverride) == ImageCore::AlphaUsage::Data) ? 1 : 0;
+            (ResolveAlphaUsage(m_srvAlpha, m_alphaUsageOverride) == ImageCore::AlphaUsage::Data) ? 1 : 0;
         SetDrawState(ds);
         Invalidate();
     }
 
 public:
     // Per-pane alpha-usage override (context menu). Auto = policy decides.
-    void SetAlphaUsageOverride(ImageCore::AlphaUsage u) { m_alphaUsageOverride = u; PushDrawState(); }
+    void SetAlphaUsageOverride(ImageCore::AlphaUsage usage)
+    {
+        if (m_alphaUsageOverride == usage)
+        {
+            return;
+        }
+
+        m_alphaUsageOverride = usage;
+        PushDrawState();
+
+        // The SRV path resolves usage in its shader. The D2D fallback bakes the
+        // presentation into a bitmap, so rebuild it from the retained, unmodified
+        // payload when the override changes.
+        if (m_usingD2DBitmap)
+        {
+            RestagePayload();
+            if (m_redraw)
+            {
+                m_redraw->RequestAsyncRedraw();
+            }
+        }
+    }
     ImageCore::AlphaUsage AlphaUsageOverride() const { return m_alphaUsageOverride; }
     // The usage actually in effect for the current image (for menu check state).
-    ImageCore::AlphaUsage EffectiveAlphaUsage() const { return ResolveUsage(m_srvAlpha, m_alphaUsageOverride); }
-
-private:
-    // Auto usage policy: what does this image's alpha MEAN? Bethesda-friendly -
-    // block-compressed straight/unknown alpha is usually DATA (parallax height,
-    // specular), while loose PNG/TGA/uncompressed alpha is usually coverage. A
-    // decoder hint (DDS CUSTOM) or a per-pane override takes precedence.
-    static ImageCore::AlphaUsage ResolveUsage(const ImageAlphaInfo& a, ImageCore::AlphaUsage override)
+    ImageCore::AlphaUsage EffectiveAlphaUsage() const
     {
-        using U = ImageCore::AlphaUsage;
-        using E = ImageCore::AlphaEncoding;
-        if (override != U::Auto)
-            return override;
-        if (a.usageHint != U::Auto)
-            return a.usageHint;                 // decoder declared it (DDS CUSTOM -> Data)
-        if (a.encoding == E::Opaque)
-            return U::Data;                     // alpha is 1 - never coverage
-        if (a.sourceWasBlockCompressed && (a.encoding == E::Straight || a.encoding == E::Unknown))
-            return U::Data;                     // compressed straight alpha: usually data
-        return U::Coverage;                     // loose PNG/TGA/uncompressed: usually coverage
+        return ResolveAlphaUsage(m_srvAlpha, m_alphaUsageOverride);
     }
 
+private:
     // True for the block-compressed DDS formats (BC1..BC7, all TYPELESS/UNORM/
     // SRORM/SNORM/UF16/SF16 variants). These are the DXGI 70..99 range - the ones
     // uploaded straight to a GPU texture; everything else ImageCore hands back as
@@ -486,6 +471,7 @@ private:
     std::wstring m_payloadPath;                   // path the payload decoded from
     bool m_needUpload = false;
     std::wstring m_srvPath;                        // path of the SRV on screen now
+    bool m_usingD2DBitmap = false;                 // override changes must rebuild its baked presentation
     std::function<void()> m_onNeedReload;          // device-loss re-decode request
     std::shared_ptr<FD2D::AsyncRedrawToken> m_redraw;
 
