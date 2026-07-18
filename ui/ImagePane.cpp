@@ -27,10 +27,13 @@ namespace nsk
 
 // An FD2D::Image that accepts a decoded image payload from a worker thread and
 // uploads it to the device at render time (a device resource can only be built
-// once a render target / context is in hand). Two payload shapes:
-//   - a compressed DDS (BCn blocks): uploaded as-is to a D3D texture + SRV
-//     (SetShaderResource) - fast, no CPU decompress.
-//   - CPU BGRA8 pixels (PNG/JPG/TGA, or a non-BCn DDS): a D2D bitmap (SetBitmap).
+// once a render target / context is in hand). Two payload shapes, both uploaded
+// to a D3D texture + SRV (SetShaderResource) when D3D is available - so channel
+// isolation (a shader effect) works for every format:
+//   - a compressed DDS (BCn blocks): uploaded as-is - fast, no CPU decompress.
+//   - CPU BGRA8 pixels (PNG/JPG/TGA, or a non-BCn DDS): uploaded as B8G8R8A8.
+// Only the D2D-only fallback renderer (no D3D pass) shows a BGRA8 payload as a
+// D2D bitmap instead (SetBitmap), where channel isolation does not apply.
 // The payload is retained so it can be re-uploaded after a device/target loss.
 class ImagePane::ImageView : public FD2D::Image
 {
@@ -120,31 +123,42 @@ public:
             m_onNeedReload();
     }
 
-    // D3D pass (runs first): upload a compressed BCn payload straight to a GPU
-    // texture. This is the fast path - a 4K BCn DDS uploads in ~10 ms vs ~2 s to
-    // CPU-decompress it to BGRA8.
+    // D3D pass (runs first): upload the pending payload to a GPU texture+SRV.
+    // A compressed BCn DDS uploads its blocks straight (the fast path - a 4K BCn
+    // DDS uploads in ~10 ms vs ~2 s to CPU-decompress); a BGRA8 payload uploads
+    // as a B8G8R8A8_UNORM texture. Routing BGRA8 through the SRV too (not the D2D
+    // bitmap) is what makes channel isolation (R/G/B/A, a shader effect) work for
+    // PNG/JPEG/TGA/non-BCn DDS, not just BCn. The D2D bitmap path (OnRender) is
+    // now only the D2D-only fallback renderer, where this pass never runs.
     void OnRenderD3D(ID3D11DeviceContext* context) override
     {
         ImageCore::DecodedImage img;
         std::wstring path;
-        if (context && TakePending(img, path, /*wantCompressed=*/true))
+        if (context && TakePending(img, path, TakeMode::AnyForGpu))
         {
             Microsoft::WRL::ComPtr<ID3D11Device> device;
             context->GetDevice(&device);
+            bool uploaded = false;
             if (device)
             {
+                const bool compressed = IsBlockCompressed(img.dxgiFormat);
+                // BGRA8 bytes from ImageCore are B,G,R,A per texel - exactly
+                // B8G8R8A8_UNORM, so the shader samples them as RGBA correctly.
+                const DXGI_FORMAT fmt = compressed ? img.dxgiFormat
+                                                   : DXGI_FORMAT_B8G8R8A8_UNORM;
                 D3D11_TEXTURE2D_DESC desc {};
                 desc.Width = img.width;
                 desc.Height = img.height;
                 desc.MipLevels = 1;
                 desc.ArraySize = 1;
-                desc.Format = img.dxgiFormat;
+                desc.Format = fmt;
                 desc.SampleDesc.Count = 1;
                 desc.Usage = D3D11_USAGE_IMMUTABLE;
                 desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
                 D3D11_SUBRESOURCE_DATA data {};
                 data.pSysMem = img.blocks->data();
-                data.SysMemPitch = img.rowPitchBytes;
+                data.SysMemPitch = img.rowPitchBytes ? img.rowPitchBytes
+                                   : (compressed ? 0u : img.width * 4);
                 Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
                 if (SUCCEEDED(device->CreateTexture2D(&desc, &data, &tex)))
                 {
@@ -153,7 +167,8 @@ public:
                     {
                         SetShaderResource(srv);
                         // Pool the uploaded SRV so re-selecting this texture is a
-                        // synchronous cache hit (see TryApplyCachedSrv).
+                        // synchronous cache hit (see TryApplyCachedSrv) - now for
+                        // BGRA8 images too, not only BCn.
                         m_srvPath = path;
                         if (!path.empty())
                         {
@@ -161,21 +176,28 @@ public:
                             if (FD2D::Backplate* bp = BackplateRef())
                                 gen = bp->GetGraphicsGeneration().device;
                             ImageGpuResourceCache::Instance().Put(
-                                path, srv, img.width, img.height, img.dxgiFormat, gen);
+                                path, srv, img.width, img.height, fmt, gen);
                         }
+                        uploaded = true;
                     }
                 }
             }
+            // GPU texture/SRV creation failed: hand the payload back so the D2D
+            // pass can still show a BGRA8 image as a bitmap this frame.
+            if (!uploaded)
+                RestagePayload();
         }
         FD2D::Image::OnRenderD3D(context);
     }
 
-    // D2D pass: upload a CPU BGRA8 payload as a D2D bitmap.
+    // D2D pass: show a CPU BGRA8 payload as a D2D bitmap. Reached only by the
+    // D2D-only fallback renderer (OnRenderD3D didn't run) or after a GPU upload
+    // failure restaged the payload; channel isolation does not apply here.
     void OnRender(ID2D1RenderTarget* target) override
     {
         ImageCore::DecodedImage img;
         std::wstring path;
-        if (target && TakePending(img, path, /*wantCompressed=*/false))
+        if (target && TakePending(img, path, TakeMode::UncompressedForD2D))
         {
             const uint32_t pitch = img.rowPitchBytes ? img.rowPitchBytes : img.width * 4;
             const D2D1_SIZE_U size { img.width, img.height };
@@ -345,21 +367,38 @@ private:
         }
     }
 
-    // Hand the pending payload (and the path it came from) to whichever render
-    // pass matches its format (compressed BCn -> D3D pass, BGRA8 -> D2D pass),
-    // consuming the upload flag.
-    bool TakePending(ImageCore::DecodedImage& out, std::wstring& outPath, bool wantCompressed)
+    // Which render pass is asking for the pending payload:
+    //  - AnyForGpu: the D3D pass takes anything (compressed BCn OR BGRA8) to
+    //    upload to a texture+SRV, so channel isolation (a shader effect) works
+    //    for every format, not just BCn.
+    //  - UncompressedForD2D: the D2D pass only takes BGRA8, and only when the
+    //    D3D pass didn't already consume it (i.e. the D2D-only fallback renderer,
+    //    where OnRenderD3D never runs) - a BCn payload can't become a bitmap.
+    enum class TakeMode { AnyForGpu, UncompressedForD2D };
+
+    // Hand the pending payload (and the path it came from) to a render pass,
+    // consuming the upload flag. Restaged (see RestagePayload) if the GPU upload
+    // then fails, so the D2D pass can still show a BGRA8 payload this frame.
+    bool TakePending(ImageCore::DecodedImage& out, std::wstring& outPath, TakeMode mode)
     {
         std::lock_guard<std::mutex> lk(m_mutex);
         if (!m_needUpload || !m_payload.blocks || m_payload.blocks->empty())
             return false;
-        const bool isCompressed = IsBlockCompressed(m_payload.dxgiFormat);
-        if (isCompressed != wantCompressed)
+        if (mode == TakeMode::UncompressedForD2D && IsBlockCompressed(m_payload.dxgiFormat))
             return false;
         out = m_payload; // shared_ptr blob: cheap copy
         outPath = m_payloadPath;
         m_needUpload = false;
         return true;
+    }
+
+    // Put a taken payload back up for upload (the GPU texture/SRV creation
+    // failed). m_payload is still retained, so this just re-arms the flag.
+    void RestagePayload()
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if (m_payload.blocks && !m_payload.blocks->empty())
+            m_needUpload = true;
     }
 
     std::mutex m_mutex;
@@ -461,8 +500,9 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
     const uint64_t myGen = m_guard->gen.fetch_add(1, std::memory_order_relaxed) + 1;
 
     // Fast re-select: if this texture's uploaded SRV is still pooled for the
-    // live device, show it now and skip the whole decode round-trip. Only the
-    // GPU (BCn) path is pooled, so PNG/JPG always fall through to a decode.
+    // live device, show it now and skip the whole decode round-trip. Both BCn
+    // and BGRA8 SRVs are pooled now, so a re-selected PNG/JPG is a cache hit too
+    // (and channel isolation applies to it, since it comes back as an SRV).
     if (m_image && m_image->TryApplyCachedSrv(path))
     {
         Invalidate();
@@ -472,7 +512,8 @@ bool ImagePane::Load(const std::wstring& path, std::string* /*error*/)
     ImageCore::ImageRequest request(path, ImageCore::ImagePurpose::FullResolution);
     // Keep BCn DDS compressed: upload the blocks straight to a GPU texture
     // (ImageView's D3D pass) instead of CPU-decompressing to BGRA8 - ~200x
-    // faster for a 4K DDS. Non-DDS still decodes to BGRA8 (D2D pass).
+    // faster for a 4K DDS. Non-DDS decodes to BGRA8, uploaded to an SRV by the
+    // same D3D pass (so channel isolation applies).
     request.allowGpuCompressedDDS = true;
     request.srgb = true;
 
