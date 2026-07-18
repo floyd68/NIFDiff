@@ -295,8 +295,8 @@ documents every control in detail.
   letter shortcuts below resume once you click back into the 3D view.
   `I` toggles the material diff panel and `T` the texture inspector. In the
   inspector, click a row to select it, click the preview to cycle channels,
-  and double-click a row or the preview to open the resolved loose/archive
-  texture in an empty or newly added ImagePane.
+  and double-click a row to open the resolved loose/archive texture in an
+  empty or newly added ImagePane.
 - **Per-pane context menu**: open/close the pane, reopen a **recent file**
   into it (an MRU submenu of the last dozen opened .nifs, most-recent
   first, with a "Clear Recent Files" entry), open the containing folder in

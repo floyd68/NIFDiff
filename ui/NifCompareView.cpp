@@ -1673,7 +1673,7 @@ void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
     const D2D1_COLOR_F kHeaderCol = D2D1::ColorF(0.52f, 0.56f, 0.61f);
 
     float y = panel.top + kPad;
-    drawCell(L"TEXTURES (T)  \u00b7  click: select/channel  \u00b7  double-click: open in ImagePane  \u00b7  " +
+    drawCell(L"TEXTURES (T)  \u00b7  click preview: channel  \u00b7  double-click row: ImagePane  \u00b7  " +
              std::wstring(kChannelNames[m_texChannelMode]),
              panel.left + kPad, y, panelW - kPad * 2.0f, kHeaderCol);
     y += kRowH;
@@ -1782,10 +1782,7 @@ bool NifCompareView::HandleTextureInspectorDoubleClick(
         return false;
     }
 
-    bool openSelection =
-        FD2D::Util::RectContainsPoint(
-            m_texPreviewHitRect,
-            pt);
+    bool openSelection = false;
     for (std::size_t i = 0;
          i < m_texRowRects.size();
          ++i)
@@ -1879,6 +1876,12 @@ bool NifCompareView::OpenTextureInspectorSelectionInImagePane()
         return false;
     }
 
+    if (ImagePane* image = AsImage(target))
+    {
+        image->SetChannelMode(m_texChannelMode);
+        image->SetAlphaUsageOverride(
+            ImageCore::AlphaUsage::Data);
+    }
     SetActivePane(target);
     if (backplate)
     {
