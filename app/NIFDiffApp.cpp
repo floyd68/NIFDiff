@@ -28,6 +28,8 @@
 #include <Backplate.h>
 #include <Core.h>
 #include <DockPanel.h>
+#include <VirtualFileSystem.h>
+#include <VirtualPath.h>
 
 #include <algorithm>
 #include <atomic>
@@ -544,9 +546,18 @@ namespace
         resolver.SetGameData(gameData); // triggers ReloadArchives
     }
 
-    // The .nif paths the initial view should hold: the command-line/association
-    // files if any, else the last session's still-existing files. Empty means a
-    // single blank pane (first run, or every remembered file has vanished).
+    bool SessionPathExists(const std::wstring& path)
+    {
+        const auto virtualPath =
+            Floar::VirtualPath::Parse(path);
+        return virtualPath &&
+            Floar::VirtualFileSystem::Exists(*virtualPath);
+    }
+
+    // The paths the initial view should hold: the command-line/association
+    // paths if any, else the last session's still-existing filesystem or
+    // archive-member paths. Empty means a single blank pane (first run, or
+    // every remembered path has vanished).
     std::vector<std::wstring> GatherInitialPaths(const IniStore& settings,
                                                  const std::vector<std::wstring>& cmdFiles)
     {
@@ -557,8 +568,11 @@ namespace
         {
             const std::wstring key = L"File" + std::to_wstring(i);
             std::wstring path = settings.GetString(kSectionSession, key);
-            if (!path.empty() && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+            if (!path.empty() &&
+                SessionPathExists(path))
+            {
                 paths.push_back(std::move(path));
+            }
         }
         return paths;
     }

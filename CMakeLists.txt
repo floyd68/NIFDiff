@@ -445,3 +445,16 @@ if(MSVC)
     target_compile_options(RenderSurfaceCaptureTest PRIVATE /permissive- /utf-8 /W3)
 endif()
 add_test(NAME RenderSurfaceCaptureTest COMMAND RenderSurfaceCaptureTest)
+
+# ---------------------------------------------------------------------------
+# VirtualFileSystemTest - archive-member existence used by session restore
+# ---------------------------------------------------------------------------
+add_executable(VirtualFileSystemTest
+    app/VirtualFileSystemTest.cpp
+)
+target_link_libraries(VirtualFileSystemTest PRIVATE Floar)
+target_compile_definitions(VirtualFileSystemTest PRIVATE NOMINMAX)
+if(MSVC)
+    target_compile_options(VirtualFileSystemTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME VirtualFileSystemTest COMMAND VirtualFileSystemTest)
