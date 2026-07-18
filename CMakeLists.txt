@@ -33,13 +33,14 @@
 # NIFDiff's actual logging).
 cmake_minimum_required(VERSION 3.21)
 
-# app/res/version.h.in is the single, hand-maintained version source. Read its
-# numeric components here so CMake project metadata and the generated header
-# cannot drift apart.
+# app/res/version.h.in is the hand-maintained MAJOR.MINOR source (see its own
+# header comment). REVISION is NOT here - it's the git commit count, stamped
+# at BUILD time by the nifdiff_version target below (cmake/GenerateVersion.cmake),
+# so project metadata below only needs the two hand-maintained numbers.
 set(NIFDIFF_VERSION_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/app/res/version.h.in")
 file(STRINGS "${NIFDIFF_VERSION_TEMPLATE}" NIFDIFF_VERSION_DEFINES
-    REGEX "^#define NIFDIFF_VERSION_(MAJOR|MINOR|REVISION)[ \t]+[0-9]+")
-foreach(component MAJOR MINOR REVISION)
+    REGEX "^#define NIFDIFF_VERSION_(MAJOR|MINOR)[ \t]+[0-9]+")
+foreach(component MAJOR MINOR)
     foreach(line IN LISTS NIFDIFF_VERSION_DEFINES)
         if(line MATCHES "^#define NIFDIFF_VERSION_${component}[ \t]+([0-9]+)")
             set(NIFDIFF_VERSION_${component} "${CMAKE_MATCH_1}")
@@ -52,25 +53,8 @@ foreach(component MAJOR MINOR REVISION)
     endif()
 endforeach()
 
-set(NIFDIFF_VERSION
-    "${NIFDIFF_VERSION_MAJOR}.${NIFDIFF_VERSION_MINOR}.${NIFDIFF_VERSION_REVISION}")
-file(READ "${NIFDIFF_VERSION_TEMPLATE}" NIFDIFF_VERSION_HEADER_TEXT)
-foreach(string_macro STRING WSTR)
-    if(NOT NIFDIFF_VERSION_HEADER_TEXT MATCHES
-        "#define[ \t]+NIFDIFF_VERSION_${string_macro}[ \t]+L?\"([0-9]+\\.[0-9]+\\.[0-9]+)\"")
-        message(FATAL_ERROR
-            "NIFDiff: NIFDIFF_VERSION_${string_macro} is missing from "
-            "${NIFDIFF_VERSION_TEMPLATE}")
-    endif()
-    if(NOT CMAKE_MATCH_1 STREQUAL NIFDIFF_VERSION)
-        message(FATAL_ERROR
-            "NIFDiff: NIFDIFF_VERSION_${string_macro} (${CMAKE_MATCH_1}) does "
-            "not match the numeric version (${NIFDIFF_VERSION})")
-    endif()
-endforeach()
-
 project(NIFDiff
-    VERSION ${NIFDIFF_VERSION}
+    VERSION ${NIFDIFF_VERSION_MAJOR}.${NIFDIFF_VERSION_MINOR}
     LANGUAGES C CXX)
 enable_testing()
 
@@ -180,18 +164,32 @@ set(NIFDIFF_SHADER_SOURCES
 set_source_files_properties(${NIFDIFF_SHADER_SOURCES} PROPERTIES VS_TOOL_OVERRIDE "None")
 
 # ---------------------------------------------------------------------------
-# Version header (generated/version.h)
+# Version stamp (generated/version.h)
 #
-# The checked-in template contains the fixed release version. configure_file
-# keeps the build tree header available to both C++ and RC; changing the source
-# template automatically causes CMake to regenerate it.
+# Regenerated on every build rather than at configure time: the revision is
+# the git commit count, so a plain `cmake --build` after a commit must pick
+# the new number up without re-running cmake. GenerateVersion.cmake rewrites
+# the header only when its content changed, so this costs one tiny script run
+# per build and triggers no recompiles when the version is unchanged.
 # ---------------------------------------------------------------------------
 set(NIFDIFF_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${NIFDIFF_GENERATED_DIR}")
-configure_file(
-    "${NIFDIFF_VERSION_TEMPLATE}"
-    "${NIFDIFF_GENERATED_DIR}/version.h"
-    COPYONLY)
+add_custom_target(nifdiff_version ALL
+    COMMAND ${CMAKE_COMMAND}
+            -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUT_FILE=${NIFDIFF_GENERATED_DIR}/version.h
+            -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.h.in
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.cmake
+    BYPRODUCTS "${NIFDIFF_GENERATED_DIR}/version.h"
+    COMMENT "Stamping version (major.minor from app/res/version.h.in + git commit count)"
+    VERBATIM)
+# Generate once now too, so the very first configure+build has the header
+# before the RC compiler asks for it.
+execute_process(COMMAND ${CMAKE_COMMAND}
+    -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DOUT_FILE=${NIFDIFF_GENERATED_DIR}/version.h
+    -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.h.in
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.cmake)
 
 # ---------------------------------------------------------------------------
 # NIFDiff executable
@@ -290,6 +288,7 @@ add_custom_command(TARGET NIFDiff POST_BUILD
             "$<TARGET_FILE_DIR:NIFDiff>/shaders"
     COMMENT "Copying editable shader sources to $<TARGET_FILE_DIR:NIFDiff>/shaders")
 
+add_dependencies(NIFDiff nifdiff_version)
 set_source_files_properties(app/res/version.h.in PROPERTIES HEADER_FILE_ONLY ON)
 
 target_include_directories(NIFDiff PRIVATE

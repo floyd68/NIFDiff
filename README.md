@@ -688,7 +688,7 @@ app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
                    IniStore.h (INI persistence), AppIpc.h/.cpp (single-instance
                    forwarding), FileDialog.h/.cpp,
                    ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests,
-                   res/ (icon, VERSIONINFO .rc, fixed version.h.in source)
+                   res/ (icon, VERSIONINFO .rc, version.h.in MAJOR/MINOR source)
 cmake/             project-specific CMake helpers
 core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera /
                    ResourceResolver (override -> nif dir -> derived Data root -> Game Data -> BSA/BA2 order)
@@ -723,12 +723,14 @@ or `third_party/Floar` look uninitialized.
 
 ## Versioning and releases
 
-Versions are `MAJOR.MINOR.REVISION` (e.g. `1.0.156`) and are maintained in the
-single source file [app/res/version.h.in](app/res/version.h.in). Update that
-file manually, or through an AI release agent, when preparing a release.
-CMake copies it to `build/generated/version.h`; the title bar, About dialog,
-CMake project metadata, and exe VERSIONINFO (Explorer -> Properties -> Details)
-all consume the same fixed version.
+Versions are `MAJOR.MINOR.REVISION` (e.g. `1.0.116`): `MAJOR`/`MINOR` are
+hand-maintained in [app/res/version.h.in](app/res/version.h.in), while
+`REVISION` is the **git commit count**, stamped at build time into
+`build/generated/version.h` - so every commit yields a distinct version
+nobody has to maintain, and version `1.0.116` is exactly the commit tagged
+`v1.0.116`. The number shows up in the title bar (with a `+dev` suffix when
+built from a dirty tree, so a local build can't pass for the released one) and
+in the exe's VERSIONINFO (Explorer -> Properties -> Details).
 
 Releases are cut with [Release.ps1](Release.ps1) - `-Plan` reports what
 changed since the last tag and the version the next commit will carry;

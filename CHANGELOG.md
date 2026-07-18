@@ -7,7 +7,7 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
-## 1.1.0
+## 1.1.161
 
 ### Textures
 - Any pane can show a texture (`.dds`/`.png`/`.tga`/`.bmp`/...) in place of a

@@ -1,17 +1,15 @@
-// version.h - NIFDiff's single version source.
+// version.h.in - NIFDiff's hand-maintained version source (MAJOR.MINOR only).
 //
-// Update these values manually (or through a release agent) when preparing a
-// release. CMake copies this file to generated/version.h so both C++ and the
-// Windows resource compiler consume the same version.
+// The third component (REVISION) is NOT here: it is the git commit count,
+// computed at BUILD time by cmake/GenerateVersion.cmake into
+// build/generated/version.h, so every commit produces a distinct,
+// monotonically increasing version without anyone editing a file. Full
+// version = MAJOR.MINOR.<commit count>.
 //
-// Included by C++ (app shell title bar) AND by the resource compiler
-// (NIFDiff.rc's VERSIONINFO), so it must stay preprocessor-only: no types,
-// no namespaces, plain #defines.
+// Update the two numbers below manually (or through a release agent) when
+// preparing a release - Release.ps1 -Bump major|minor does it for you.
+// Commit that edit as part of the release commit (see RELEASING.md).
 #pragma once
 
-#define NIFDIFF_VERSION_MAJOR    1
-#define NIFDIFF_VERSION_MINOR    1
-#define NIFDIFF_VERSION_REVISION 0
-
-#define NIFDIFF_VERSION_STRING  "1.1.0"
-#define NIFDIFF_VERSION_WSTR   L"1.1.0"
+#define NIFDIFF_VERSION_MAJOR 1
+#define NIFDIFF_VERSION_MINOR 1

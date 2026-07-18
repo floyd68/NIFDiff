@@ -3,7 +3,7 @@
 #include "AppIpc.h"
 #include "IniStore.h"
 #include "res/resource.h"
-#include "version.h" // copied from app/res/version.h.in by CMake
+#include "version.h" // generated (cmake/GenerateVersion.cmake): NIFDIFF_VERSION_DISPLAY
 #include "AppSetup.h"
 #include "FileDialog.h"
 #include "ScreenshotUtil.h"
@@ -43,10 +43,15 @@ namespace nsk
 {
 namespace
 {
-    // version.h is the single release-version source used by the title bar,
-    // About dialog and executable VERSIONINFO.
+    // version.h hands out narrow literals (the resource compiler needs them);
+    // widen through the usual two-step so the title stays a compile-time
+    // literal concatenation.
+#define NIFDIFF_WIDEN2(x) L##x
+#define NIFDIFF_WIDEN(x) NIFDIFF_WIDEN2(x)
+    // Version in the title bar: a bug-report screenshot then identifies the
+    // build ("1.1.0", or "1.1.0+dev" when built from a dirty tree).
     constexpr wchar_t kWindowTitle[] =
-        L"NIFDiff " NIFDIFF_VERSION_WSTR L" - NIF Model Compare";
+        L"NIFDiff " NIFDIFF_WIDEN(NIFDIFF_VERSION_DISPLAY) L" - NIF Model Compare";
 
     std::wstring WindowTitleForPath(const std::wstring& path)
     {
