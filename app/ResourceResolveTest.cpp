@@ -68,6 +68,13 @@ int main(int argc, char** argv)
     WriteDummyFile(root / "NifDir" / "textures" / "test" / "a.dds", markerNif, 4);
     WriteDummyFile(root / "GameData" / "textures" / "test" / "only_game.dds", markerGame, 4);
 
+    // A loose mod folder: the NIF lives under <Mod>\meshes\..., its texture at
+    // the Data-rooted <Mod>\textures\... (NOT next to the NIF). This must resolve
+    // via DeriveDataRoot even though neither GameData nor an override has it.
+    const char markerRoot[] = "ROOT";
+    fs::create_directories(root / "Mod" / "meshes" / "clutter");
+    WriteDummyFile(root / "Mod" / "textures" / "elsopa" / "barrel.dds", markerRoot, 4);
+
     nsk::ResourceResolver resolver;
     resolver.SetAutoLoadArchives(false);
     resolver.SetGameData((root / "GameData").wstring());
@@ -130,6 +137,22 @@ int main(int argc, char** argv)
         }
         else
             std::cout << "OK: textures/ prefix fixup\n";
+    }
+
+    {
+        // NIF at <Mod>\meshes\clutter references "textures\elsopa\barrel.dds"
+        // relative to <Mod>. It must resolve via the derived Data root, not the
+        // NIF's own folder (which would be <Mod>\meshes\clutter\textures\...).
+        const auto nifDir = (root / "Mod" / "meshes" / "clutter").wstring();
+        auto hit = resolver.Find("textures/elsopa/barrel.dds", nifDir);
+        const std::string m = readMarker(hit);
+        if (m != "ROOT")
+        {
+            std::cout << "FAIL: data-root derivation should resolve mod texture, got '" << m << "'\n";
+            ++failures;
+        }
+        else
+            std::cout << "OK: data root derived from \\meshes resolves mod texture\n";
     }
 
     {

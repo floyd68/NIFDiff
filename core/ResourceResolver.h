@@ -109,6 +109,12 @@ public:
 private:
     static std::string NormalizeRelative(std::string path);
     static std::string ApplyTexturesFixup(const std::string& path);
+    // Bethesda assets are Data-rooted: a NIF at <root>\meshes\... references
+    // "textures\..." relative to <root>, not to the NIF's own folder. Given the
+    // NIF's directory, return everything before its "\meshes" segment as the
+    // implicit Data root (empty when there is none), so a loose mod folder's own
+    // textures resolve without the mod being deployed to the game's Data dir.
+    static std::wstring DeriveDataRoot(const std::wstring& nifDirectory);
     static bool LooseExists(const std::wstring& root, const std::string& rel);
     static std::wstring JoinLoose(const std::wstring& root, const std::string& rel);
     static std::wstring ToWidePath(const std::string& rel);

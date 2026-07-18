@@ -377,10 +377,14 @@ documents every control in detail.
   (no skinning/morphs/particles/controllers - see `SceneBuilder.h`'s
   scope note).
 - Textures resolve in engine order: override folders -> the NIF's own
-  directory -> Game Data -> BSA/BA2 archives (via Floar), with Game Data
-  auto-detection and an override-folder UI in the bottom strip. A
-  named-but-unresolved diffuse renders magenta instead of blending in as
-  a plain white surface.
+  directory -> the NIF's **derived Data root** -> Game Data -> BSA/BA2
+  archives (via Floar), with Game Data auto-detection and an override-folder
+  UI in the bottom strip. The derived Data root handles Bethesda's
+  Data-rooted convention: a NIF at `<mod>\meshes\...` references its textures
+  as `textures\...` relative to `<mod>`, so opening a loose mod folder (e.g. a
+  Vortex/MO2 staging folder) shows its own textures even when the mod is not
+  deployed to the game's `Data` directory. A named-but-unresolved diffuse
+  renders magenta instead of blending in as a plain white surface.
 - Textures are pooled process-wide - each unique resolved source is
   decoded and uploaded once, shared across panes - and BSA scanning runs
   in parallel in the background at startup (cold start around half a
@@ -636,7 +640,7 @@ app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
 cmake/             Version.cmake (major.minor - the only hand-edited numbers),
                    GenerateVersion.cmake (build-time git commit-count stamp)
 core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera /
-                   ResourceResolver (override -> nif dir -> Game Data -> BSA/BA2 order)
+                   ResourceResolver (override -> nif dir -> derived Data root -> Game Data -> BSA/BA2 order)
 render/            D3D11 renderer, HLSL shaders (shaders/, fxc-precompiled at build time),
                    TextureRepository (process-wide pooled DDS decode + complex-material
                    probes) with a per-viewport TextureCache memo on top

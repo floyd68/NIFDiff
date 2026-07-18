@@ -304,6 +304,32 @@ std::string ResourceResolver::ApplyTexturesFixup(const std::string& path)
     return "textures/" + path;
 }
 
+std::wstring ResourceResolver::DeriveDataRoot(const std::wstring& nifDirectory)
+{
+    if (nifDirectory.empty())
+        return {};
+
+    // Search a lowercased, backslash-normalized copy for a path segment that is
+    // exactly "meshes" (bounded by separators / ends), but cut the ORIGINAL
+    // string so the returned root keeps its real casing. Scan left-to-right so a
+    // path with nested meshes/ folders yields the shallowest (true Data) root.
+    std::wstring lower = nifDirectory;
+    for (wchar_t& c : lower)
+        c = (c == L'/') ? L'\\' : static_cast<wchar_t>(towlower(c));
+
+    for (std::size_t from = 0;;)
+    {
+        const std::size_t p = lower.find(L"\\meshes", from);
+        if (p == std::wstring::npos)
+            break;
+        const std::size_t after = p + 7; // length of "\meshes"
+        if (after == lower.size() || lower[after] == L'\\')
+            return nifDirectory.substr(0, p); // everything before "\meshes"
+        from = p + 1;
+    }
+    return {};
+}
+
 std::wstring ResourceResolver::ToWidePath(const std::string& rel)
 {
     std::wstring w(rel.size(), L'\0');
@@ -351,6 +377,14 @@ ResourceLocation ResourceResolver::LocateNormalized(const std::string& rel,
     }
 
     if (!nifDirectory.empty() && tryLoose(nifDirectory))
+        return result;
+
+    // Bethesda Data-rooted fallback: a NIF under <root>\meshes\ references
+    // "textures\..." relative to <root>. Try that derived root (a loose mod
+    // folder's own textures) before the game's Data - a compare/preview tool
+    // wants THIS mod's textures, and vanilla still resolves via m_gameData below.
+    if (const std::wstring dataRoot = DeriveDataRoot(nifDirectory);
+        !dataRoot.empty() && tryLoose(dataRoot))
         return result;
 
     if (!m_gameData.empty() && tryLoose(m_gameData))
