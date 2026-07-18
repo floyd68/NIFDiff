@@ -8,10 +8,13 @@
 // recently-viewed texture applies its SRV synchronously - no decode round-trip,
 // no re-upload.
 //
-// Only the GPU (block-compressed DDS) path is cached: those SRVs are device
-// resources safe to share, and they are the expensive 4K game textures the
-// thumbnail strip browses. PNG/JPG go the CPU/D2D-bitmap route and are not
-// pooled here (ImageCore's own decode cache already covers their re-decode).
+// Both the block-compressed DDS path AND decoded BGRA8 images (PNG/JPG/TGA,
+// uncompressed DDS) are pooled: every format now uploads to an SRV (so channel
+// isolation works uniformly), and caching the SRV makes re-selecting any of them
+// a synchronous cache hit. Because a 4K BGRA8 SRV is ~64 MiB (vs ~16 MiB for a
+// BC7 one), the cache is bounded by a BYTE BUDGET as well as an entry count and
+// evicts LRU past either - so flipping through a big folder of 4K textures can't
+// run VRAM away (the ComPtr in each Entry pins the resource until evicted).
 //
 // The cache self-clears when the D3D device generation changes (device loss /
 // recreation), so a stale SRV from a dead device is never handed back.
@@ -68,19 +71,26 @@ private:
     void ClearUnlocked();
     void EnsureDeviceGenerationUnlocked(uint64_t deviceGeneration);
 
+    // Approximate mip-0 VRAM footprint of an SRV of this size/format (BCn block
+    // sizes; 4 bytes/texel otherwise). Drives the byte-budget eviction.
+    static size_t EstimateBytes(UINT w, UINT h, DXGI_FORMAT format);
+
     struct Entry
     {
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv {};
         UINT width { 0 };
         UINT height { 0 };
         DXGI_FORMAT format { DXGI_FORMAT_UNKNOWN };
+        size_t bytes { 0 }; // EstimateBytes at insert - keeps m_bytesInUse O(1)
         std::list<std::wstring>::iterator lruIt {};
     };
 
     mutable std::mutex m_mutex;
     std::unordered_map<std::wstring, Entry> m_cache;
     std::list<std::wstring> m_lru; // front = most-recently-used
-    size_t m_capacity { 64 };
+    size_t m_capacity { 64 };                          // entry-count cap
+    size_t m_byteBudget { 512ull * 1024 * 1024 };      // ~512 MiB VRAM cap
+    size_t m_bytesInUse { 0 };
     uint64_t m_deviceGeneration { 0 };
 };
 
