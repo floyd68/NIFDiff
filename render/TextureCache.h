@@ -40,6 +40,16 @@ public:
         m_memo.clear();
     }
 
+    void SetGame(BethesdaGame game)
+    {
+        if (game == m_game)
+        {
+            return;
+        }
+        m_game = game;
+        m_memo.clear();
+    }
+
     // relativePath uses forward slashes (see NifDocument::normalizeSlashes).
     // Returns a pooled or freshly loaded SRV, or nullptr when the path does
     // not resolve / fails to decode - the renderer decides how to present a
@@ -78,7 +88,10 @@ public:
     void Prefetch(const std::vector<std::string>& relativePaths)
     {
         if (m_repository != nullptr)
-            m_repository->Prefetch(relativePaths, m_nifDirectory);
+            m_repository->Prefetch(
+                relativePaths,
+                m_nifDirectory,
+                m_game);
     }
 
     // Async prefetch under this cache's resolution context: textures decode on
@@ -87,7 +100,10 @@ public:
     void PrefetchAsync(const std::vector<std::string>& relativePaths)
     {
         if (m_repository != nullptr)
-            m_repository->PrefetchAsync(relativePaths, m_nifDirectory);
+            m_repository->PrefetchAsync(
+                relativePaths,
+                m_nifDirectory,
+                m_game);
     }
 
     bool HasComplexMaterialHeight(const std::string& relativePath)
@@ -116,13 +132,18 @@ private:
                 return it->second; // may be nullptr: memoized "does not resolve"
         }
         TextureRepository::Entry* e =
-            m_repository->GetOrLoad(relativePath, m_nifDirectory, m_synchronous);
+            m_repository->GetOrLoad(
+                relativePath,
+                m_nifDirectory,
+                m_game,
+                m_synchronous);
         m_memo[relativePath] = e;
         return e;
     }
 
     TextureRepository* m_repository = nullptr;
     std::wstring m_nifDirectory;
+    BethesdaGame m_game { BethesdaGame::Unknown };
     bool m_synchronous = false;
     // Entry pointers stay valid until TextureRepository::Clear (node-based
     // map); the view-level invalidation clears repository and memos together.

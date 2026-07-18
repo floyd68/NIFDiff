@@ -67,6 +67,16 @@ int main(int argc, char** argv)
     WriteDummyFile(root / "Override" / "textures" / "test" / "a.dds", markerOvr, 4);
     WriteDummyFile(root / "NifDir" / "textures" / "test" / "a.dds", markerNif, 4);
     WriteDummyFile(root / "GameData" / "textures" / "test" / "only_game.dds", markerGame, 4);
+    const char markerSse[] = "SSE!";
+    const char markerFo4[] = "FO4!";
+    WriteDummyFile(
+        root / "SkyrimSEData" / "textures" / "shared" / "same.dds",
+        markerSse,
+        4);
+    WriteDummyFile(
+        root / "Fallout4Data" / "textures" / "shared" / "same.dds",
+        markerFo4,
+        4);
 
     // A loose mod folder: the NIF lives under <Mod>\meshes\..., its texture at
     // the Data-rooted <Mod>\textures\... (NOT next to the NIF). This must resolve
@@ -153,6 +163,117 @@ int main(int argc, char** argv)
         }
         else
             std::cout << "OK: data root derived from \\meshes resolves mod texture\n";
+    }
+
+    {
+        nsk::ResourceResolver multi;
+        multi.SetAutoLoadArchives(false);
+        multi.SetGameDataRoots({
+            {
+                nsk::BethesdaGame::SkyrimSE,
+                (root / "SkyrimSEData").wstring()
+            },
+            {
+                nsk::BethesdaGame::Fallout4,
+                (root / "Fallout4Data").wstring()
+            }
+        });
+
+        const std::string sse = readMarker(
+            multi.Find(
+                "textures/shared/same.dds",
+                {},
+                nsk::BethesdaGame::SkyrimSE));
+        const std::string fo4 = readMarker(
+            multi.Find(
+                "textures/shared/same.dds",
+                {},
+                nsk::BethesdaGame::Fallout4));
+        if (sse != "SSE!" || fo4 != "FO4!")
+        {
+            std::cout
+                << "FAIL: typed game roots crossed: SSE='"
+                << sse
+                << "' FO4='"
+                << fo4
+                << "'\n";
+            ++failures;
+        }
+        else
+        {
+            std::cout
+                << "OK: identical relative paths stay game-scoped\n";
+        }
+
+        if (nsk::BethesdaGameFromBsVersion(83) !=
+                nsk::BethesdaGame::SkyrimLE ||
+            nsk::BethesdaGameFromBsVersion(100) !=
+                nsk::BethesdaGame::SkyrimSE ||
+            nsk::BethesdaGameFromBsVersion(130) !=
+                nsk::BethesdaGame::Fallout4 ||
+            nsk::BethesdaGameFromBsVersion(0) !=
+                nsk::BethesdaGame::Unknown)
+        {
+            std::cout << "FAIL: BS version game mapping\n";
+            ++failures;
+        }
+        else
+        {
+            std::cout << "OK: BS version game mapping\n";
+        }
+
+        const std::wstring sseArchiveNif =
+            (root / "SkyrimSEData" /
+             "aMidianBorn_Book of Silence.bsa" /
+             "meshes" / "armor" / "blades" /
+             "bladeshelmetskhajiit_1.nif").wstring();
+        if (multi.GameForNifPath(sseArchiveNif, 83) !=
+                nsk::BethesdaGame::SkyrimSE ||
+            multi.GameForNifPath(
+                (root / "LooseMod" / "meshes" /
+                 "legacy.nif").wstring(),
+                83) != nsk::BethesdaGame::SkyrimSE)
+        {
+            std::cout
+                << "FAIL: Data-root game identity should override "
+                   "ambiguous BS version\n";
+            ++failures;
+        }
+        else
+        {
+            std::cout
+                << "OK: Data-root identity overrides legacy-format "
+                   "NIF header\n";
+        }
+
+        nsk::ResourceResolver bothSkyrim;
+        bothSkyrim.SetAutoLoadArchives(false);
+        bothSkyrim.SetGameDataRoots({
+            {
+                nsk::BethesdaGame::SkyrimLE,
+                (root / "SkyrimLEData").wstring()
+            },
+            {
+                nsk::BethesdaGame::SkyrimSE,
+                (root / "SkyrimSEData").wstring()
+            }
+        });
+        if (bothSkyrim.GameForNifPath(
+                (root / "LooseMod" / "meshes" /
+                 "legacy.nif").wstring(),
+                83) != nsk::BethesdaGame::SkyrimLE)
+        {
+            std::cout
+                << "FAIL: BS83 should remain Skyrim LE when both "
+                   "Skyrim roots exist\n";
+            ++failures;
+        }
+        else
+        {
+            std::cout
+                << "OK: ambiguous BS83 fallback respects configured "
+                   "Skyrim roots\n";
+        }
     }
 
     {

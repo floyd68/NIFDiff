@@ -375,7 +375,7 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     auto resRow = makeRow(name + L"_ResRow", 8.0f);
 
     m_browseGameDataBtn = std::make_shared<FD2D::Button>(L"BrowseGameData");
-    m_browseGameDataBtn->SetLabel(L"Browse...");
+    m_browseGameDataBtn->SetLabel(L"Set Active...");
     resRow->AddChild(m_browseGameDataBtn);
 
     m_detectGameDataBtn = std::make_shared<FD2D::Button>(L"DetectGameData");
@@ -542,13 +542,22 @@ void NifCompareControlPanel::SetOnDetectGameData(std::function<void()> handler) 
 void NifCompareControlPanel::SetOnAddOverrideFolder(std::function<void()> handler) { m_addOverrideBtn->OnClick(std::move(handler)); }
 void NifCompareControlPanel::SetOnClearOverrides(std::function<void()> handler) { m_clearOverridesBtn->OnClick(std::move(handler)); }
 
-void NifCompareControlPanel::SetGameDataLabel(const std::wstring& text)
+void NifCompareControlPanel::SetGameDataLabel(
+    const std::wstring& text,
+    const std::wstring& details)
 {
     if (text.empty())
     {
         m_gameDataLabel->SetText(L"Game Data: (not set)");
         m_gameDataLabel->SetTooltipText(L"");
         m_gameDataLabel->SetCopyText(L"");
+        return;
+    }
+    if (!details.empty())
+    {
+        m_gameDataLabel->SetText(L"Game Data: " + text);
+        m_gameDataLabel->SetTooltipText(details);
+        m_gameDataLabel->SetCopyText(details);
         return;
     }
     // A Data path's tail is the informative part ("...\Skyrim Special

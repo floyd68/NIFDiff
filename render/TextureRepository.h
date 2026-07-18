@@ -17,6 +17,7 @@
 #pragma once
 
 #include "../core/ResourceManager.h" // shared load pool (async prefetch)
+#include "../core/ResourceResolver.h"
 
 #include <d3d11_1.h>
 #include <wrl/client.h>
@@ -29,9 +30,6 @@
 
 namespace nsk
 {
-
-class ResourceResolver;
-struct ResourceBytes;
 
 class TextureRepository
 {
@@ -66,6 +64,7 @@ public:
         // re-fetch the same bytes (Find with equal inputs is deterministic).
         std::string relativePath;
         std::wstring nifDirectory;
+        BethesdaGame game { BethesdaGame::Unknown };
 
         // Async prefetch placeholder: this entry is pooled but its bytes are
         // still decoding on a worker (srv stays null until the completion fills
@@ -96,6 +95,7 @@ public:
     // in when the async decode lands, next paint); a one-shot render that needs
     // the texture this instant (thumbnails) passes true.
     Entry* GetOrLoad(const std::string& relativePath, const std::wstring& nifDirectory,
+                     BethesdaGame game,
                      bool forceSyncPending = false);
 
     // Computes both complex-material verdicts for the entry if not probed
@@ -110,7 +110,9 @@ public:
     // threads (ID3D11Device resource creation is free-threaded). After
     // this, the first frame's GetOrLoad calls are pool hits. Failures are
     // left unpooled and take the normal lazy path.
-    void Prefetch(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory);
+    void Prefetch(const std::vector<std::string>& relativePaths,
+                  const std::wstring& nifDirectory,
+                  BethesdaGame game);
 
     // Async counterpart of Prefetch: resolve + dedup on the calling (UI)
     // thread, pool a null-srv placeholder per unseen source, then decode+upload
@@ -119,7 +121,9 @@ public:
     // pop in as they finish. Falls back to synchronous Prefetch when no manager
     // is wired (e.g. tests). Safe to call repeatedly - in-flight/pooled sources
     // are skipped.
-    void PrefetchAsync(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory);
+    void PrefetchAsync(const std::vector<std::string>& relativePaths,
+                       const std::wstring& nifDirectory,
+                       BethesdaGame game);
 
     void Clear();
 

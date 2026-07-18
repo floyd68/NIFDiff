@@ -21,6 +21,23 @@
 namespace nsk
 {
 
+enum class BethesdaGame : std::uint8_t
+{
+    Unknown = 0,
+    SkyrimLE,
+    SkyrimSE,
+    Fallout4
+};
+
+struct GameDataRoot
+{
+    BethesdaGame game { BethesdaGame::Unknown };
+    std::wstring path;
+};
+
+BethesdaGame BethesdaGameFromBsVersion(std::uint32_t bsVersion);
+const wchar_t* BethesdaGameName(BethesdaGame game);
+
 struct ResourceBytes
 {
     std::wstring diskPath;              // set on loose-file hit
@@ -70,14 +87,25 @@ class ResourceResolver
 public:
     ~ResourceResolver();
 
+    // Legacy single-root entry point. An untyped root remains available as a
+    // fallback for all games; new UI/settings should use SetGameDataRoots.
     void SetGameData(std::wstring dataDir);
+    void SetGameDataRoots(std::vector<GameDataRoot> roots);
     void SetOverrideFolders(std::vector<std::wstring> folders); // [0]=highest
     void SetAutoLoadArchives(bool enabled) { m_autoLoadArchives = enabled; }
     bool AutoLoadArchives() const { return m_autoLoadArchives; }
 
-    const std::wstring& GameData() const { return m_gameData; }
+    const std::wstring& GameData() const { return m_legacyGameData; }
+    const std::vector<GameDataRoot>& GameDataRoots() const { return m_gameDataRoots; }
     const std::vector<std::wstring>& OverrideFolders() const { return m_overrideFolders; }
-    std::size_t ArchiveCount() const { WaitForArchiveScan(); return m_archives.size(); }
+    std::size_t ArchiveCount() const;
+
+    // Prefer the registered Data root containing the NIF source path (including
+    // virtual paths inside BSA/BA2 files), then fall back to its BS Version.
+    // This handles LE-format meshes shipped or installed in Skyrim SE Data.
+    BethesdaGame GameForNifPath(
+        const std::wstring& nifPath,
+        std::uint32_t bsVersion) const;
 
     // Scan GameData for *.bsa/*.ba2 that contain a textures/ or materials/
     // root entry. No-op when AutoLoadArchives is false or GameData is empty.
@@ -100,14 +128,16 @@ public:
     // relativePath uses either / or \ (normalized internally). nifDirectory
     // is the folder containing the NIF currently being rendered (may be empty).
     [[nodiscard]] ResourceBytes Find(const std::string& relativePath,
-                                     const std::wstring& nifDirectory = {}) const;
+                                     const std::wstring& nifDirectory = {},
+                                     BethesdaGame game = BethesdaGame::Unknown) const;
 
     // Cheap identity lookup: which loose file / archive entry `relativePath`
     // resolves to, WITHOUT reading archive bytes. Thread-safe; safe to call on
     // the UI thread to obtain a dedup key. (Loose-file hits never wait; an
     // archive hit waits for the background scan, usually long done.)
     [[nodiscard]] ResourceLocation Locate(const std::string& relativePath,
-                                          const std::wstring& nifDirectory = {}) const;
+                                          const std::wstring& nifDirectory = {},
+                                          BethesdaGame game = BethesdaGame::Unknown) const;
 
     // Read a located source's bytes. A loose file returns empty (the decoder
     // opens diskPath itself); an archive entry does the ExtractToMemory. Safe
@@ -118,6 +148,7 @@ public:
 
     // Windows registry scan for Bethesda Softworks install paths → Data dirs.
     static std::vector<std::wstring> DetectGameDataFolders();
+    static std::vector<GameDataRoot> DetectGameDataRoots();
 
 private:
     static std::string NormalizeRelative(std::string path);
@@ -134,14 +165,16 @@ private:
     static bool ArchiveHasTexturesOrMaterials(const std::vector<Floar::ArchiveEntry>& entries);
 
     ResourceLocation LocateNormalized(const std::string& rel,
-                                      const std::wstring& nifDirectory) const;
+                                      const std::wstring& nifDirectory,
+                                      BethesdaGame game) const;
 
     // Worker body of ReloadArchives: enumerates gameData (by-value copy so
     // the member stays untouched off-thread) and fills m_archives. Nobody
     // reads m_archives until WaitForArchiveScan has joined this.
-    void ScanArchives(std::wstring gameData);
+    void ScanArchives(std::vector<GameDataRoot> roots);
 
-    std::wstring m_gameData;
+    std::wstring m_legacyGameData;
+    std::vector<GameDataRoot> m_gameDataRoots;
     std::vector<std::wstring> m_overrideFolders;
     bool m_autoLoadArchives = true;
 
@@ -149,10 +182,12 @@ private:
     // report a stable ResourceBytes::sourceKey.
     struct LoadedArchive
     {
+        BethesdaGame game { BethesdaGame::Unknown };
         std::wstring path;
         std::unique_ptr<Floar::IArchiveReader> reader;
     };
     std::vector<LoadedArchive> m_archives;
+    mutable std::mutex m_archiveMutex;
 
     // Declared after m_archives on purpose: members are destroyed in
     // reverse order, so the future (whose destruction joins a still-running

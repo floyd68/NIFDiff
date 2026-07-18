@@ -122,6 +122,7 @@ public:
     }
     // This viewport's texture resolution context (the loaded NIF's folder).
     const std::wstring& NifDirectory() const { return m_nifDirectory; }
+    BethesdaGame Game() const { return m_game; }
 
     // Human-readable shader classification for the UI labels, covering the
     // extended-material conventions on top of the vanilla shader types:
@@ -347,6 +348,7 @@ private:
     ResourceResolver* m_resolver = nullptr;
     TextureRepository* m_textureRepository = nullptr;
     std::wstring m_nifDirectory;
+    BethesdaGame m_game { BethesdaGame::Unknown };
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> m_d2dBitmap;
     UINT m_d2dBitmapWidth = 0;

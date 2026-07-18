@@ -113,6 +113,7 @@ void NifViewport::OnAttached(FD2D::Backplate& backplate)
             m_textures = std::make_unique<TextureCache>(m_textureRepository);
             if (!m_nifDirectory.empty())
                 m_textures->SetNifDirectory(m_nifDirectory);
+            m_textures->SetGame(m_game);
         }
     }
 }
@@ -148,6 +149,18 @@ void NifViewport::OnGraphicsInvalidated(
 void NifViewport::SetResourceResolver(ResourceResolver* resolver)
 {
     m_resolver = resolver;
+    if (m_doc)
+    {
+        m_game = m_resolver
+            ? m_resolver->GameForNifPath(
+                m_doc->filePath(),
+                m_doc->bsVersion())
+            : BethesdaGameFromBsVersion(m_doc->bsVersion());
+        if (m_textures)
+        {
+            m_textures->SetGame(m_game);
+        }
+    }
 }
 
 void NifViewport::SetTextureRepository(TextureRepository* repository)
@@ -172,12 +185,22 @@ void NifViewport::SetDocument(const NifDocument* doc)
 {
     SetSelectedMesh(-1); // a new (or cleared) document invalidates any picked mesh
     m_doc = doc;
+    m_game = doc
+        ? (m_resolver
+            ? m_resolver->GameForNifPath(
+                doc->filePath(),
+                doc->bsVersion())
+            : BethesdaGameFromBsVersion(doc->bsVersion()))
+        : BethesdaGame::Unknown;
     if (doc && !doc->filePath().empty())
     {
         std::filesystem::path p(doc->filePath());
         m_nifDirectory = p.parent_path().wstring();
         if (m_textures)
+        {
             m_textures->SetNifDirectory(m_nifDirectory);
+            m_textures->SetGame(m_game);
+        }
     }
     RebuildScene();
     Invalidate();
@@ -206,12 +229,22 @@ void NifViewport::SetPrebuiltScene(const NifDocument* doc, std::vector<RenderMes
     // only swap in the result and do the UI-thread post-build setup.
     SetSelectedMesh(-1); // a new document invalidates any picked mesh
     m_doc = doc;
+    m_game = doc
+        ? (m_resolver
+            ? m_resolver->GameForNifPath(
+                doc->filePath(),
+                doc->bsVersion())
+            : BethesdaGameFromBsVersion(doc->bsVersion()))
+        : BethesdaGame::Unknown;
     if (doc && !doc->filePath().empty())
     {
         std::filesystem::path p(doc->filePath());
         m_nifDirectory = p.parent_path().wstring();
         if (m_textures)
+        {
             m_textures->SetNifDirectory(m_nifDirectory);
+            m_textures->SetGame(m_game);
+        }
     }
     m_meshCache.Clear(); // old geometries about to be dropped
     m_meshes = std::move(meshes);
@@ -250,8 +283,19 @@ void NifViewport::RefreshTextures()
     // The archive scan just landed: drop this view's texture memo (which cached
     // "not resolved yet" for BSA paths while the scan ran) and re-prefetch, so
     // archive-backed textures resolve and pop into the already-shown model.
+    if (m_doc)
+    {
+        m_game = m_resolver
+            ? m_resolver->GameForNifPath(
+                m_doc->filePath(),
+                m_doc->bsVersion())
+            : BethesdaGameFromBsVersion(m_doc->bsVersion());
+    }
     if (m_textures)
+    {
+        m_textures->SetGame(m_game);
         m_textures->Clear();
+    }
     PrefetchSceneTextures();
     Invalidate();
 }
@@ -444,6 +488,7 @@ void NifViewport::OnRenderD3D(ID3D11DeviceContext* context)
         m_textures = std::make_unique<TextureCache>(m_textureRepository);
         if (!m_nifDirectory.empty())
             m_textures->SetNifDirectory(m_nifDirectory);
+        m_textures->SetGame(m_game);
         PrefetchSceneTextures();
     }
 

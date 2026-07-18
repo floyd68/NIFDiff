@@ -106,6 +106,7 @@ void TextureRepository::InvalidateDevice(std::uint64_t nextDeviceGeneration)
 
 TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relativePath,
                                                        const std::wstring& nifDirectory,
+                                                       BethesdaGame game,
                                                        bool forceSyncPending)
 {
     if (relativePath.empty() || m_resolver == nullptr || m_device == nullptr)
@@ -113,7 +114,8 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
 
     using TraceClock = StartupTrace::Clock;
     const auto t0 = TraceClock::now();
-    ResourceBytes found = m_resolver->Find(relativePath, nifDirectory);
+    ResourceBytes found =
+        m_resolver->Find(relativePath, nifDirectory, game);
     const auto t1 = TraceClock::now();
     if (!found.ok())
     {
@@ -141,6 +143,7 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
     Entry entry;
     entry.relativePath = relativePath;
     entry.nifDirectory = nifDirectory;
+    entry.game = game;
     entry.sourceKey = found.sourceKey;
     const char* source = found.diskPath.empty() ? "archive" : "loose";
     LoadEntry(entry, found);
@@ -155,7 +158,10 @@ TextureRepository::Entry* TextureRepository::GetOrLoad(const std::string& relati
     return &m_bySource.emplace(found.sourceKey, std::move(entry)).first->second;
 }
 
-void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, const std::wstring& nifDirectory)
+void TextureRepository::Prefetch(
+    const std::vector<std::string>& relativePaths,
+    const std::wstring& nifDirectory,
+    BethesdaGame game)
 {
     if (m_resolver == nullptr || m_device == nullptr || relativePaths.empty())
         return;
@@ -176,7 +182,8 @@ void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, 
     {
         if (rel.empty())
             continue;
-        ResourceBytes found = m_resolver->Find(rel, nifDirectory);
+        ResourceBytes found =
+            m_resolver->Find(rel, nifDirectory, game);
         if (!found.ok())
             continue;
         if (m_bySource.find(found.sourceKey) != m_bySource.end() || !seen.insert(found.sourceKey).second)
@@ -192,12 +199,13 @@ void TextureRepository::Prefetch(const std::vector<std::string>& relativePaths, 
     // the free-threaded device.
     std::vector<Entry> loaded(pending.size());
     std::for_each(std::execution::par, pending.begin(), pending.end(),
-        [this, &pending, &loaded, &nifDirectory](PendingLoad& p)
+        [this, &pending, &loaded, &nifDirectory, game](PendingLoad& p)
         {
             const std::size_t i = static_cast<std::size_t>(&p - pending.data());
             Entry& e = loaded[i];
             e.relativePath = p.relativePath;
             e.nifDirectory = nifDirectory;
+            e.game = game;
             e.sourceKey = p.sourceKey;
             LoadEntry(e, p.bytes);
         });
@@ -223,6 +231,7 @@ struct TextureRepository::PendingTex
     std::string sourceKey;
     std::string relativePath;
     std::wstring nifDirectory;
+    BethesdaGame game { BethesdaGame::Unknown };
     ResourceLocation loc;
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     std::uint64_t deviceGeneration = 0;
@@ -231,13 +240,14 @@ struct TextureRepository::PendingTex
 };
 
 void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePaths,
-                                      const std::wstring& nifDirectory)
+                                      const std::wstring& nifDirectory,
+                                      BethesdaGame game)
 {
     // No pool wired (e.g. tests / headless thumbnails): keep the synchronous
     // path so behaviour is unchanged.
     if (m_manager == nullptr || m_resolver == nullptr || m_device == nullptr || relativePaths.empty())
     {
-        Prefetch(relativePaths, nifDirectory);
+        Prefetch(relativePaths, nifDirectory, game);
         return;
     }
 
@@ -254,7 +264,8 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
     {
         if (rel.empty())
             continue;
-        ResourceLocation loc = m_resolver->Locate(rel, nifDirectory);
+        ResourceLocation loc =
+            m_resolver->Locate(rel, nifDirectory, game);
         if (!loc.ok())
             continue;
         if (m_bySource.find(loc.sourceKey) != m_bySource.end())
@@ -265,6 +276,7 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
         Entry placeholder;
         placeholder.relativePath = rel;
         placeholder.nifDirectory = nifDirectory;
+        placeholder.game = game;
         placeholder.sourceKey = loc.sourceKey;
         placeholder.pending = true;
         m_bySource.emplace(loc.sourceKey, std::move(placeholder));
@@ -273,6 +285,7 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
         job->sourceKey = loc.sourceKey;
         job->relativePath = rel;
         job->nifDirectory = nifDirectory;
+        job->game = game;
         job->loc = std::move(loc);
         job->device = m_device;
         job->deviceGeneration = m_deviceGeneration;
@@ -353,7 +366,11 @@ void TextureRepository::EnsureCmProbe(Entry& entry)
     }
 
     const auto tCm0 = StartupTrace::Clock::now();
-    ResourceBytes found = m_resolver->Find(entry.relativePath, entry.nifDirectory);
+    ResourceBytes found =
+        m_resolver->Find(
+            entry.relativePath,
+            entry.nifDirectory,
+            entry.game);
     DirectX::TexMetadata meta {};
     DirectX::ScratchImage img;
     HRESULT hr = E_FAIL;

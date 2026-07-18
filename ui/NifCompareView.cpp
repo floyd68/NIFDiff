@@ -1879,7 +1879,8 @@ bool NifCompareView::OpenTextureInspectorSelectionInImagePane()
     const ResourceLocation location =
         m_resolver->Locate(
             relativePath,
-            active->Viewport().NifDirectory());
+            active->Viewport().NifDirectory(),
+            active->Viewport().Game());
     const std::wstring path =
         location.displayPath();
     FD2D::Backplate* backplate =
@@ -3061,7 +3062,12 @@ void NifCompareView::SetOnBrowseGameData(std::function<void()> handler) { m_cont
 void NifCompareView::SetOnDetectGameData(std::function<void()> handler) { m_controls->SetOnDetectGameData(std::move(handler)); }
 void NifCompareView::SetOnAddOverrideFolder(std::function<void()> handler) { m_controls->SetOnAddOverrideFolder(std::move(handler)); }
 void NifCompareView::SetOnClearOverrides(std::function<void()> handler) { m_controls->SetOnClearOverrides(std::move(handler)); }
-void NifCompareView::SetGameDataLabel(const std::wstring& text) { m_controls->SetGameDataLabel(text); }
+void NifCompareView::SetGameDataLabel(
+    const std::wstring& text,
+    const std::wstring& details)
+{
+    m_controls->SetGameDataLabel(text, details);
+}
 void NifCompareView::SetOverrideCountLabel(std::size_t count) { m_controls->SetOverrideCountLabel(count); }
 
 } // namespace nsk

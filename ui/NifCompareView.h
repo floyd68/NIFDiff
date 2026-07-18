@@ -270,7 +270,9 @@ public:
     void SetOnDetectGameData(std::function<void()> handler);
     void SetOnAddOverrideFolder(std::function<void()> handler);
     void SetOnClearOverrides(std::function<void()> handler);
-    void SetGameDataLabel(const std::wstring& text);
+    void SetGameDataLabel(
+        const std::wstring& text,
+        const std::wstring& details = {});
     void SetOverrideCountLabel(std::size_t count);
 
 private:

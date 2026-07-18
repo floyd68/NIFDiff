@@ -383,6 +383,7 @@ target_compile_definitions(ResourceResolveTest PRIVATE NOMINMAX)
 set_target_properties(ResourceResolveTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
+add_test(NAME ResourceResolveTest COMMAND ResourceResolveTest)
 
 # ---------------------------------------------------------------------------
 # ImageViewTest - P1 validation harness for the texture view/compare port:

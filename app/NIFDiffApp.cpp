@@ -664,13 +664,71 @@ namespace
 
     void ApplyResourcesToUi(NifCompareView& view, const ResourceResolver& resolver)
     {
-        view.SetGameDataLabel(resolver.GameData());
+        const std::vector<GameDataRoot>& roots =
+            resolver.GameDataRoots();
+        std::wstring details;
+        for (const GameDataRoot& root : roots)
+        {
+            if (!details.empty())
+            {
+                details += L"\n";
+            }
+            details += BethesdaGameName(root.game);
+            details += L": ";
+            details += root.path;
+        }
+        view.SetGameDataLabel(
+            roots.empty()
+                ? std::wstring()
+                : std::to_wstring(roots.size()) +
+                    (roots.size() == 1 ? L" game" : L" games"),
+            details);
         view.SetOverrideCountLabel(resolver.OverrideFolders().size());
+    }
+
+    const wchar_t* GameDataSettingKey(BethesdaGame game)
+    {
+        switch (game)
+        {
+        case BethesdaGame::SkyrimLE:
+            return L"SkyrimLEData";
+        case BethesdaGame::SkyrimSE:
+            return L"SkyrimSEData";
+        case BethesdaGame::Fallout4:
+            return L"Fallout4Data";
+        default:
+            return L"GameData";
+        }
     }
 
     void SaveResources(const std::wstring& iniPath, const ResourceResolver& resolver)
     {
-        IniStore::SetString(iniPath, kSectionResources, L"GameData", resolver.GameData());
+        for (const BethesdaGame game : {
+                 BethesdaGame::SkyrimLE,
+                 BethesdaGame::SkyrimSE,
+                 BethesdaGame::Fallout4 })
+        {
+            std::wstring path;
+            for (const GameDataRoot& root :
+                 resolver.GameDataRoots())
+            {
+                if (root.game == game)
+                {
+                    path = root.path;
+                    break;
+                }
+            }
+            IniStore::SetString(
+                iniPath,
+                kSectionResources,
+                GameDataSettingKey(game),
+                path);
+        }
+        IniStore::SetString(
+            iniPath,
+            kSectionResources,
+            L"GameData",
+            resolver.GameData());
         IniStore::SetString(iniPath, kSectionResources, L"OverrideFolders",
                                IniStore::JoinPipeList(resolver.OverrideFolders()));
         IniStore::SetInt(iniPath, kSectionResources, L"AutoLoadArchives",
@@ -681,15 +739,50 @@ namespace
     {
         resolver.SetAutoLoadArchives(settings.GetInt(kSectionResources, L"AutoLoadArchives", 1) != 0);
 
-        std::wstring gameData = settings.GetString(kSectionResources, L"GameData");
-        if (gameData.empty())
+        std::vector<GameDataRoot> roots;
+        for (const BethesdaGame game : {
+                 BethesdaGame::SkyrimLE,
+                 BethesdaGame::SkyrimSE,
+                 BethesdaGame::Fallout4 })
         {
-            const auto detected = ResourceResolver::DetectGameDataFolders();
-            if (!detected.empty())
-                gameData = detected.front();
+            std::wstring path = settings.GetString(
+                kSectionResources,
+                GameDataSettingKey(game));
+            if (!path.empty())
+            {
+                roots.push_back({ game, std::move(path) });
+            }
+        }
+        if (roots.empty())
+        {
+            const std::wstring legacy =
+                settings.GetString(
+                    kSectionResources,
+                    L"GameData");
+            if (!legacy.empty())
+            {
+                BethesdaGame game = BethesdaGame::Unknown;
+                for (const GameDataRoot& detected :
+                     ResourceResolver::DetectGameDataRoots())
+                {
+                    if (_wcsicmp(
+                            legacy.c_str(),
+                            detected.path.c_str()) == 0)
+                    {
+                        game = detected.game;
+                        break;
+                    }
+                }
+                roots.push_back({ game, legacy });
+            }
+            else
+            {
+                roots =
+                    ResourceResolver::DetectGameDataRoots();
+            }
         }
         resolver.SetOverrideFolders(IniStore::SplitPipeList(settings.GetString(kSectionResources, L"OverrideFolders")));
-        resolver.SetGameData(gameData); // triggers ReloadArchives
+        resolver.SetGameDataRoots(std::move(roots)); // triggers ReloadArchives
     }
 
     bool SessionPathExists(const std::wstring& path)
@@ -1221,10 +1314,54 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             auto bp = weakBackplate.lock();
             auto res = weakResolver.lock();
             if (!view || !bp || !res) return;
-            std::wstring folder;
-            if (!ShowPickFolderDialog(bp->Window(), L"Select Game Data Folder", folder))
+            BethesdaGame game = BethesdaGame::Unknown;
+            if (ComparePane* active = view->ActivePane())
+            {
+                if (NifComparePane* nif = active->NifContent())
+                {
+                    game = nif->Viewport().Game();
+                }
+            }
+            if (game == BethesdaGame::Unknown)
+            {
+                MessageBoxW(
+                    bp->Window(),
+                    L"Open a supported Skyrim LE, Skyrim SE, or Fallout 4 "
+                    L"NIF in the active pane before assigning its Game Data "
+                    L"folder.\n\nUse Detect to register installed games "
+                    L"automatically.",
+                    L"NIFDiff - Game Data",
+                    MB_ICONINFORMATION | MB_OK);
                 return;
-            res->SetGameData(folder);
+            }
+            std::wstring folder;
+            const std::wstring title =
+                L"Select " +
+                std::wstring(BethesdaGameName(game)) +
+                L" Data Folder";
+            if (!ShowPickFolderDialog(
+                    bp->Window(),
+                    title.c_str(),
+                    folder))
+                return;
+            std::vector<GameDataRoot> roots =
+                res->GameDataRoots();
+            auto existing = std::find_if(
+                roots.begin(),
+                roots.end(),
+                [game](const GameDataRoot& root)
+                {
+                    return root.game == game;
+                });
+            if (existing != roots.end())
+            {
+                existing->path = std::move(folder);
+            }
+            else
+            {
+                roots.push_back({ game, std::move(folder) });
+            }
+            res->SetGameDataRoots(std::move(roots));
             SaveResources(iniPath, *res);
             ApplyResourcesToUi(*view, *res);
             view->InvalidateTextureCaches();
@@ -1237,21 +1374,31 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             auto bp = weakBackplate.lock();
             auto res = weakResolver.lock();
             if (!view || !bp || !res) return;
-            const auto detected = ResourceResolver::DetectGameDataFolders();
-            if (detected.empty())
+            std::vector<GameDataRoot> roots =
+                res->GameDataRoots();
+            const std::vector<GameDataRoot> supported =
+                ResourceResolver::DetectGameDataRoots();
+            if (supported.empty())
                 return;
-            std::wstring chosen = detected.front();
-            for (const std::wstring& cand : detected)
+            for (const GameDataRoot& found : supported)
             {
-                if (_wcsicmp(cand.c_str(), res->GameData().c_str()) != 0)
+                auto existing = std::find_if(
+                    roots.begin(),
+                    roots.end(),
+                    [&](const GameDataRoot& root)
+                    {
+                        return root.game == found.game;
+                    });
+                if (existing != roots.end())
                 {
-                    chosen = cand;
-                    break;
+                    existing->path = found.path;
+                }
+                else
+                {
+                    roots.push_back(found);
                 }
             }
-            if (detected.size() == 1)
-                chosen = detected.front();
-            res->SetGameData(chosen);
+            res->SetGameDataRoots(std::move(roots));
             SaveResources(iniPath, *res);
             ApplyResourcesToUi(*view, *res);
             view->InvalidateTextureCaches();

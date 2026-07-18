@@ -44,10 +44,12 @@ documents every control in detail.
 
 - **Launch** `NIFDiff.exe`. It restores your last session (pane count, files,
   splitter layout) if you have one, otherwise it opens with two empty panes.
-- **Point Game Data** at your Skyrim/Fallout `Data` folder once, via the
-  RESOURCES group (**Detect** to auto-find it, or **Browse**), so textures that
-  live inside BSA/BA2 archives resolve. Add **override folders** there for loose
-  texture mods that should win over Game Data.
+- **Register Game Data roots** via the RESOURCES group. **Detect** registers all
+  installed Skyrim LE, Skyrim SE, and Fallout 4 `Data` folders; **Set Active**
+  assigns a folder to the game identified by the active NIF. Texture lookup is
+  scoped to that game, so identical paths in different games cannot collide.
+  Add **override folders** there for loose texture mods that should win over
+  Game Data.
 - **Load a file** into a pane: drag a `.nif` from Explorer onto it, use the
   pane's Open button / right-click → Open, or `Ctrl+O`. Dropping onto the left
   ~75% of a pane *replaces* it; the right ~25% *inserts* a new pane. A pane
@@ -313,10 +315,10 @@ documents every control in detail.
   Screen, Rotate 90°/Left/Right/180°, Reset Rotation), a **Sampling**
   smooth/nearest toggle, an **Image Information** item, and - for a DDS with
   more than one mip - a **Mip Level** submenu.
-- **Path tooltips + copy**: every control that shows a path (a pane's
-  .nif path strip, the Game Data label) reveals the full path in a hover
-  tooltip when the strip is too narrow to show it in full, and copies the
-  path to the clipboard on right-click with a brief confirmation banner.
+- **Path tooltips + copy**: every control that shows paths (a pane's
+  .nif path strip, the Game Data summary) reveals full details in a hover
+  tooltip and copies them to the clipboard on right-click with a brief
+  confirmation banner.
 - **Per-pane folder thumbnail strips** (FICture2's ThumbnailPane equivalent):
   every pane hosts its own scrollable strip along its bottom edge that lists
   the folder of THAT pane's currently-open .nif - so when comparing files from
@@ -418,9 +420,12 @@ documents every control in detail.
   (no skinning/morphs/particles/controllers - see `SceneBuilder.h`'s
   scope note).
 - Textures resolve in engine order: override folders -> the NIF's own
-  directory -> the NIF's **derived Data root** -> Game Data -> BSA/BA2
-  archives (via Floar), with Game Data auto-detection and an override-folder
-  UI in the bottom strip. The derived Data root handles Bethesda's
+  directory -> the NIF's **derived Data root** -> matching game's loose Data
+  files -> matching game's BSA/BA2 archives (via Floar). Skyrim LE, Skyrim SE,
+  and Fallout 4 roots are registered independently. A NIF inside a registered
+  Data root inherits that root's game; loose sources fall back to BS Version
+  (including the common BS83-in-Skyrim-SE compatibility case). The derived
+  Data root handles Bethesda's
   Data-rooted convention: a NIF at `<mod>\meshes\...` references its textures
   as `textures\...` relative to `<mod>`, so opening a loose mod folder (e.g. a
   Vortex/MO2 staging folder) shows its own textures even when the mod is not
@@ -458,7 +463,7 @@ documents every control in detail.
   or implicit folder *inside* a BSA/BA2/ZIP/7z/RAR archive, restored through
   the same Floar virtual-filesystem lookup the browsing strip uses rather than
   a plain on-disk existence check, so archive members survive a restart too -
-  splitter ratios, recent-files list, Game Data path, override folders, and
+  splitter ratios, recent-files list, per-game Data paths, override folders, and
   the window size/position - restored
   clamped to a monitor's work area so it never comes back off-screen after a
   display change), stored per-user in `%LOCALAPPDATA%\NIFDiff\NIFDiff.ini`

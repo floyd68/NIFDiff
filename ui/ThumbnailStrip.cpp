@@ -1107,6 +1107,13 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     TextureCache textures(m_textureRepository);
     textures.SetSynchronous(true); // one-shot render: decode pending placeholders now
     textures.SetNifDirectory(nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring());
+    textures.SetGame(
+        m_resolver
+            ? m_resolver->GameForNifPath(
+                pt.doc->filePath(),
+                pt.doc->bsVersion())
+            : BethesdaGameFromBsVersion(
+                pt.doc->bsVersion()));
 
     RenderSettings s;
     s.view = pt.view;       // rolled view + tight ortho, computed on the worker
