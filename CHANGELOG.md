@@ -1,8 +1,8 @@
 # Changelog
 
-Versions are `MAJOR.MINOR.REVISION`, where REVISION is the git commit count -
-so `1.0.116` is the 116th commit, and every released binary maps back to
-exactly one commit (tagged `v1.0.116`). See [RELEASING.md](RELEASING.md).
+Versions are fixed `MAJOR.MINOR.REVISION` values maintained in
+`app/res/version.h.in`. Every released binary maps back to the commit carrying
+the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.

@@ -263,9 +263,16 @@ std::shared_ptr<ComparePane> NifCompareView::CreatePane()
     pane->SetThumbnailStripSize(m_thumbStripExtent);     // ... and the current card size
     // One MRU channel for every open through this pane - NIF, texture, or a
     // browsed folder/archive (ComparePane funnels all of them here).
-    pane->SetOnFileOpened([this](const std::wstring& path)
+    pane->SetOnFileOpened([this, raw](const std::wstring& path)
     {
-        if (m_onFileOpened) m_onFileOpened(path);
+        if (m_onFileOpened)
+        {
+            m_onFileOpened(path);
+        }
+        if (ActivePane() == raw)
+        {
+            NotifyActivePathChanged();
+        }
     });
     WireThumbnailCallbacks(raw);
     // The ctor created the initial NIF content before SetOnContentCreated was
@@ -412,7 +419,10 @@ ComparePane* NifCompareView::OpenPathInPane(ComparePane* pane, const std::wstrin
         return pane;
     // The pane's content swaps to the file's kind in place; the strip persists.
     std::string error;
-    pane->Load(path, &error);
+    if (pane->Load(path, &error) && ActivePane() == pane)
+    {
+        NotifyActivePathChanged();
+    }
     return pane;
 }
 
@@ -443,7 +453,10 @@ void NifCompareView::ApplyThumbnailPick(ComparePane* active, const std::wstring&
     if (!active || path.empty())
         return;
     std::string err;
-    active->Load(path, &err);      // moves this pane's strip highlight (ShowForFile)
+    if (active->Load(path, &err))
+    {
+        NotifyActivePathChanged();
+    }
     SyncThumbnailSelection(active, path); // mirror into the other panes, like a click
 }
 
@@ -453,6 +466,15 @@ void NifCompareView::StepActiveThumbnail(int delta)
     {
         active->FocusThumbnailStrip(); // keyboard browsing keeps the strip focused (enables type-to-select)
         ApplyThumbnailPick(active, active->StepThumbnailFile(delta));
+    }
+}
+
+void NifCompareView::PageActiveThumbnail(int direction)
+{
+    if (ComparePane* active = ActivePane())
+    {
+        active->FocusThumbnailStrip();
+        ApplyThumbnailPick(active, active->PageThumbnailFile(direction));
     }
 }
 
@@ -529,6 +551,23 @@ void NifCompareView::RequestOpenPane(ComparePane& pane)
 void NifCompareView::SetOnFileOpened(std::function<void(const std::wstring&)> handler)
 {
     m_onFileOpened = std::move(handler);
+}
+
+void NifCompareView::SetOnActivePathChanged(
+    std::function<void(const std::wstring&)> handler)
+{
+    m_onActivePathChanged = std::move(handler);
+    NotifyActivePathChanged();
+}
+
+void NifCompareView::NotifyActivePathChanged()
+{
+    if (!m_onActivePathChanged)
+    {
+        return;
+    }
+    ComparePane* active = ActivePane();
+    m_onActivePathChanged(active ? active->SessionPath() : std::wstring());
 }
 
 void NifCompareView::RequestClosePane(ComparePane& pane)
@@ -765,6 +804,7 @@ void NifCompareView::SetActivePane(ComparePane* pane)
         return;
     m_activePane = pane;
     RefreshAnimationControls(); // ANIMATION group mirrors the active pane's player
+    NotifyActivePathChanged();
     Invalidate();
 }
 
@@ -2332,7 +2372,10 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
 
     case VK_DELETE: // clear the active pane's document/image, keep the pane
         if (ComparePane* active = ActivePane())
+        {
             active->Clear();
+            NotifyActivePathChanged();
+        }
         return true;
 
     case VK_TAB:
@@ -2357,8 +2400,30 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         return true;
     }
 
-    case VK_PRIOR: m_controls->CycleOrientation(-1); return true; // PgUp
-    case VK_NEXT:  m_controls->CycleOrientation(+1); return true; // PgDn
+    case VK_PRIOR: // PgUp: page thumbnails while the strip has focus
+        if (!ctrl && !alt)
+        {
+            if (ComparePane* active = ActivePane();
+                active && active->ThumbnailStripHasFocus())
+            {
+                PageActiveThumbnail(-1);
+                return true;
+            }
+        }
+        m_controls->CycleOrientation(-1);
+        return true;
+    case VK_NEXT: // PgDn: preserve camera preset cycling outside the strip
+        if (!ctrl && !alt)
+        {
+            if (ComparePane* active = ActivePane();
+                active && active->ThumbnailStripHasFocus())
+            {
+                PageActiveThumbnail(+1);
+                return true;
+            }
+        }
+        m_controls->CycleOrientation(+1);
+        return true;
 
     // Blender-style numpad view presets (NumLock on; the numeric VKs are
     // distinct from the nav-cluster ones, so they don't collide with the
@@ -2383,6 +2448,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     // selected folder.
     //   Left / ',' : previous tile       Right / '.' : next tile
     //   Home : first tile                End : last tile
+    //   PgUp / PgDn : previous / next visible page (while strip-focused)
     //   Enter : enter selected folder    Backspace / Ctrl+Up : parent folder
     case VK_LEFT:       StepActiveThumbnail(-1); return true;
     case VK_RIGHT:      StepActiveThumbnail(+1); return true;
@@ -2618,6 +2684,7 @@ void NifCompareView::RebuildHostTree()
     // loaded-documents snapshot.
     RefreshExtendedMaterialControls();
     UpdateIpcOpenSnapshot();
+    NotifyActivePathChanged();
 }
 
 void NifCompareView::RecalcControlStripExtent()

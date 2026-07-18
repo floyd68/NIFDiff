@@ -3,7 +3,7 @@
 #include "AppIpc.h"
 #include "IniStore.h"
 #include "res/resource.h"
-#include "version.h" // generated (cmake/GenerateVersion.cmake): NIFDIFF_VERSION_DISPLAY
+#include "version.h" // copied from app/res/version.h.in by CMake
 #include "AppSetup.h"
 #include "FileDialog.h"
 #include "ScreenshotUtil.h"
@@ -43,15 +43,30 @@ namespace nsk
 {
 namespace
 {
-    // version.h hands out narrow literals (the resource compiler needs them);
-    // widen through the usual two-step so the title stays a compile-time
-    // literal concatenation.
-#define NIFDIFF_WIDEN2(x) L##x
-#define NIFDIFF_WIDEN(x) NIFDIFF_WIDEN2(x)
-    // Version in the title bar: a bug-report screenshot then identifies the
-    // build ("1.0.116", or "1.0.116+dev" when built from a dirty tree).
+    // version.h is the single release-version source used by the title bar,
+    // About dialog and executable VERSIONINFO.
     constexpr wchar_t kWindowTitle[] =
-        L"NIFDiff " NIFDIFF_WIDEN(NIFDIFF_VERSION_DISPLAY) L" - NIF Model Compare";
+        L"NIFDiff " NIFDIFF_VERSION_WSTR L" - NIF Model Compare";
+
+    std::wstring WindowTitleForPath(const std::wstring& path)
+    {
+        if (path.empty())
+        {
+            return kWindowTitle;
+        }
+
+        std::filesystem::path parsed(path);
+        std::wstring fileName = parsed.filename().wstring();
+        if (fileName.empty())
+        {
+            fileName = parsed.parent_path().filename().wstring();
+        }
+        if (fileName.empty())
+        {
+            return kWindowTitle;
+        }
+        return fileName + L" - " + kWindowTitle;
+    }
 
     constexpr wchar_t kIniFileName[] = L"NIFDiff.ini";
     constexpr wchar_t kSectionWindow[] = L"Window";
@@ -65,10 +80,6 @@ namespace
     // (the accept itself is already declined via IpcOpenQueue's
     // shuttingDown flag).
     const HWND kIpcUiWindowGone = reinterpret_cast<HWND>(static_cast<INT_PTR>(-1));
-
-#ifndef NIFDIFF_VERSION_WSTR
-#define NIFDIFF_VERSION_WSTR L"(dev)"
-#endif
 
     // App context menu (right-click anywhere that is not a camera drag).
     constexpr UINT kMenuIdAbout = 1;
@@ -1108,6 +1119,18 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         std::weak_ptr<NifCompareView> weakView = compareView;
         std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
         std::weak_ptr<ResourceResolver> weakResolver = resolver;
+
+        compareView->SetOnActivePathChanged(
+            [weakBackplate](const std::wstring& path)
+        {
+            auto bp = weakBackplate.lock();
+            if (!bp || bp->Window() == nullptr)
+            {
+                return;
+            }
+            const std::wstring title = WindowTitleForPath(path);
+            SetWindowTextW(bp->Window(), title.c_str());
+        });
 
         // Per-pane folder thumbnail strips (FICture2's ThumbnailPane model, one
         // per pane): each NifComparePane owns a strip along its bottom that

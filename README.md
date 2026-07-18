@@ -143,7 +143,7 @@ documents every control in detail.
 |---|---|
 | Left / Middle-Right drag / Wheel | Orbit / Pan / Zoom-to-cursor |
 | `Alt`+Left / `Alt`+Middle / `Alt`+Right drag | Orbit / Pan / Dolly (DCC chords) |
-| `PgUp` / `PgDn` | Cycle orientation preset |
+| `PgUp` / `PgDn` | Cycle orientation preset; page thumbnail tiles while the strip is focused |
 | `Numpad 1/3/7` (`Ctrl+` = opposite face) | Front / Right / Top (Back / Left / Bottom) |
 | `Numpad 5` | Orthographic ↔ perspective |
 | `Numpad .` / `Numpad 0` | Frame selection / whole scene |
@@ -154,7 +154,7 @@ documents every control in detail.
 | `1`-`8` / `Tab` / `Shift+Tab` | Select the active pane |
 | `Ctrl+O` / `Ctrl+Shift+O` | Open a file into the active pane / a new pane |
 | `Ctrl+W` (`Ctrl+F4`) / `Del` | Close the active pane / clear its document |
-| `←`/`→` (`,`/`.`), `Home`/`End` | Thumbnail strip: previous/next tile, first/last tile |
+| `←`/`→` (`,`/`.`), `Home`/`End`, `PgUp`/`PgDn` | Thumbnail strip: previous/next tile, first/last tile, previous/next visible page |
 | `Enter` / `Backspace` (`Ctrl+Up`) | Enter the selected folder / jump to the parent folder |
 | Type a name (strip focused) | Type-to-select: jump to the matching tile; repeat the key to cycle |
 | `Ctrl+E` / `F12` | Show active pane's file in Explorer / save its screenshot |
@@ -274,7 +274,8 @@ documents every control in detail.
   Applied to every pane so the comparison stays on equal footing.
 - **Keyboard shortcuts**: `F` reset all views, `G` grid, `X` axes,
   `W` wireframe, `H` hidden, `N` normals, `Shift+N` tangents, `M` MSAA,
-  `PgUp`/`PgDn` cycle the camera preset. Blender-style numpad views
+  `PgUp`/`PgDn` cycle the camera preset (or page the thumbnail strip while it
+  holds focus). Blender-style numpad views
   (NumLock on): `Numpad 1/3/7` = Front/Right/Top, `Ctrl+` the opposite
   face, `Numpad 5` toggles ortho/perspective, `Numpad .` frames the
   selection and `Numpad 0` frames the whole scene;
@@ -285,9 +286,11 @@ documents every control in detail.
   `Del` clears its document, `Ctrl+E` shows its file in Explorer,
   `F12` saves its screenshot; thumbnail-strip navigation (FICture2's browser
   keys, and Sync Files mirrors each file pick into the other panes): `←`/`→`
-  (or `,`/`.`) step the selection through every tile and `Home`/`End` jump to
-  the first/last - landing on a sibling .nif loads it, while a subfolder or the
-  ".." tile is only **selected** (highlighted) until `Enter` navigates into it
+  (or `,`/`.`) step the selection through every tile, `Home`/`End` jump to the
+  first/last, and strip-focused `PgUp`/`PgDn` move by the number of variable-width
+  cards that fit in one viewport - landing on a sibling .nif loads it, while a
+  subfolder or the ".." tile is only **selected** (highlighted) until `Enter`
+  navigates into it
   (`Backspace` / `Ctrl+Up` still jump straight to the parent). While the strip
   holds keyboard focus (after a click or any of those keys), **type-to-select**
   is active: typing a name prefix jumps the selection to the next matching tile
@@ -352,7 +355,9 @@ documents every control in detail.
   so no thumbnails are generated. Card size is adjustable - drag the strip's
   top edge to resize it live (all panes' strips follow), or pick a
   Small/Medium/Large preset from the "Thumbnail Size" context-menu submenu.
-  The on/off state and the size are remembered across sessions.
+  When the cards overflow, a draggable horizontal scrollbar appears below
+  their labels; clicking its track moves by a viewport. The on/off state and
+  the size are remembered across sessions.
 - **Drag & drop from Explorer** (FICture2's drag-controller semantics):
   hovering the left 75% of a pane shows a red overlay and the drop
   REPLACES that pane's document; the right 25% shows a green strip and
@@ -678,9 +683,8 @@ app/               app shell: NIFDiffApp.h/.cpp bootstrap, main.cpp entry point,
                    IniStore.h (INI persistence), AppIpc.h/.cpp (single-instance
                    forwarding), FileDialog.h/.cpp,
                    ValidateNif.cpp/ResourceResolveTest.cpp console smoke-tests,
-                   res/ (icon, VERSIONINFO .rc, version.h.in template)
-cmake/             Version.cmake (major.minor - the only hand-edited numbers),
-                   GenerateVersion.cmake (build-time git commit-count stamp)
+                   res/ (icon, VERSIONINFO .rc, fixed version.h.in source)
+cmake/             project-specific CMake helpers
 core/              NIF parsing (NifDocument) / scene building (SceneBuilder) / Camera /
                    ResourceResolver (override -> nif dir -> derived Data root -> Game Data -> BSA/BA2 order)
 render/            D3D11 renderer, HLSL shaders (shaders/, fxc-precompiled at build time),
@@ -714,14 +718,12 @@ or `third_party/Floar` look uninitialized.
 
 ## Versioning and releases
 
-Versions are `MAJOR.MINOR.REVISION` (e.g. `1.0.116`): `MAJOR`/`MINOR` are
-hand-maintained in [cmake/Version.cmake](cmake/Version.cmake), while
-`REVISION` is the **git commit count**, stamped at build time into
-`build/generated/version.h` - so every commit yields a distinct version
-nobody has to maintain, and version `1.0.116` is exactly the commit tagged
-`v1.0.116`. The number shows up in the title bar (with a `+dev` suffix when
-built from a dirty tree, so a local build can't pass for the released one) and
-in the exe's VERSIONINFO (Explorer -> Properties -> Details).
+Versions are `MAJOR.MINOR.REVISION` (e.g. `1.0.156`) and are maintained in the
+single source file [app/res/version.h.in](app/res/version.h.in). Update that
+file manually, or through an AI release agent, when preparing a release.
+CMake copies it to `build/generated/version.h`; the title bar, About dialog,
+CMake project metadata, and exe VERSIONINFO (Explorer -> Properties -> Details)
+all consume the same fixed version.
 
 Releases are cut with [Release.ps1](Release.ps1) - `-Plan` reports what
 changed since the last tag and the version the next commit will carry;

@@ -119,6 +119,10 @@ namespace
     constexpr float kPad = 8.0f;
     constexpr float kLabelH = 20.0f;
     constexpr float kGripThickness = 8.0f;  // drag-to-resize band on the inner edge
+    constexpr float kScrollBarMargin = 8.0f;
+    constexpr float kScrollBarHeight = 8.0f;
+    constexpr float kScrollBarBottom = 2.0f;
+    constexpr float kScrollThumbMin = 28.0f;
     constexpr float kMinExtent = 110.0f;    // resize clamp (see SetFixedExtent)
     constexpr float kMaxExtent = 360.0f;
     constexpr float kHeaderH = 26.0f;      // count header (vertical mode only)
@@ -784,6 +788,67 @@ std::wstring ThumbnailStrip::StepSelection(int delta)
     return (e.kind == EntryKind::File) ? e.path : std::wstring();
 }
 
+int ThumbnailStrip::PagingStep(int direction) const
+{
+    if (m_entries.empty() || direction == 0)
+    {
+        return 1;
+    }
+
+    int current = m_selected;
+    if (current < 0 && !m_currentFile.empty())
+    {
+        for (std::size_t i = 0; i < m_entries.size(); ++i)
+        {
+            if (m_entries[i].kind == EntryKind::File &&
+                m_entries[i].path == m_currentFile)
+            {
+                current = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (current < 0)
+    {
+        current = direction > 0 ? -1 : static_cast<int>(m_entries.size());
+    }
+
+    const D2D1_RECT_F r = LayoutRect();
+    const float viewport = m_horizontal
+        ? r.right - r.left
+        : r.bottom - r.top;
+    const float pageExtent = (std::max)(
+        1.0f,
+        viewport - LeadGutter() - kPad);
+
+    float accumulated = 0.0f;
+    int count = 0;
+    for (int index = current + direction;
+         index >= 0 && index < static_cast<int>(m_entries.size());
+         index += direction)
+    {
+        const float extent = CardExtent(static_cast<std::size_t>(index));
+        if (count > 0 && accumulated + extent > pageExtent)
+        {
+            break;
+        }
+        accumulated += extent;
+        ++count;
+    }
+    return (std::max)(1, count);
+}
+
+std::wstring ThumbnailStrip::PageSelection(int direction)
+{
+    if (direction == 0)
+    {
+        return std::wstring();
+    }
+    const int normalizedDirection = direction < 0 ? -1 : 1;
+    return StepSelection(
+        normalizedDirection * PagingStep(normalizedDirection));
+}
+
 std::wstring ThumbnailStrip::EdgeSelection(bool last)
 {
     if (m_entries.empty())
@@ -1271,6 +1336,50 @@ std::wstring ThumbnailStrip::TooltipText() const
     return std::wstring();
 }
 
+bool ThumbnailStrip::HorizontalScrollBarRects(
+    D2D1_RECT_F& track,
+    D2D1_RECT_F& thumb) const
+{
+    if (!m_horizontal || !ShouldShow())
+    {
+        return false;
+    }
+
+    const D2D1_RECT_F r = LayoutRect();
+    const float viewport = r.right - r.left;
+    const float content = ContentExtent();
+    if (viewport <= 0.0f || content <= viewport + 0.5f)
+    {
+        return false;
+    }
+
+    track = D2D1::RectF(
+        r.left + kScrollBarMargin,
+        r.bottom - kScrollBarBottom - kScrollBarHeight,
+        r.right - kScrollBarMargin,
+        r.bottom - kScrollBarBottom);
+    const float trackWidth = track.right - track.left;
+    if (trackWidth <= 0.0f)
+    {
+        return false;
+    }
+
+    const float thumbWidth = std::clamp(
+        trackWidth * viewport / content,
+        (std::min)(kScrollThumbMin, trackWidth),
+        trackWidth);
+    const float maxScroll = content - viewport;
+    const float travel = trackWidth - thumbWidth;
+    const float left = track.left +
+        (maxScroll > 0.0f ? travel * m_scroll / maxScroll : 0.0f);
+    thumb = D2D1::RectF(
+        left,
+        track.top,
+        left + thumbWidth,
+        track.bottom);
+    return true;
+}
+
 void ThumbnailStrip::ClampScroll()
 {
     const D2D1_RECT_F r = LayoutRect();
@@ -1667,6 +1776,31 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
         }
     }
 
+    D2D1_RECT_F scrollTrack {};
+    D2D1_RECT_F scrollThumb {};
+    if (HorizontalScrollBarRects(scrollTrack, scrollThumb))
+    {
+        const float radius = kScrollBarHeight * 0.5f;
+        if (SUCCEEDED(target->CreateSolidColorBrush(
+            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
+            &brush)))
+        {
+            target->FillRoundedRectangle(
+                D2D1::RoundedRect(scrollTrack, radius, radius),
+                brush.Get());
+        }
+        const D2D1_COLOR_F thumbColor =
+            (m_scrollbarDragging || m_scrollbarHover)
+            ? D2D1::ColorF(0.52f, 0.68f, 0.92f, 0.96f)
+            : D2D1::ColorF(0.52f, 0.58f, 0.68f, 0.92f);
+        if (SUCCEEDED(target->CreateSolidColorBrush(thumbColor, &brush)))
+        {
+            target->FillRoundedRectangle(
+                D2D1::RoundedRect(scrollThumb, radius, radius),
+                brush.Get());
+        }
+    }
+
     target->PopAxisAlignedClip();
 }
 
@@ -1720,6 +1854,11 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
     auto inStrip = [&](const POINT& p) {
         return ShouldShow() && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
     };
+    auto inRect = [](const D2D1_RECT_F& rect, const POINT& p)
+    {
+        return p.x >= rect.left && p.x <= rect.right &&
+               p.y >= rect.top && p.y <= rect.bottom;
+    };
 
     switch (event.type)
     {
@@ -1740,6 +1879,31 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
     case InputEventType::MouseMove:
     {
         if (!event.hasPoint) break;
+        if (m_scrollbarDragging)
+        {
+            D2D1_RECT_F track {};
+            D2D1_RECT_F thumb {};
+            if (HorizontalScrollBarRects(track, thumb))
+            {
+                const float travel =
+                    (track.right - track.left) -
+                    (thumb.right - thumb.left);
+                const float maxScroll = (std::max)(
+                    0.0f,
+                    ContentExtent() - (r.right - r.left));
+                if (travel > 0.5f)
+                {
+                    m_scroll = m_scrollbarDragScroll +
+                        (static_cast<float>(event.point.x) -
+                         m_scrollbarDragMouse) /
+                        travel * maxScroll;
+                    m_autoCenter = false;
+                    ClampScroll();
+                    Invalidate();
+                }
+            }
+            return true;
+        }
         if (m_resizing)
         {
             // Drag the inner edge: toward the 3D view grows the strip.
@@ -1757,7 +1921,22 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
         }
         const bool grip = InResizeGrip(event.point);
         if (grip != m_gripHover) { m_gripHover = grip; Invalidate(); }
-        const int hit = (!grip && inStrip(event.point)) ? CardAtPoint(event.point) : -1;
+        D2D1_RECT_F scrollTrack {};
+        D2D1_RECT_F scrollThumb {};
+        const bool hasScrollBar =
+            HorizontalScrollBarRects(scrollTrack, scrollThumb);
+        const bool scrollHover =
+            hasScrollBar && inRect(scrollThumb, event.point);
+        if (scrollHover != m_scrollbarHover)
+        {
+            m_scrollbarHover = scrollHover;
+            Invalidate();
+        }
+        const bool overScrollBar =
+            hasScrollBar && inRect(scrollTrack, event.point);
+        const int hit = (!grip && !overScrollBar && inStrip(event.point))
+            ? CardAtPoint(event.point)
+            : -1;
         if (hit != m_hoverCard) { m_hoverCard = hit; Invalidate(); }
         break;
     }
@@ -1766,8 +1945,22 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
     {
         // Resize cursor while over the grip or dragging it.
         POINT pt {};
-        const bool overGrip = m_backplate && GetCursorPos(&pt) &&
-                              ScreenToClient(m_backplate->Window(), &pt) && InResizeGrip(pt);
+        const bool haveCursor =
+            m_backplate &&
+            GetCursorPos(&pt) &&
+            ScreenToClient(m_backplate->Window(), &pt);
+        const bool overGrip = haveCursor && InResizeGrip(pt);
+        D2D1_RECT_F scrollTrack {};
+        D2D1_RECT_F scrollThumb {};
+        const bool overScrollBar =
+            haveCursor &&
+            HorizontalScrollBarRects(scrollTrack, scrollThumb) &&
+            inRect(scrollTrack, pt);
+        if (m_scrollbarDragging || overScrollBar)
+        {
+            SetCursor(LoadCursor(nullptr, IDC_HAND));
+            return true;
+        }
         if (m_resizing || overGrip)
         {
             SetCursor(LoadCursor(nullptr, m_horizontal ? IDC_SIZENS : IDC_SIZEWE));
@@ -1779,6 +1972,33 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
     case InputEventType::MouseDown:
         if (event.button == MouseButton::Left && event.hasPoint)
         {
+            D2D1_RECT_F scrollTrack {};
+            D2D1_RECT_F scrollThumb {};
+            if (HorizontalScrollBarRects(scrollTrack, scrollThumb) &&
+                inRect(scrollTrack, event.point))
+            {
+                RequestFocus();
+                m_autoCenter = false;
+                if (inRect(scrollThumb, event.point) && m_backplate)
+                {
+                    m_scrollbarDragging = true;
+                    m_scrollbarDragMouse =
+                        static_cast<float>(event.point.x);
+                    m_scrollbarDragScroll = m_scroll;
+                    SetCapture(m_backplate->Window());
+                }
+                else
+                {
+                    const float page =
+                        (r.right - r.left) * 0.9f;
+                    m_scroll += event.point.x < scrollThumb.left
+                        ? -page
+                        : page;
+                    ClampScroll();
+                }
+                Invalidate();
+                return true;
+            }
             // The resize grip takes priority over a card click.
             if (InResizeGrip(event.point) && m_backplate)
             {
@@ -1817,6 +2037,13 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
         break;
 
     case InputEventType::MouseUp:
+        if (m_scrollbarDragging && event.button == MouseButton::Left)
+        {
+            m_scrollbarDragging = false;
+            ReleaseCapture();
+            Invalidate();
+            return true;
+        }
         if (m_resizing && event.button == MouseButton::Left)
         {
             m_resizing = false;
@@ -1829,6 +2056,11 @@ bool ThumbnailStrip::OnInputEvent(const FD2D::InputEvent& event)
         break;
 
     case InputEventType::CaptureChanged:
+        if (m_scrollbarDragging)
+        {
+            m_scrollbarDragging = false;
+            Invalidate();
+        }
         if (m_resizing)
         {
             m_resizing = false;

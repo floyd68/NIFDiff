@@ -4,31 +4,31 @@
 
 ```
 MAJOR . MINOR . REVISION
-  |       |        `-- git commit count (rev-list --count HEAD), automatic
-  |       `----------- hand-bumped for feature releases
-  `------------------- hand-bumped for breaking/landmark releases
+  |       |        `-- patch/release increment
+  |       `----------- feature release increment
+  `------------------- breaking/landmark release increment
 ```
 
-- **MAJOR/MINOR** live in [cmake/Version.cmake](cmake/Version.cmake) - the only
-  two numbers a human maintains. `Release.ps1 -Bump minor|major` rewrites them.
-- **REVISION** is the commit count, stamped at **build** time by
-  [cmake/GenerateVersion.cmake](cmake/GenerateVersion.cmake) into
-  `build/generated/version.h`. Nobody edits it, it never collides, and it only
-  moves forward.
-- A build from a dirty tree reports `1.0.116+dev` in the title bar, so a local
-  build can never be mistaken for the released one. The embedded VERSIONINFO
-  (Explorer -> Properties -> Details) and the git hash come from the same header.
-- Every released binary maps to exactly one commit: version `1.0.116` is the
-  commit tagged `v1.0.116`, whose `rev-list --count` is 116.
+- All three components live in
+  [app/res/version.h.in](app/res/version.h.in), the single hand-maintained
+  version source.
+- Update the header manually or run
+  `Release.ps1 -Plan -Bump patch|minor|major`. An AI release agent may make the
+  same edit while preparing the release.
+- CMake copies the header to `build/generated/version.h`. The title bar, About
+  dialog and embedded VERSIONINFO (Explorer -> Properties -> Details) all use
+  that value.
+- Tag the release commit with the matching `v<version>` tag so each released
+  binary still maps to one source revision.
 
 Where the version surfaces:
 
 | Where | Value |
 |---|---|
-| Title bar | `NIFDiff 1.0.116 - NIF Model Compare` (`+dev` if dirty) |
-| Explorer → Properties → Details | FileVersion / ProductVersion `1.0.116` |
-| Git | tag `v1.0.116` |
-| Nexus | version field `1.0.116` |
+| Title bar | `NIFDiff 1.0.156 - NIF Model Compare` |
+| Explorer → Properties → Details | FileVersion / ProductVersion `1.0.156` |
+| Git | tag `v1.0.156` |
+| Nexus | version field `1.0.156` |
 
 ## Cutting a release
 
@@ -38,14 +38,15 @@ to tell users) is not. Hence two phases.
 ### 1. Plan
 
 ```powershell
-.\Release.ps1 -Plan                # patch-level: revision moves on its own
-.\Release.ps1 -Plan -Bump minor    # feature release: 1.0.x -> 1.1.x
-.\Release.ps1 -Plan -Bump major    # landmark:        1.x  -> 2.0
+.\Release.ps1 -Plan -Bump patch    # patch release:   1.0.156 -> 1.0.157
+.\Release.ps1 -Plan -Bump minor    # feature release: 1.0.156 -> 1.1.0
+.\Release.ps1 -Plan -Bump major    # landmark:        1.0.156 -> 2.0.0
+.\Release.ps1 -Plan                # inspect without changing the version
 ```
 
-Prints the last tag, every commit since it, the changed files, and **the
-version the next commit will carry**. `-Bump` also rewrites
-`cmake/Version.cmake` - leave that edit uncommitted for now.
+Prints the last tag, every commit since it, the changed files, and the fixed
+release version. `-Bump` also rewrites `app/res/version.h.in` - leave that edit
+uncommitted while writing the release notes.
 
 ### 2. Write the release up
 
@@ -59,10 +60,9 @@ From the commit list, update:
    description keeps the last 3-4 releases and lets older ones scroll off).
 3. **`README.md`** - only if behaviour or features actually changed.
 
-Then commit **everything in exactly one commit** (the version bump, the
-changelog, the docs). One commit, because the revision is the commit count -
-two commits and the number you wrote in the changelog is off by one.
-`-Publish` catches that mismatch rather than shipping it.
+Then commit the version bump, changelog and documentation. `-Publish` verifies
+that the fixed header version, changelog, executable VERSIONINFO and tag all
+agree before shipping.
 
 ### 3. Publish
 
@@ -89,7 +89,7 @@ Then it builds Release, packages `dist\NIFDiff-<version>.zip`, tags
   `<version>`, paste `NexusMods_Mod_Description.bbcode` into the description.
 - **GitHub** (optional, and the link the bbcode header points at):
   ```powershell
-  gh release create v1.0.116 dist\NIFDiff-1.0.116.zip --title "NIFDiff 1.0.116" --notes-file CHANGELOG.md
+  gh release create v1.0.156 dist\NIFDiff-1.0.156.zip --title "NIFDiff 1.0.156" --notes-file CHANGELOG.md
   ```
 
 ## Package contents

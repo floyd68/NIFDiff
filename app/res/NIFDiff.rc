@@ -1,5 +1,5 @@
 #include "resource.h"
-#include "version.h"   // generated: build/generated/version.h (see cmake/GenerateVersion.cmake)
+#include "version.h"   // copied from app/res/version.h.in by CMake
 #include <winver.h>
 
 // Application icon. The lowest-ID icon in the executable is also what
@@ -7,8 +7,8 @@
 IDI_NIFDIFF ICON "NIFDiff.ico"
 
 // Version stamp shown in Explorer's Properties -> Details, and what an
-// installer/updater compares. The numeric FILEVERSION carries the same
-// major.minor.<git commit count> the app reports; field 4 is unused.
+// installer/updater compares. All values come from app/res/version.h.in;
+// field 4 is unused.
 VS_VERSION_INFO VERSIONINFO
     FILEVERSION    NIFDIFF_VERSION_MAJOR,NIFDIFF_VERSION_MINOR,NIFDIFF_VERSION_REVISION,0
     PRODUCTVERSION NIFDIFF_VERSION_MAJOR,NIFDIFF_VERSION_MINOR,NIFDIFF_VERSION_REVISION,0
@@ -34,7 +34,7 @@ BEGIN
             VALUE "OriginalFilename", "NIFDiff.exe"
             VALUE "ProductName",      "NIFDiff"
             VALUE "ProductVersion",   NIFDIFF_VERSION_STRING
-            VALUE "Comments",         "Built from git " NIFDIFF_GIT_HASH
+            VALUE "Comments",         "Version maintained in app/res/version.h.in"
         END
     END
     BLOCK "VarFileInfo"

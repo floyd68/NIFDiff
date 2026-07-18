@@ -85,6 +85,7 @@ public:
     void SetOnThumbnailChosen(std::function<void(const std::wstring&)> handler) { m_onThumbnailChosen = std::move(handler); }
 
     std::wstring StepThumbnailFile(int delta) { return m_thumbStrip ? m_thumbStrip->StepSelection(delta) : std::wstring(); }
+    std::wstring PageThumbnailFile(int direction) { return m_thumbStrip ? m_thumbStrip->PageSelection(direction) : std::wstring(); }
     std::wstring EdgeThumbnailFile(bool last) { return m_thumbStrip ? m_thumbStrip->EdgeSelection(last) : std::wstring(); }
     bool ActivateThumbnailSelection() { return m_thumbStrip && m_thumbStrip->ActivateSelection(); }
     void NavigateThumbnailUp() { if (m_thumbStrip) m_thumbStrip->NavigateUp(); }

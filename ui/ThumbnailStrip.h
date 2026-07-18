@@ -139,6 +139,9 @@ public:
     // which is only highlighted; ActivateSelection (Enter) then navigates into
     // it. ActivateSelection returns false when there is no selection.
     std::wstring StepSelection(int delta);
+    // Move by roughly one visible viewport of cards. Variable-width cards are
+    // accumulated in the requested direction rather than assuming a fixed size.
+    std::wstring PageSelection(int direction);
     std::wstring EdgeSelection(bool last);
     bool ActivateSelection();
 
@@ -279,6 +282,9 @@ private:
     void EnsureTextFormat();
     int CardAtPoint(const POINT& pt) const; // -1 when none
     bool InResizeGrip(const POINT& pt) const; // over the drag-to-resize edge
+    bool HorizontalScrollBarRects(
+        D2D1_RECT_F& track,
+        D2D1_RECT_F& thumb) const;
     // Geometry helpers, orientation-aware. ThumbSide = the thumbnail's fixed
     // dimension (height when horizontal); CardExtent = one card's size along
     // the scroll axis (VARIES per card now: File cards are ThumbSide*aspect
@@ -289,6 +295,7 @@ private:
     float CardOffset(std::size_t index) const;
     float LeadGutter() const;
     float ContentExtent() const; // total size along the scroll axis
+    int PagingStep(int direction) const;
     void ClampScroll();
     // Scroll so the highlighted current-file card sits in the middle of the
     // strip (FICture2's EnsureCentered): items within half a viewport of either
@@ -332,6 +339,13 @@ private:
     float m_dragStartMouse = 0.0f;  // cursor pos on the resize axis at drag start
     float m_dragStartExtent = 0.0f; // m_fixedExtent at drag start
     std::function<void(float, bool)> m_onResize;
+
+    // Horizontal strip scrollbar. It overlays the otherwise-unused bottom
+    // padding below card labels and appears only when cards overflow.
+    bool m_scrollbarDragging = false;
+    bool m_scrollbarHover = false;
+    float m_scrollbarDragMouse = 0.0f;
+    float m_scrollbarDragScroll = 0.0f;
 
     // Async parse via the shared ResourceManager pool. m_gen (the manager's
     // per-strip generation) is bumped on every NavigateTo / disable; results

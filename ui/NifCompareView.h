@@ -65,6 +65,12 @@ public:
     // its recent-files (MRU) list current.
     void SetOnFileOpened(std::function<void(const std::wstring&)> handler);
 
+    // Fires when the active pane changes or its displayed file/container
+    // changes. The app shell uses the path to keep the native title bar in
+    // sync; an empty path restores the product-only title.
+    void SetOnActivePathChanged(
+        std::function<void(const std::wstring&)> handler);
+
     // Adds a pane (up to kMaxPanes) and rebuilds the equal-width host tree.
     // Returns the new pane, or nullptr if already at kMaxPanes.
     ComparePane* AddPane();
@@ -280,6 +286,7 @@ private:
     void WireContent(PaneContent* content);
     // Wire the strip pick + resize callbacks (on the persistent frame).
     void WireThumbnailCallbacks(ComparePane* raw);
+    void NotifyActivePathChanged();
     void RebuildHostTree();
     // Rebuilds the views-area DockPanel's children (thumbnail strip docked
     // Bottom, host tree Fill) in the order DockPanel requires.
@@ -446,6 +453,7 @@ private:
 
     std::function<void(ComparePane&)> m_onPaneOpenRequested;
     std::function<void(const std::wstring&)> m_onFileOpened;
+    std::function<void(const std::wstring&)> m_onActivePathChanged;
     std::function<void(POINT, ComparePane*)> m_onContextMenuRequested;
     std::function<void(ComparePane&)> m_onScreenshotRequested;
 
@@ -502,9 +510,10 @@ private:
     // other pane's own folder (skips panes lacking that name).
     void SyncThumbnailSelection(ComparePane* source, const std::wstring& path);
     // Thumbnail keyboard navigation on the active pane (each syncs to the
-    // others). Step: prev/next sibling (delta -1/+1). Edge: first/last file.
+    // others). Step: prev/next tile; Page: one viewport; Edge: first/last tile.
     void ApplyThumbnailPick(ComparePane* active, const std::wstring& path);
     void StepActiveThumbnail(int delta);
+    void PageActiveThumbnail(int direction);
     void LoadEdgeThumbnail(bool last);
     bool m_applyingSync = false; // re-entrancy guard while mirroring camera changes
     float m_parallaxHeightScale = 2.0f; // current "Parallax Height" slider value, applied to new panes

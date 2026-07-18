@@ -3,16 +3,15 @@
     NIFDiff release automation: plan, package, tag and publish a Nexus build.
 
 .DESCRIPTION
-    Versions are MAJOR.MINOR.REVISION where MAJOR/MINOR live in
-    cmake/Version.cmake and REVISION is the git commit count - so the version
-    is a function of the history, not a number anyone maintains by hand.
+    Versions are fixed in app/res/version.h.in and are updated explicitly for
+    each release, either by a person or by an AI agent.
 
     The release runs in two phases, because the interesting half (deciding
     what changed and writing it up) is not automatable:
 
-      1. .\Release.ps1 -Plan [-Bump minor|major]
+      1. .\Release.ps1 -Plan [-Bump patch|minor|major]
          Reports the last release, every commit since it, and the version the
-         next commit will carry. Optionally rewrites cmake/Version.cmake.
+         release will carry. Optionally rewrites app/res/version.h.in.
          You then write CHANGELOG.md / the Nexus bbcode / README and COMMIT.
 
       2. .\Release.ps1 -Publish
@@ -31,9 +30,9 @@ param(
     [Parameter(ParameterSetName = 'Plan')]
     [switch]$Plan,
 
-    # Rewrites cmake/Version.cmake. Commit that edit together with the docs.
+    # Rewrites app/res/version.h.in. Commit that edit together with the docs.
     [Parameter(ParameterSetName = 'Plan')]
-    [ValidateSet('major', 'minor', 'none')]
+    [ValidateSet('major', 'minor', 'patch', 'none')]
     [string]$Bump = 'none',
 
     [Parameter(ParameterSetName = 'Publish', Mandatory = $true)]
@@ -54,7 +53,7 @@ Set-StrictMode -Version Latest
 $Root      = $PSScriptRoot
 $BuildDir  = Join-Path $Root 'build'
 $DistDir   = Join-Path $Root 'dist'
-$VersionCM = Join-Path $Root 'cmake\Version.cmake'
+$VersionHeader = Join-Path $Root 'app\res\version.h.in'
 $Changelog = Join-Path $Root 'CHANGELOG.md'
 $Bbcode    = Join-Path $Root 'NexusMods_Mod_Description.bbcode'
 
@@ -76,24 +75,28 @@ function Git-Out {
 
 # --- version helpers -------------------------------------------------------
 
-function Get-MajorMinor {
-    if (-not (Test-Path $VersionCM)) { Die "missing $VersionCM" }
-    $t = Get-Content $VersionCM -Raw
-    if ($t -notmatch 'NIFDIFF_VERSION_MAJOR\s+(\d+)') { Die "no MAJOR in $VersionCM" }
+function Get-Version {
+    if (-not (Test-Path $VersionHeader)) { Die "missing $VersionHeader" }
+    $t = Get-Content $VersionHeader -Raw
+    if ($t -notmatch '(?m)^#define NIFDIFF_VERSION_MAJOR[ \t]+(\d+)[ \t]*$') { Die "no MAJOR in $VersionHeader" }
     $maj = [int]$Matches[1]
-    if ($t -notmatch 'NIFDIFF_VERSION_MINOR\s+(\d+)') { Die "no MINOR in $VersionCM" }
+    if ($t -notmatch '(?m)^#define NIFDIFF_VERSION_MINOR[ \t]+(\d+)[ \t]*$') { Die "no MINOR in $VersionHeader" }
     $min = [int]$Matches[1]
-    return @{ Major = $maj; Minor = $min }
+    if ($t -notmatch '(?m)^#define NIFDIFF_VERSION_REVISION[ \t]+(\d+)[ \t]*$') { Die "no REVISION in $VersionHeader" }
+    $rev = [int]$Matches[1]
+    return @{ Major = $maj; Minor = $min; Revision = $rev }
 }
 
-function Set-MajorMinor([int]$Major, [int]$Minor) {
-    $t = Get-Content $VersionCM -Raw
-    $t = $t -replace 'set\(NIFDIFF_VERSION_MAJOR\s+\d+\)', "set(NIFDIFF_VERSION_MAJOR $Major)"
-    $t = $t -replace 'set\(NIFDIFF_VERSION_MINOR\s+\d+\)', "set(NIFDIFF_VERSION_MINOR $Minor)"
-    Set-Content $VersionCM $t -NoNewline
+function Set-Version([int]$Major, [int]$Minor, [int]$Revision) {
+    $version = "$Major.$Minor.$Revision"
+    $t = Get-Content $VersionHeader -Raw
+    $t = $t -replace '(?m)^#define NIFDIFF_VERSION_MAJOR[ \t]+\d+[ \t]*$', "#define NIFDIFF_VERSION_MAJOR    $Major"
+    $t = $t -replace '(?m)^#define NIFDIFF_VERSION_MINOR[ \t]+\d+[ \t]*$', "#define NIFDIFF_VERSION_MINOR    $Minor"
+    $t = $t -replace '(?m)^#define NIFDIFF_VERSION_REVISION[ \t]+\d+[ \t]*$', "#define NIFDIFF_VERSION_REVISION $Revision"
+    $t = $t -replace '(?m)^#define NIFDIFF_VERSION_STRING[ \t]+"[^"]+"[ \t]*$', "#define NIFDIFF_VERSION_STRING  `"$version`""
+    $t = $t -replace '(?m)^#define NIFDIFF_VERSION_WSTR[ \t]+L"[^"]+"[ \t]*$', "#define NIFDIFF_VERSION_WSTR   L`"$version`""
+    Set-Content $VersionHeader $t -NoNewline
 }
-
-function Get-CommitCount { return [int](Git-Out rev-list --count HEAD) }
 
 function Get-LastTag {
     $t = & git -C $Root describe --tags --abbrev=0 --match 'v*' 2>$null
@@ -106,17 +109,20 @@ function Get-LastTag {
 if ($PSCmdlet.ParameterSetName -eq 'Plan') {
     Step 'Release plan'
 
-    $mm = Get-MajorMinor
+    $v = Get-Version
     $lastTag = Get-LastTag
 
     if ($Bump -ne 'none') {
-        if ($Bump -eq 'major') { $mm.Major++; $mm.Minor = 0 } else { $mm.Minor++ }
-        Set-MajorMinor $mm.Major $mm.Minor
-        Ok "cmake/Version.cmake -> $($mm.Major).$($mm.Minor)  (commit this with the docs)"
+        switch ($Bump) {
+            'major' { $v.Major++; $v.Minor = 0; $v.Revision = 0 }
+            'minor' { $v.Minor++; $v.Revision = 0 }
+            'patch' { $v.Revision++ }
+        }
+        Set-Version $v.Major $v.Minor $v.Revision
+        Ok "app/res/version.h.in -> $($v.Major).$($v.Minor).$($v.Revision)  (commit this with the docs)"
     }
 
-    # The release commit is not made yet, so it will be commit N+1.
-    $next = "$($mm.Major).$($mm.Minor).$((Get-CommitCount) + 1)"
+    $next = "$($v.Major).$($v.Minor).$($v.Revision)"
 
     Info ""
     if ($lastTag) {
@@ -126,7 +132,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Plan') {
         Info "Last release : (none - this is the first)"
         $range = 'HEAD'
     }
-    Info "Next version : $next   (assuming exactly ONE release commit from here)"
+    Info "Next version : $next"
     Info "Next tag     : v$next"
 
     Step "Commits since $(if ($lastTag) { $lastTag } else { 'the beginning' })"
@@ -141,7 +147,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Plan') {
     Info "1. Write the CHANGELOG.md entry for $next from the log above."
     Info "2. Mirror the highlights into NexusMods_Mod_Description.bbcode's"
     Info "   'What's New' section, and update README.md if behaviour changed."
-    Info "3. git add -A && git commit   <- exactly one commit, or the revision shifts"
+    Info "3. Commit the version header and release documentation."
     Info "4. .\Release.ps1 -Publish"
     exit 0
 }
@@ -157,8 +163,8 @@ $dirty = Git-Out status --porcelain --untracked-files=no
 if ($dirty) { Die "working tree has uncommitted changes - commit the release first:`n$dirty" }
 Ok 'working tree clean'
 
-$mm      = Get-MajorMinor
-$version = "$($mm.Major).$($mm.Minor).$(Get-CommitCount)"
+$v       = Get-Version
+$version = "$($v.Major).$($v.Minor).$($v.Revision)"
 $tag     = "v$version"
 $hash    = Git-Out rev-parse --short HEAD
 Ok "version $version  (HEAD $hash)"
@@ -177,9 +183,8 @@ $clVersion = $Matches[1]
 if ($clVersion -ne $version) {
     Die @"
 CHANGELOG.md's newest entry is $clVersion but this commit computes to $version.
-  Either the entry is stale, or you made more than one commit since -Plan.
-  Fix the '## $clVersion' heading to '## $version' (and re-check the notes),
-  amend the release commit, and re-run.
+  Update either the changelog or app/res/version.h.in so they match, then
+  commit the correction and re-run.
 "@
 }
 Ok "CHANGELOG.md top entry matches ($version)"
