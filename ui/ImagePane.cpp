@@ -65,8 +65,9 @@ public:
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
         UINT w = 0, h = 0;
         DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
+        ImageCore::AlphaMode alphaMode = ImageCore::AlphaMode::Unknown;
         if (!ImageGpuResourceCache::Instance().TryGet(
-                path, srv, w, h, fmt, bp->GetGraphicsGeneration().device))
+                path, srv, w, h, fmt, alphaMode, bp->GetGraphicsGeneration().device))
             return false;
         {
             std::lock_guard<std::mutex> lk(m_mutex);
@@ -75,9 +76,10 @@ public:
             m_needUpload = false;
         }
         SetShaderResource(srv);
-        // The cached format tells us premultiplied (BGRA8) vs straight (BCn), so
-        // channel isolation stays correct on a cache-hit re-select too.
-        m_srvPremultiplied = !IsBlockCompressed(fmt);
+        // The cached alpha mode (decoder-determined) keeps isolation correct on a
+        // cache-hit re-select too - no format guessing.
+        m_srvAlphaMode = alphaMode;
+        m_srvPremultiplied = (alphaMode == ImageCore::AlphaMode::Premultiplied);
         m_srvPath = path;
         PushDrawState();
         return true;
@@ -91,6 +93,7 @@ public:
             m_payloadPath.clear();
             m_needUpload = false;
         }
+        m_srvAlphaMode = ImageCore::AlphaMode::Unknown;
         m_srvPremultiplied = false;
         m_srvPath.clear();
         Clear(); // FD2D::Image::Clear (drops the current bitmap/SRV)
@@ -170,9 +173,11 @@ public:
                     if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
                     {
                         SetShaderResource(srv);
-                        // BGRA8 is premultiplied, BCn is straight - drives the
-                        // isolation shader's unpremultiply (see PushDrawState).
-                        m_srvPremultiplied = !compressed;
+                        // Use the decoder's real alpha mode (NOT a format guess):
+                        // WIC/normalized CPU output is premultiplied, straight BCn
+                        // is not. Drives the isolation shader (see PushDrawState).
+                        m_srvAlphaMode = img.alphaMode;
+                        m_srvPremultiplied = (img.alphaMode == ImageCore::AlphaMode::Premultiplied);
                         PushDrawState();
                         // Pool the uploaded SRV so re-selecting this texture is a
                         // synchronous cache hit (see TryApplyCachedSrv) - now for
@@ -184,7 +189,7 @@ public:
                             if (FD2D::Backplate* bp = BackplateRef())
                                 gen = bp->GetGraphicsGeneration().device;
                             ImageGpuResourceCache::Instance().Put(
-                                path, srv, img.width, img.height, fmt, gen);
+                                path, srv, img.width, img.height, fmt, img.alphaMode, gen);
                         }
                         uploaded = true;
                     }
@@ -349,9 +354,9 @@ private:
         ds.highQualitySampling = true;
         ds.alphaCheckerboardEnabled = m_checkerboard;
         ds.channelMode = m_channelMode;
-        // BGRA8 (CPU path) is premultiplied; BCn is straight (see DecodedImage).
-        // Tells the isolation shader to unpremultiply color channels for accurate
-        // straight-alpha readout - consistent across formats.
+        // From the decoder's real alpha mode (m_srvAlphaMode), not a format guess:
+        // lets the shader premultiply a straight source for display and unpremultiply
+        // a premultiplied one for accurate channel isolation.
         ds.sourcePremultiplied = m_srvPremultiplied;
         SetDrawState(ds);
         Invalidate();
@@ -429,7 +434,8 @@ private:
     float m_panY = 0.0f;
     int m_rotation = 0;      // 0/1/2/3 quarter-turns CW
     int m_channelMode = 0;   // 0=RGBA, 1=R, 2=G, 3=B, 4=A
-    bool m_srvPremultiplied = false; // current SRV holds premultiplied color (BGRA8)
+    ImageCore::AlphaMode m_srvAlphaMode = ImageCore::AlphaMode::Unknown; // current SRV's alpha mode
+    bool m_srvPremultiplied = false; // == (m_srvAlphaMode == Premultiplied); drives the shader
     bool m_checkerboard = false;
     bool m_panning = false;
     LONG m_dragStartX = 0;

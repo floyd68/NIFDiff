@@ -27,6 +27,8 @@
 // path here vs. a resolved engine-order source there).
 #pragma once
 
+#include "ImageCore/DecodedImage.h" // ImageCore::AlphaMode (stored per entry)
+
 #include <d3d11.h>
 #include <dxgiformat.h>
 #include <wrl/client.h>
@@ -54,13 +56,14 @@ public:
     bool TryGet(const std::wstring& path,
                 Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv,
                 UINT& outW, UINT& outH, DXGI_FORMAT& outFmt,
+                ImageCore::AlphaMode& outAlphaMode,
                 uint64_t deviceGeneration);
 
     // Insert/refresh `path`'s SRV (ignored when srv is null). Evicts the
     // least-recently-used entry past the capacity cap.
     void Put(const std::wstring& path,
              const Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv,
-             UINT w, UINT h, DXGI_FORMAT format,
+             UINT w, UINT h, DXGI_FORMAT format, ImageCore::AlphaMode alphaMode,
              uint64_t deviceGeneration);
 
     void Clear();
@@ -81,6 +84,7 @@ private:
         UINT width { 0 };
         UINT height { 0 };
         DXGI_FORMAT format { DXGI_FORMAT_UNKNOWN };
+        ImageCore::AlphaMode alphaMode { ImageCore::AlphaMode::Unknown };
         size_t bytes { 0 }; // EstimateBytes at insert - keeps m_bytesInUse O(1)
         std::list<std::wstring>::iterator lruIt {};
     };
