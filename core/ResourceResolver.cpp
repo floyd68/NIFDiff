@@ -411,6 +411,7 @@ ResourceLocation ResourceResolver::LocateNormalized(const std::string& rel,
         if (!archive.reader || !archive.reader->HasEntry(wideRel))
             continue;
         result.archiveIndex = static_cast<int>(i);
+        result.archivePath = archive.path;
         result.archiveEntry = wideRel;
         result.sourceKey = "bsa:" + ToUtf8ForLog(LowerWide(archive.path)) + "|" + rel;
         return result;

@@ -326,6 +326,8 @@ private:
     // another pane (a synced compare group) from ones whose file is unique.
     void DrawSyncBadges(ID2D1RenderTarget* target);
     bool HandleTextureInspectorClick(const POINT& pt);
+    bool HandleTextureInspectorDoubleClick(const POINT& pt);
+    bool OpenTextureInspectorSelectionInImagePane();
 
     // Drag&drop internals (see the OnFileDrag comment above). The overlay
     // pane pointer is validated against m_panes at draw time, so a pane

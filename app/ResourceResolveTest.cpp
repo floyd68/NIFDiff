@@ -235,6 +235,32 @@ int main(int argc, char** argv)
         }
     }
 
+    {
+        nsk::ResourceLocation loose;
+        loose.sourceKey = "file:test";
+        loose.diskPath = L"D:\\Data\\textures\\test.dds";
+        if (loose.displayPath() != loose.diskPath)
+        {
+            std::cout
+                << "FAIL: loose display path mismatch\n";
+            ++failures;
+        }
+
+        nsk::ResourceLocation archived;
+        archived.sourceKey = "bsa:test";
+        archived.archiveIndex = 0;
+        archived.archivePath = L"D:\\Data\\Textures.ba2";
+        archived.archiveEntry =
+            L"textures\\test.dds";
+        if (archived.displayPath() !=
+            L"D:\\Data\\Textures.ba2\\textures\\test.dds")
+        {
+            std::cout
+                << "FAIL: archive display path mismatch\n";
+            ++failures;
+        }
+    }
+
     fs::remove_all(root, ec);
     if (failures == 0)
     {

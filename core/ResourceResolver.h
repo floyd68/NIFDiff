@@ -46,10 +46,23 @@ struct ResourceLocation
     std::string sourceKey;       // identity, empty on a miss (see ResourceBytes::sourceKey)
     std::wstring diskPath;       // loose-file hit: the decoder reads this directly
     int archiveIndex = -1;       // archive hit: index into the resolver's archive list
+    std::wstring archivePath;    // archive hit: host path for VFS/display consumers
     std::wstring archiveEntry;   // archive hit: normalized entry name to extract
 
     bool ok() const { return !sourceKey.empty(); }
     bool isLoose() const { return archiveIndex < 0; }
+    std::wstring displayPath() const
+    {
+        if (isLoose())
+        {
+            return diskPath;
+        }
+        if (archivePath.empty() || archiveEntry.empty())
+        {
+            return {};
+        }
+        return archivePath + L"\\" + archiveEntry;
+    }
 };
 
 class ResourceResolver

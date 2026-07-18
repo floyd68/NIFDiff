@@ -793,6 +793,14 @@ void NifCompareView::SetOnThumbnailStripSizeChanged(std::function<void(float)> h
 
 bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
 {
+    if (event.type == FD2D::InputEventType::MouseDoubleClick &&
+        event.hasPoint &&
+        event.button == FD2D::MouseButton::Left &&
+        HandleTextureInspectorDoubleClick(event.point))
+    {
+        return true;
+    }
+
     // Clicks over the texture inspector overlay belong to IT, not to the
     // viewport underneath (row select / channel cycle / plain swallow).
     if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint &&
@@ -1665,7 +1673,7 @@ void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
     const D2D1_COLOR_F kHeaderCol = D2D1::ColorF(0.52f, 0.56f, 0.61f);
 
     float y = panel.top + kPad;
-    drawCell(L"TEXTURES (T)  ·  click a row, click the preview to cycle " +
+    drawCell(L"TEXTURES (T)  \u00b7  click: select/channel  \u00b7  double-click: open in ImagePane  \u00b7  " +
              std::wstring(kChannelNames[m_texChannelMode]),
              panel.left + kPad, y, panelW - kPad * 2.0f, kHeaderCol);
     y += kRowH;
@@ -1761,6 +1769,124 @@ bool NifCompareView::HandleTextureInspectorClick(const POINT& pt)
         }
     }
     return true; // swallow clicks anywhere else on the panel
+}
+
+bool NifCompareView::HandleTextureInspectorDoubleClick(
+    const POINT& pt)
+{
+    if (!m_texPanelLive ||
+        !FD2D::Util::RectContainsPoint(
+            m_texPanelRect,
+            pt))
+    {
+        return false;
+    }
+
+    bool openSelection =
+        FD2D::Util::RectContainsPoint(
+            m_texPreviewHitRect,
+            pt);
+    for (std::size_t i = 0;
+         i < m_texRowRects.size();
+         ++i)
+    {
+        if (FD2D::Util::RectContainsPoint(
+                m_texRowRects[i],
+                pt))
+        {
+            m_texInspectorRow =
+                static_cast<int>(i);
+            openSelection = true;
+            break;
+        }
+    }
+
+    if (openSelection)
+    {
+        OpenTextureInspectorSelectionInImagePane();
+    }
+    return true;
+}
+
+bool NifCompareView::OpenTextureInspectorSelectionInImagePane()
+{
+    NifComparePane* active =
+        AsNif(ActivePane());
+    if (!active || !m_resolver)
+    {
+        return false;
+    }
+
+    const RenderMesh* selected =
+        active->Viewport().SelectedMesh();
+    if (!selected)
+    {
+        return false;
+    }
+
+    const std::vector<TexSlotRef> slots =
+        GatherTexSlots(selected->material);
+    if (slots.empty())
+    {
+        return false;
+    }
+    m_texInspectorRow = std::clamp(
+        m_texInspectorRow,
+        0,
+        static_cast<int>(slots.size()) - 1);
+
+    const std::string& relativePath =
+        *slots[
+            static_cast<std::size_t>(
+                m_texInspectorRow)].path;
+    const ResourceLocation location =
+        m_resolver->Locate(
+            relativePath,
+            active->Viewport().NifDirectory());
+    const std::wstring path =
+        location.displayPath();
+    FD2D::Backplate* backplate =
+        BackplateRef();
+    if (path.empty())
+    {
+        if (backplate)
+        {
+            backplate->ShowToast(
+                L"Selected texture could not be resolved.");
+        }
+        return false;
+    }
+
+    ComparePane* target = AllocatePaneFor();
+    if (!target)
+    {
+        if (backplate)
+        {
+            backplate->ShowToast(
+                L"No free pane is available for the texture.");
+        }
+        return false;
+    }
+
+    std::string error;
+    if (!target->Load(path, &error))
+    {
+        if (backplate)
+        {
+            backplate->ShowToast(
+                L"Failed to open the selected texture.");
+        }
+        return false;
+    }
+
+    SetActivePane(target);
+    if (backplate)
+    {
+        backplate->ShowToast(
+            L"Opened selected texture in ImagePane.");
+    }
+    Invalidate();
+    return true;
 }
 
 bool NifCompareView::HandleMaterialPanelMouseDown(const POINT& pt)
