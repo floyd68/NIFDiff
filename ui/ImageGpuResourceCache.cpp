@@ -56,7 +56,7 @@ bool ImageGpuResourceCache::TryGet(
     const std::wstring& path,
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv,
     UINT& outW, UINT& outH, DXGI_FORMAT& outFmt,
-    ImageCore::AlphaMode& outAlphaMode,
+    ImageAlphaInfo& outAlpha,
     uint64_t deviceGeneration)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -75,14 +75,14 @@ bool ImageGpuResourceCache::TryGet(
     outW = it->second.width;
     outH = it->second.height;
     outFmt = it->second.format;
-    outAlphaMode = it->second.alphaMode;
+    outAlpha = it->second.alpha;
     return true;
 }
 
 void ImageGpuResourceCache::Put(
     const std::wstring& path,
     const Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv,
-    UINT w, UINT h, DXGI_FORMAT format, ImageCore::AlphaMode alphaMode,
+    UINT w, UINT h, DXGI_FORMAT format, const ImageAlphaInfo& alpha,
     uint64_t deviceGeneration)
 {
     if (!srv)
@@ -104,7 +104,7 @@ void ImageGpuResourceCache::Put(
     entry.width = w;
     entry.height = h;
     entry.format = format;
-    entry.alphaMode = alphaMode;
+    entry.alpha = alpha;
     entry.bytes = EstimateBytes(w, h, format);
     entry.lruIt = m_lru.begin();
     m_bytesInUse += entry.bytes;

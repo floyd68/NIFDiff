@@ -8,6 +8,7 @@
 #include "FileDialog.h"
 #include "../ui/IpcOpenRequest.h"
 #include "../ui/NifCompareView.h"
+#include "../ui/ImagePane.h" // ImagePane + ImageCore::AlphaUsage (alpha-usage override menu)
 #include "../ui/ThumbnailStrip.h"
 #include "../core/NifLog.h"
 #include "../core/ResourceManager.h"
@@ -80,6 +81,10 @@ namespace
     constexpr UINT kMenuIdThumbSizeSmall = 12;
     constexpr UINT kMenuIdThumbSizeMedium = 13;
     constexpr UINT kMenuIdThumbSizeLarge = 14;
+    // Image-pane alpha-usage override (16..18): how to treat the alpha channel.
+    constexpr UINT kMenuIdAlphaAuto = 16;
+    constexpr UINT kMenuIdAlphaCoverage = 17;
+    constexpr UINT kMenuIdAlphaData = 18;
     // Recent-files (MRU) submenu entries occupy a reserved id range above
     // the fixed items: entry i uses kMenuIdRecentBase + i.
     constexpr UINT kMenuIdRecentBase = 100;
@@ -184,6 +189,7 @@ namespace
         // (ComparePane), which OWNS its content - a dynamic_cast on the frame
         // itself is always null; ask it for its NIF content instead.
         NifComparePane* nifPane = pane ? pane->NifContent() : nullptr;
+        ImagePane* imgPane = pane ? pane->ImageContent() : nullptr;
         if (view != nullptr && pane != nullptr)
         {
             AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open in This Pane...");
@@ -220,6 +226,22 @@ namespace
             // Screenshot renders the NIF viewport, so it's a NIF-pane action.
             if (nifPane != nullptr)
                 AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
+            // Image panes: how the alpha channel is treated. The Auto policy is
+            // usually right (loose alpha = transparency, compressed straight alpha =
+            // data); this overrides the rare misjudgment per image.
+            if (imgPane != nullptr && !imgPane->CurrentPath().empty())
+            {
+                HMENU alphaMenu = CreatePopupMenu();
+                const ImageCore::AlphaUsage ov = imgPane->AlphaUsageOverride();
+                auto aItem = [&](UINT id, const wchar_t* label, ImageCore::AlphaUsage u)
+                {
+                    AppendMenuW(alphaMenu, MF_STRING | (ov == u ? MF_CHECKED : MF_UNCHECKED), id, label);
+                };
+                aItem(kMenuIdAlphaAuto,     L"&Auto",                  ImageCore::AlphaUsage::Auto);
+                aItem(kMenuIdAlphaCoverage, L"Treat as &Transparency", ImageCore::AlphaUsage::Coverage);
+                aItem(kMenuIdAlphaData,     L"Treat as &Opaque (data)", ImageCore::AlphaUsage::Data);
+                AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(alphaMenu), L"Alpha &Channel");
+            }
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         }
         if (onToggleThumbnailStrip)
@@ -301,6 +323,16 @@ namespace
         case kMenuIdSaveScreenshot:
             if (nifPane != nullptr)
                 SavePaneScreenshot(hwnd, *nifPane);
+            break;
+
+        case kMenuIdAlphaAuto:
+            if (imgPane != nullptr) imgPane->SetAlphaUsageOverride(ImageCore::AlphaUsage::Auto);
+            break;
+        case kMenuIdAlphaCoverage:
+            if (imgPane != nullptr) imgPane->SetAlphaUsageOverride(ImageCore::AlphaUsage::Coverage);
+            break;
+        case kMenuIdAlphaData:
+            if (imgPane != nullptr) imgPane->SetAlphaUsageOverride(ImageCore::AlphaUsage::Data);
             break;
 
         case kMenuIdClearRecent:

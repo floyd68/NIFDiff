@@ -358,8 +358,9 @@ documents every control in detail.
   folder (or a `.nif` while browsing textures) **swaps the content in place** and
   browsing continues - the strip's folder, scroll and selection survive the
   swap. Image content supports **zoom / pan / rotate**, a **checkerboard**
-  backdrop for alpha, and **channel isolation** (view R, G, B, or A alone, or the
-  full RGBA) - and with Sync Views on, pan/zoom/channel changes mirror across
+  backdrop behind transparent areas, and **channel isolation** (view R, G, B, or
+  A alone, or the full RGBA) - and with Sync Views on, pan/zoom/channel changes
+  mirror across
   panes just like the 3D cameras do, so you can line a diffuse up against its
   normal map or two mods' versions of one texture. Compressed DDS (BC1-BC7) is
   uploaded straight to the GPU as its native block format rather than decoded to
@@ -370,6 +371,17 @@ documents every control in detail.
   referenced *by a NIF* have their own richer equivalent: a process-wide
   `TextureRepository` keyed on the engine-resolved source, so panes comparing
   the same-named mesh share one upload of each shared texture.)
+- **Alpha, done right for game textures.** An alpha channel might be *coverage*
+  (transparency) or packed *data* (a parallax height, a specular mask) - and DDS
+  metadata often doesn't say. NIFDiff decodes losslessly (never premultiplying
+  away the original channels) and applies an **Auto** policy: loose PNG/TGA and
+  uncompressed alpha are treated as transparency, while a block-compressed
+  straight/unknown alpha (usually data on Bethesda meshes) is shown opaque - so a
+  parallax normal map displays at full brightness instead of being darkened by
+  its height alpha. For the rare misjudgment, the pane's context menu has an
+  **Alpha Channel** override (Auto / Treat as Transparency / Treat as Opaque),
+  reset to Auto per image. Channel isolation always reads the true straight value
+  regardless.
 
 ### Bethesda resource pipeline
 

@@ -42,6 +42,16 @@
 namespace nsk
 {
 
+// The decoder-determined alpha facts a consumer needs to resolve display
+// behavior (see ImagePane's AlphaUsage resolver). Cached alongside the SRV so a
+// cache-hit re-select resolves identically - including after a per-pane override.
+struct ImageAlphaInfo
+{
+    ImageCore::AlphaEncoding encoding { ImageCore::AlphaEncoding::Unknown };
+    ImageCore::AlphaUsage usageHint { ImageCore::AlphaUsage::Auto };
+    bool sourceWasBlockCompressed { false };
+};
+
 class ImageGpuResourceCache
 {
 public:
@@ -56,14 +66,14 @@ public:
     bool TryGet(const std::wstring& path,
                 Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv,
                 UINT& outW, UINT& outH, DXGI_FORMAT& outFmt,
-                ImageCore::AlphaMode& outAlphaMode,
+                ImageAlphaInfo& outAlpha,
                 uint64_t deviceGeneration);
 
     // Insert/refresh `path`'s SRV (ignored when srv is null). Evicts the
     // least-recently-used entry past the capacity cap.
     void Put(const std::wstring& path,
              const Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv,
-             UINT w, UINT h, DXGI_FORMAT format, ImageCore::AlphaMode alphaMode,
+             UINT w, UINT h, DXGI_FORMAT format, const ImageAlphaInfo& alpha,
              uint64_t deviceGeneration);
 
     void Clear();
@@ -84,7 +94,7 @@ private:
         UINT width { 0 };
         UINT height { 0 };
         DXGI_FORMAT format { DXGI_FORMAT_UNKNOWN };
-        ImageCore::AlphaMode alphaMode { ImageCore::AlphaMode::Unknown };
+        ImageAlphaInfo alpha {};
         size_t bytes { 0 }; // EstimateBytes at insert - keeps m_bytesInUse O(1)
         std::list<std::wstring>::iterator lruIt {};
     };

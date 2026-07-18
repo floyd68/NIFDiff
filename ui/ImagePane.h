@@ -11,6 +11,8 @@
 
 #include "PaneContent.h"
 
+#include "ImageCore/DecodedImage.h" // ImageCore::AlphaUsage (per-pane override)
+
 #include <Text.h>
 
 #include <cstdint>
@@ -40,6 +42,15 @@ public:
     void RotateCW();
     void RotateCCW();
     void ResetView();
+
+    // Per-pane alpha-usage override for the ambiguous cases the Auto policy can't
+    // decide (a compressed straight alpha that IS real transparency, or a loose
+    // alpha that is data). Driven by the pane's context menu; reset to Auto on
+    // each new image. EffectiveAlphaUsage is what's actually in effect (for the
+    // menu's checked state).
+    void SetAlphaUsageOverride(ImageCore::AlphaUsage usage);
+    ImageCore::AlphaUsage AlphaUsageOverride() const;
+    ImageCore::AlphaUsage EffectiveAlphaUsage() const;
 
     // Shareable view transform, for syncing zoom/pan/channel across image panes
     // (the "Sync Views" compare mode). Pan is in client pixels - fine for the
