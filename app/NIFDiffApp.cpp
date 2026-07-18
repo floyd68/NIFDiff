@@ -16,8 +16,11 @@
 #include "../render/TextureRepository.h"
 #include "../render/RenderDevice.h"
 
+#include "FloarPathByteSource.h"     // ImageCore <- Floar VFS adapter (archive images)
+
 #include "ImageCore/ImageCore.h"     // RegisterBuiltInDecoders (texture-view port)
 #include "ImageCore/ImageLoader.h"   // ImageLoader::Shutdown
+#include "ImageCore/IPathByteSource.h" // SetPathByteSource (archive-backed decode)
 
 #include <Application.h>
 #include <Backplate.h>
@@ -177,8 +180,10 @@ namespace
             return;
         HMENU recentMenu = nullptr; // owned by `menu` once attached; freed with it
         // NIF-only actions (folder, screenshot) are gated on the pane kind so
-        // an image pane still gets Open / Recent / Close.
-        NifComparePane* nifPane = dynamic_cast<NifComparePane*>(pane);
+        // an image pane still gets Open / Recent / Close. `pane` is the frame
+        // (ComparePane), which OWNS its content - a dynamic_cast on the frame
+        // itself is always null; ask it for its NIF content instead.
+        NifComparePane* nifPane = pane ? pane->NifContent() : nullptr;
         if (view != nullptr && pane != nullptr)
         {
             AppendMenuW(menu, MF_STRING, kMenuIdOpenPane, L"&Open in This Pane...");
@@ -733,6 +738,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // decode textures (texture-view port). Cheap; no worker threads spun yet.
     ImageCore::RegisterBuiltInDecoders();
 
+    // Install the Floar-backed byte source BEFORE any ImageCore request, so a
+    // texture the thumbnail strip listed inside a BSA/BA2/ZIP/7z/RAR decodes
+    // from its virtual path instead of being mistaken for a disk file. The
+    // adapter has static lifetime (outlives every decode); released at shutdown.
+    static nsk::FloarPathByteSource s_floarByteSource;
+    ImageCore::SetPathByteSource(&s_floarByteSource);
+
     const std::wstring iniPath = GetIniFilePath();
 
     // First-run: offer to register the per-user .nif association (asked
@@ -1144,6 +1156,10 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // Stop ImageCore's decode workers before FD2D/COM teardown (any in-flight
     // image decode is cancelled; panes are already gone by here).
     ImageCore::ImageLoader::Instance().Shutdown();
+
+    // Drop the Floar byte source only after the workers are stopped, so no
+    // in-flight decode dereferences it mid-teardown.
+    ImageCore::SetPathByteSource(nullptr);
 
     app.Shutdown();
 

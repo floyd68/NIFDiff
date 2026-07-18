@@ -186,6 +186,8 @@ add_executable(NIFDiff WIN32
     app/AppSetup.cpp
     app/FileDialog.h
     app/FileDialog.cpp
+    app/FloarPathByteSource.h
+    app/FloarPathByteSource.cpp
     app/NIFDiffApp.h
     app/NIFDiffApp.cpp
     app/main.cpp
