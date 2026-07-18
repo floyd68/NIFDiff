@@ -2279,7 +2279,7 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
         return false;
 
     case VK_F12:
-        if (NifComparePane* target = AsNif(ActivePane()))
+        if (ComparePane* target = ActivePane())
         {
             if (m_onScreenshotRequested)
                 m_onScreenshotRequested(*target);
@@ -2296,7 +2296,8 @@ void NifCompareView::SetOnContextMenuRequested(std::function<void(POINT, Compare
     m_onContextMenuRequested = std::move(handler);
 }
 
-void NifCompareView::SetOnScreenshotRequested(std::function<void(NifComparePane&)> handler)
+void NifCompareView::SetOnScreenshotRequested(
+    std::function<void(ComparePane&)> handler)
 {
     m_onScreenshotRequested = std::move(handler);
 }

@@ -6,6 +6,7 @@
 #include "version.h" // generated (cmake/GenerateVersion.cmake): NIFDIFF_VERSION_DISPLAY
 #include "AppSetup.h"
 #include "FileDialog.h"
+#include "ScreenshotUtil.h"
 #include "../ui/IpcOpenRequest.h"
 #include "../ui/NifCompareView.h"
 #include "../ui/ImagePane.h" // ImagePane + ImageCore::AlphaUsage (alpha-usage override menu)
@@ -96,16 +97,46 @@ namespace
     void AddRecentFile(const std::wstring& iniPath, const std::wstring& path);
     void ClearRecentFiles(const std::wstring& iniPath);
 
-    // Saves the pane's last rendered 3D frame (the offscreen color target -
-    // clean render, no UI chrome) as a PNG. Defaults to the loaded NIF's
-    // own folder with the first unused <stem>_screenshotN.png name; the
-    // Save dialog lets the user redirect anywhere.
-    void SavePaneScreenshot(HWND hwnd, NifComparePane& pane)
+    // Saves the pane presentation as PNG. NIF panes use their clean offscreen
+    // color target; image panes capture the displayed client rectangle so
+    // zoom, pan, rotation, channels, and checkerboard match what the user sees.
+    void SavePaneScreenshot(
+        FD2D::Backplate& backplate,
+        ComparePane& pane)
     {
-        const NifDocument* doc = pane.Document();
-        std::filesystem::path nifPath = doc ? std::filesystem::path(doc->filePath()) : std::filesystem::path();
-        const std::wstring folder = nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring();
-        const std::wstring stem = nifPath.has_stem() ? nifPath.stem().wstring() : L"nifdiff";
+        HWND hwnd = backplate.Window();
+        if (hwnd == nullptr)
+        {
+            return;
+        }
+
+        D2D1_RECT_F imageRect {};
+        NifComparePane* nifPane = pane.NifContent();
+        ImagePane* imagePane = pane.ImageContent();
+        const bool canCaptureImage =
+            imagePane != nullptr &&
+            backplate.D3DDevice() != nullptr &&
+            backplate.UseOffscreenBuffer() &&
+            imagePane->TryGetScreenshotClientRect(imageRect);
+        const bool canSave =
+            (nifPane != nullptr &&
+             nifPane->Document() != nullptr) ||
+            canCaptureImage;
+        if (!canSave)
+        {
+            return;
+        }
+
+        const std::filesystem::path sourcePath(
+            pane.CurrentPath());
+        const std::wstring folder =
+            sourcePath.has_parent_path()
+                ? sourcePath.parent_path().wstring()
+                : std::wstring();
+        const std::wstring stem =
+            sourcePath.has_stem()
+                ? sourcePath.stem().wstring()
+                : L"nifdiff";
 
         std::wstring name = stem + L"_screenshot1.png";
         for (int n = 1; !folder.empty() && n < 1000; ++n)
@@ -120,10 +151,29 @@ namespace
         if (!ShowSavePngDialog(hwnd, folder, name, outPath))
             return;
 
+        bool saved = false;
         std::string error;
-        if (!pane.Viewport().SaveScreenshot(outPath, &error))
+        if (nifPane)
         {
-            NIFLOG_ERROR("Screenshot save failed ({}).", error);
+            saved =
+                nifPane->Viewport().SaveScreenshot(
+                    outPath,
+                    &error);
+        }
+        else if (imagePane)
+        {
+            saved =
+                ScreenshotUtil::SaveRenderSurfaceRectPng(
+                    backplate,
+                    imageRect,
+                    outPath);
+        }
+
+        if (!saved)
+        {
+            NIFLOG_ERROR(
+                "Screenshot save failed ({}).",
+                error.empty() ? "capture or PNG encoding failed" : error);
             MessageBoxW(hwnd, (L"Failed to save screenshot:\n" + outPath).c_str(),
                         L"NIFDiff", MB_OK | MB_ICONERROR);
         }
@@ -162,7 +212,8 @@ namespace
     // `pane` is the compare pane under the right-click (nullptr when the
     // click landed outside every pane) - the Open/Close items that used to
     // be a per-pane button row act on exactly that pane.
-    void ShowAppContextMenu(HWND hwnd, POINT clientPt, const std::wstring& iniPath,
+    void ShowAppContextMenu(HWND hwnd, FD2D::Backplate* backplate,
+                            POINT clientPt, const std::wstring& iniPath,
                             NifCompareView* view, ComparePane* pane,
                             const std::function<void()>& onToggleThumbnailStrip = {},
                             bool thumbnailStripEnabled = true,
@@ -184,10 +235,8 @@ namespace
         if (menu == nullptr)
             return;
         HMENU recentMenu = nullptr; // owned by `menu` once attached; freed with it
-        // NIF-only actions (folder, screenshot) are gated on the pane kind so
-        // an image pane still gets Open / Recent / Close. `pane` is the frame
-        // (ComparePane), which OWNS its content - a dynamic_cast on the frame
-        // itself is always null; ask it for its NIF content instead.
+        // `pane` is the frame (ComparePane), which owns its current content.
+        // Ask it for the concrete content instead of casting the frame itself.
         NifComparePane* nifPane = pane ? pane->NifContent() : nullptr;
         ImagePane* imgPane = pane ? pane->ImageContent() : nullptr;
         if (view != nullptr && pane != nullptr)
@@ -223,13 +272,33 @@ namespace
             const UINT folderFlags = MF_STRING |
                 (!pane->CurrentPath().empty() ? MF_ENABLED : MF_GRAYED);
             AppendMenuW(menu, folderFlags, kMenuIdOpenFolder, L"Open Containing &Folder");
-            // Screenshot renders the NIF viewport, so it's a NIF-pane action.
-            if (nifPane != nullptr)
-                AppendMenuW(menu, MF_STRING, kMenuIdSaveScreenshot, L"Save Pane &Screenshot...");
+            D2D1_RECT_F imageRect {};
+            const bool imageReady =
+                imgPane != nullptr &&
+                imgPane->TryGetScreenshotClientRect(imageRect);
+            const bool canCaptureImage =
+                imageReady &&
+                backplate != nullptr &&
+                backplate->D3DDevice() != nullptr &&
+                backplate->UseOffscreenBuffer();
+            const bool canSaveScreenshot =
+                (nifPane != nullptr &&
+                 nifPane->Document() != nullptr) ||
+                canCaptureImage;
+            const UINT screenshotFlags =
+                MF_STRING |
+                (canSaveScreenshot
+                    ? MF_ENABLED
+                    : MF_GRAYED);
+            AppendMenuW(
+                menu,
+                screenshotFlags,
+                kMenuIdSaveScreenshot,
+                L"Save Pane &Screenshot...");
             // Image panes: how the alpha channel is treated. The Auto policy is
             // usually right (loose alpha = transparency, compressed straight alpha =
             // data); this overrides the rare misjudgment per image.
-            if (imgPane != nullptr && !imgPane->CurrentPath().empty())
+            if (imageReady)
             {
                 HMENU alphaMenu = CreatePopupMenu();
                 const ImageCore::AlphaUsage ov = imgPane->AlphaUsageOverride();
@@ -321,8 +390,8 @@ namespace
             break;
 
         case kMenuIdSaveScreenshot:
-            if (nifPane != nullptr)
-                SavePaneScreenshot(hwnd, *nifPane);
+            if (pane != nullptr && backplate != nullptr)
+                SavePaneScreenshot(*backplate, *pane);
             break;
 
         case kMenuIdAlphaAuto:
@@ -946,17 +1015,17 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
                                        std::to_wstring(static_cast<int>(ext)));
                 bp2->Render();
             };
-            ShowAppContextMenu(bp->Window(), clientPt, iniPath, view.get(), pane,
+            ShowAppContextMenu(bp->Window(), bp.get(), clientPt, iniPath, view.get(), pane,
                                onToggleStrip, stripEnabled, onSetSize, currentSize);
             bp->Render(); // deferred pane close / file open may have changed the layout
         });
 
         // F12 shortcut: same Save-dialog flow as the context menu item.
-        compareView->SetOnScreenshotRequested([weakBackplate](NifComparePane& pane)
+        compareView->SetOnScreenshotRequested([weakBackplate](ComparePane& pane)
         {
             auto bp = weakBackplate.lock();
             if (bp && bp->Window() != nullptr)
-                SavePaneScreenshot(bp->Window(), pane);
+                SavePaneScreenshot(*bp, pane);
         });
 
         compareView->SetOnPaneOpenRequested([weakView, weakBackplate](ComparePane& pane)

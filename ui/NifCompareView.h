@@ -202,7 +202,7 @@ public:
 
     // F12 shortcut target: the app shell owns the Save dialog + the actual
     // write (same flow as the context menu's "Save Pane Screenshot...").
-    void SetOnScreenshotRequested(std::function<void(NifComparePane&)> handler);
+    void SetOnScreenshotRequested(std::function<void(ComparePane&)> handler);
 
     // Context-menu actions on a specific pane, invoked by the app shell's
     // menu handler. RequestOpenPane forwards to the SetOnPaneOpenRequested
@@ -445,7 +445,7 @@ private:
     std::function<void(ComparePane&)> m_onPaneOpenRequested;
     std::function<void(const std::wstring&)> m_onFileOpened;
     std::function<void(POINT, ComparePane*)> m_onContextMenuRequested;
-    std::function<void(NifComparePane&)> m_onScreenshotRequested;
+    std::function<void(ComparePane&)> m_onScreenshotRequested;
 
     bool m_showMaterialPanel = true; // 'I' toggles; shown only while something is selected
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_matPanelText; // lazy, device-independent

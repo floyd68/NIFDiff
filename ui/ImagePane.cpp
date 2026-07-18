@@ -30,12 +30,40 @@ ImagePane::ImagePane(const std::wstring& name)
             OnLoadCompleted(path, result);
         });
 
+    m_spinner =
+        std::make_shared<FD2D::Spinner>(
+            name + L"_Loading");
+    FD2D::Spinner::Style spinnerStyle =
+        m_spinner->GetStyle();
+    spinnerStyle.dimBackground = true;
+    spinnerStyle.dimAlpha = 0.32f;
+    m_spinner->SetStyle(spinnerStyle);
+
+    m_statusOverlay =
+        std::make_shared<FD2D::Text>(
+            name + L"_Status");
+    m_statusOverlay->SetFont(L"Segoe UI", 18.0f);
+    m_statusOverlay->SetTextAlignment(
+        DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_statusOverlay->SetParagraphAlignment(
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    m_statusOverlay->SetColor(
+        D2D1::ColorF(0.95f, 0.42f, 0.42f));
+
+    m_contentOverlay =
+        std::make_shared<FD2D::OverlayPanel>(
+            name + L"_Content");
+    m_contentOverlay->AddChild(m_image);
+    m_contentOverlay->AddChild(m_spinner);
+    m_contentOverlay->AddChild(m_statusOverlay);
+
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
-    AddChild(m_image);
-    SetChildDock(m_image, FD2D::Dock::Fill);
+    AddChild(m_contentOverlay);
+    SetChildDock(m_contentOverlay, FD2D::Dock::Fill);
 
     UpdatePathLabel();
+    SyncContentOverlay();
 }
 
 ImagePane::~ImagePane() = default;
@@ -58,6 +86,7 @@ bool ImagePane::Load(
     m_failedPath.clear();
     m_loadStatus = LoadStatus::Loading;
     UpdatePathLabel();
+    SyncContentOverlay();
 
     if (!m_image->Load(path))
     {
@@ -65,6 +94,7 @@ bool ImagePane::Load(
         m_failedPath = path;
         m_loadStatus = LoadStatus::Failed;
         UpdatePathLabel();
+        SyncContentOverlay();
         if (error)
         {
             *error = "ImagePane::Load: decode request rejected";
@@ -95,6 +125,7 @@ void ImagePane::Clear()
         m_image->ClearImage();
     }
     UpdatePathLabel();
+    SyncContentOverlay();
     Invalidate();
 }
 
@@ -215,7 +246,39 @@ void ImagePane::OnLoadCompleted(
     }
 
     UpdatePathLabel();
+    SyncContentOverlay();
     Invalidate();
+}
+
+bool ImagePane::TryGetScreenshotClientRect(
+    D2D1_RECT_F& rect) const
+{
+    if (m_loadStatus != LoadStatus::Ready ||
+        !m_image)
+    {
+        return false;
+    }
+
+    rect = m_image->LayoutRect();
+    return rect.right > rect.left &&
+        rect.bottom > rect.top;
+}
+
+void ImagePane::SyncContentOverlay()
+{
+    if (!m_spinner || !m_statusOverlay)
+    {
+        return;
+    }
+
+    const bool loading =
+        m_loadStatus == LoadStatus::Loading;
+    m_spinner->SetActive(loading);
+    m_statusOverlay->SetText(
+        m_loadStatus == LoadStatus::Failed
+            ? L"Failed to load image"
+            : L"");
+    m_statusOverlay->Invalidate();
 }
 
 void ImagePane::UpdatePathLabel()

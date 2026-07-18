@@ -4,6 +4,8 @@
 #include "ImagePresentation.h"
 #include "PaneContent.h"
 
+#include <OverlayPanel.h>
+#include <Spinner.h>
 #include <Text.h>
 
 #include <functional>
@@ -46,6 +48,7 @@ public:
     ImageViewState ViewState() const;
     void SetViewState(const ImageViewState& state);          // applies without re-notifying
     void SetOnViewChanged(std::function<void(const ImageViewState&)> handler);
+    bool TryGetScreenshotClientRect(D2D1_RECT_F& rect) const;
 
 private:
     enum class LoadStatus
@@ -59,9 +62,13 @@ private:
     void OnLoadCompleted(
         const std::wstring& path,
         HRESULT result);
+    void SyncContentOverlay();
     void UpdatePathLabel();
 
+    std::shared_ptr<FD2D::OverlayPanel> m_contentOverlay;
     std::shared_ptr<ImagePresentation> m_image;
+    std::shared_ptr<FD2D::Spinner> m_spinner;
+    std::shared_ptr<FD2D::Text> m_statusOverlay;
     std::shared_ptr<FD2D::Text> m_pathLabel;
     std::wstring m_path;
     std::wstring m_pendingPath;

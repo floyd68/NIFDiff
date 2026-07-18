@@ -187,6 +187,8 @@ add_executable(NIFDiff WIN32
     app/AppSetup.cpp
     app/FileDialog.h
     app/FileDialog.cpp
+    app/ScreenshotUtil.h
+    app/ScreenshotUtil.cpp
     app/FloarPathByteSource.h
     app/FloarPathByteSource.cpp
     app/NIFDiffApp.h
@@ -414,3 +416,32 @@ if(MSVC)
     target_compile_options(TexturePipelineTest PRIVATE /permissive- /utf-8 /W3)
 endif()
 add_test(NAME TexturePipelineTest COMMAND TexturePipelineTest)
+
+# ---------------------------------------------------------------------------
+# RenderSurfaceCaptureTest - occlusion-independent composed-frame readback
+# ---------------------------------------------------------------------------
+add_executable(RenderSurfaceCaptureTest
+    app/RenderSurfaceCaptureTest.cpp
+)
+target_include_directories(RenderSurfaceCaptureTest PRIVATE
+    ${NIFDIFF_THIRD_PARTY_ROOT}/FD2D
+)
+target_link_libraries(RenderSurfaceCaptureTest PRIVATE
+    FD2D
+    d2d1
+    dwrite
+    d3d11
+    dxgi
+    d3dcompiler
+    ole32
+)
+target_compile_definitions(RenderSurfaceCaptureTest PRIVATE
+    FD2D_STATIC
+    UNICODE
+    _UNICODE
+    NOMINMAX
+)
+if(MSVC)
+    target_compile_options(RenderSurfaceCaptureTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME RenderSurfaceCaptureTest COMMAND RenderSurfaceCaptureTest)
