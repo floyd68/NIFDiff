@@ -102,15 +102,10 @@ bool ImagePresentation::Load(const std::wstring& path)
         m_hasPendingFailure = false;
     }
 
-    m_srvAlpha = {};
-    m_sourceFormat = DXGI_FORMAT_UNKNOWN;
-    m_sourceMipLevels = 1;
-    m_sourceMipIndex = 0;
-    m_sourceWidth = 0;
-    m_sourceHeight = 0;
-    m_usingD2DBitmap = false;
-    m_srvPath.clear();
-    FD2D::Image::Clear();
+    // Preserve the displayed resource while the replacement decodes, but keep
+    // the established per-file behavior: a new selection starts fitted, with
+    // default channels and automatic alpha interpretation. Callers may still
+    // override these immediately after Load(), before an async result arrives.
     ResetViewState();
     SetAlphaUsageOverride(ImageCore::AlphaUsage::Auto);
 
@@ -870,7 +865,7 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
             TypedSrvFormat(image.dxgiFormat);
         const ImageCore::AlphaUsage usage =
             ResolveAlphaUsage(
-                m_srvAlpha,
+                imageAlpha,
                 m_alphaUsageOverride);
         const std::vector<std::uint8_t> presentation =
             BuildBgra8Presentation(image, usage);
@@ -918,6 +913,7 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
             }
             m_srvPath = path;
             ClampPan();
+            PushDrawState();
             PublishLoadResult(
                 path,
                 generation,
