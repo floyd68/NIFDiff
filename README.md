@@ -557,7 +557,10 @@ documents every control in detail.
   resolved source (loose file path vs BSA archive - mod-conflict
   diagnosis), and previews the clicked slot in 2D with R/G/B/A channel
   isolation (click the preview to cycle) - reading `_rmaos`/`_m`
-  channel content without leaving the viewer.
+  channel content without leaving the viewer. **Double-click a row** to pop
+  that texture open in a full image pane (an empty pane, or a newly added
+  one) - the same resolved loose/archive source, reused instead of decoded
+  again, now with the full zoom/pan/rotate/mip/channel toolkit.
 
 ## Origins
 

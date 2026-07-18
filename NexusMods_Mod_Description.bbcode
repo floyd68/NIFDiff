@@ -1,6 +1,6 @@
 [center][size=5][b]NIFDiff – Side-by-Side NIF Model Compare for Bethesda Games[/b][/size][/center]
 
-[center][size=6][url=https://github.com/floyd68/NIFDiff/releases/tag/v1.1.162]v1.1.162 Release[/url][/size][/center]
+[center][size=6][url=https://github.com/floyd68/NIFDiff/releases/tag/v1.1.163]v1.1.163 Release[/url][/size][/center]
 
 [b]NIFDiff[/b] opens up to [b]8 NIF meshes at once[/b] and keeps their cameras, lighting and file selection in sync — so you can see [i]exactly[/i] how two versions of a mesh differ. A parallax/PBR mod vs. vanilla, two mods fighting over the same asset, or a before/after of your own edit.
 
@@ -9,12 +9,13 @@ It is a standalone, Qt-free tool: a single [b]2.3 MB executable[/b], cold start 
 [center][size=4][b]📺 Demo Video[/b][/size]
 [youtube]Ho_BjrLK8lI[/youtube][/center]
 
-[size=4][b]🆕 v1.1.162 — Textures Join the Compare[/b][/size]
+[size=4][b]🆕 v1.1.163 — Textures Join the Compare[/b][/size]
 
 [list]
 [*][b]Every pane can now show a texture[/b], not just a NIF — the same pane, the same thumbnail strip, swapping content as you browse `.dds`/`.png`/`.tga`/`.bmp`[/*]
 [*]Smooth pointer zoom, clamped pan, rotation, fit-to-screen, R/G/B/A channel isolation, checkerboard transparency, and mip-level browsing for DDS[/*]
 [*][b]Multi-game Game Data[/b] — register Skyrim LE, Skyrim SE and Fallout 4 Data folders all at once; texture lookup is scoped to each NIF's own game so same-named assets can't cross-resolve[/*]
+[*][b]Browse straight into archives[/b] — the thumbnail strip now steps into BSA/BA2/ZIP/7z/RAR files like folders; double-click a row in the Texture Inspector to open that material's texture in a full image pane[/*]
 [*]Thumbnail strip cards for texture files now show real decoded previews, not a placeholder icon; the window title also follows whichever file is active[/*]
 [/list]
 
@@ -81,11 +82,11 @@ Select a sub-mesh and press [b]I[/b]:
 
 [size=4][b]🔬 Texture Inspector[/b][/size]
 
-Press [b]T[/b] to list the selected mesh's bound textures with resolution, pixel format, mip count and resolved source — then preview any slot in 2D with R/G/B/A channel isolation. Read your RMAOS / complex-material channel content without leaving the viewer.
+Press [b]T[/b] to list the selected mesh's bound textures with resolution, pixel format, mip count and resolved source — then preview any slot in 2D with R/G/B/A channel isolation. Read your RMAOS / complex-material channel content without leaving the viewer. Double-click a row to pop that texture open in a full image pane — full zoom/pan/mip/channel tooling, no re-decoding.
 
 [size=4][b]🖼️ Textures Are First-Class Panes[/b][/size]
 
-Drop a `.dds`/`.png`/`.tga`/`.bmp` onto a pane (or click one in the thumbnail strip) and that pane becomes a full 2D image view — no separate window, no new pane, and the strip keeps browsing right where you left it.
+Drop a `.dds`/`.png`/`.tga`/`.bmp` onto a pane (or click one in the thumbnail strip) and that pane becomes a full 2D image view — no separate window, no new pane, and the strip keeps browsing right where you left it. The strip steps straight into BSA/BA2/ZIP/7z/RAR archives too — a texture buried in an archive opens exactly like a loose file.
 
 [list]
 [*]Smooth pointer zoom, rotation-aware clamped pan, 90°/180° rotation, fit-to-screen and reset[/*]

@@ -7,7 +7,7 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
-## 1.1.162
+## 1.1.163
 
 ### Textures
 - Any pane can show a texture (`.dds`/`.png`/`.tga`/`.bmp`/...) in place of a
@@ -31,6 +31,9 @@ the app, not which files moved.
   leaves stale content on screen or pollutes Recent Files
 - Screenshot (`F12` / context menu) now captures an image pane's actual
   on-screen view, not just NIF panes
+- Double-click a row in the Texture Inspector to open that material's
+  resolved texture - loose or from inside an archive - directly in an image
+  pane, reusing the texture already decoded for the 3D view
 
 ### Resources
 - Register Game Data folders for every supported game at once - **Detect**
@@ -43,6 +46,9 @@ the app, not which files moved.
   correctly on restart (previously only plain filesystem paths did)
 
 ### Shell
+- The thumbnail strip browses inside BSA/BA2/ZIP/7z/RAR archives now, not
+  just folders - an archive appears as a navigable tile, its contents list
+  like loose files, and picking one opens it straight out of the archive
 - The window title now follows the active pane's file, not just the app name
 - The thumbnail strip shows real decoded preview thumbnails for image files
   too, not just NIF 3D renders
