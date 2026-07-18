@@ -2,10 +2,58 @@
 
 #include <d2d1.h>
 
+#include <cmath>
 #include <utility>
 
 namespace nsk
 {
+namespace
+{
+
+const wchar_t* FormatName(DXGI_FORMAT format)
+{
+    switch (format)
+    {
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+        return L"BGRA8 UNORM";
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+        return L"RGBA8 UNORM";
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        return L"RGBA8 sRGB";
+    case DXGI_FORMAT_BC1_UNORM:
+        return L"BC1 UNORM";
+    case DXGI_FORMAT_BC1_UNORM_SRGB:
+        return L"BC1 sRGB";
+    case DXGI_FORMAT_BC2_UNORM:
+        return L"BC2 UNORM";
+    case DXGI_FORMAT_BC2_UNORM_SRGB:
+        return L"BC2 sRGB";
+    case DXGI_FORMAT_BC3_UNORM:
+        return L"BC3 UNORM";
+    case DXGI_FORMAT_BC3_UNORM_SRGB:
+        return L"BC3 sRGB";
+    case DXGI_FORMAT_BC4_UNORM:
+        return L"BC4 UNORM";
+    case DXGI_FORMAT_BC4_SNORM:
+        return L"BC4 SNORM";
+    case DXGI_FORMAT_BC5_UNORM:
+        return L"BC5 UNORM";
+    case DXGI_FORMAT_BC5_SNORM:
+        return L"BC5 SNORM";
+    case DXGI_FORMAT_BC6H_UF16:
+        return L"BC6H UF16";
+    case DXGI_FORMAT_BC6H_SF16:
+        return L"BC6H SF16";
+    case DXGI_FORMAT_BC7_UNORM:
+        return L"BC7 UNORM";
+    case DXGI_FORMAT_BC7_UNORM_SRGB:
+        return L"BC7 sRGB";
+    default:
+        return L"Unknown";
+    }
+}
+
+}
 
 ImagePane::ImagePane(const std::wstring& name)
     : PaneContent(name)
@@ -29,6 +77,38 @@ ImagePane::ImagePane(const std::wstring& name)
         {
             OnLoadCompleted(path, result);
         });
+    m_image->SetOnMipSelectionCompleted(
+        [this](uint32_t mipLevel, HRESULT result)
+        {
+            if (SUCCEEDED(result))
+            {
+                m_mipError.clear();
+                UpdateInfoLabel();
+                if (m_onViewChanged)
+                {
+                    m_onViewChanged(
+                        m_image->GetState());
+                }
+            }
+            else
+            {
+                m_mipError =
+                    L"Failed to load mip " +
+                    std::to_wstring(mipLevel);
+            }
+            SyncContentOverlay();
+            Invalidate();
+        });
+    m_image->SetOnViewChanged(
+        [this](
+            const ImageViewState& state)
+        {
+            UpdateInfoLabel();
+            if (m_onViewChanged)
+            {
+                m_onViewChanged(state);
+            }
+        });
 
     m_spinner =
         std::make_shared<FD2D::Spinner>(
@@ -50,6 +130,15 @@ ImagePane::ImagePane(const std::wstring& name)
     m_statusOverlay->SetColor(
         D2D1::ColorF(0.95f, 0.42f, 0.42f));
 
+    m_infoLabel =
+        std::make_shared<FD2D::Text>(
+            name + L"_Info");
+    m_infoLabel->SetFont(L"Segoe UI", 12.0f);
+    m_infoLabel->SetEllipsisTrimmingEnabled(true);
+    m_infoLabel->SetColor(
+        D2D1::ColorF(0.58f, 0.63f, 0.70f));
+    m_infoLabel->SetTooltipOnTruncation(true);
+
     m_contentOverlay =
         std::make_shared<FD2D::OverlayPanel>(
             name + L"_Content");
@@ -59,10 +148,13 @@ ImagePane::ImagePane(const std::wstring& name)
 
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
+    AddChild(m_infoLabel);
+    SetChildDock(m_infoLabel, FD2D::Dock::Bottom);
     AddChild(m_contentOverlay);
     SetChildDock(m_contentOverlay, FD2D::Dock::Fill);
 
     UpdatePathLabel();
+    UpdateInfoLabel();
     SyncContentOverlay();
 }
 
@@ -84,8 +176,10 @@ bool ImagePane::Load(
     m_path.clear();
     m_pendingPath = path;
     m_failedPath.clear();
+    m_mipError.clear();
     m_loadStatus = LoadStatus::Loading;
     UpdatePathLabel();
+    UpdateInfoLabel();
     SyncContentOverlay();
 
     if (!m_image->Load(path))
@@ -119,12 +213,14 @@ void ImagePane::Clear()
     m_path.clear();
     m_pendingPath.clear();
     m_failedPath.clear();
+    m_mipError.clear();
     m_loadStatus = LoadStatus::Empty;
     if (m_image)
     {
         m_image->ClearImage();
     }
     UpdatePathLabel();
+    UpdateInfoLabel();
     SyncContentOverlay();
     Invalidate();
 }
@@ -186,12 +282,123 @@ void ImagePane::RotateCCW()
     }
 }
 
-void ImagePane::ResetView()
+void ImagePane::Rotate180()
 {
     if (m_image)
     {
-        m_image->ResetView();
+        m_image->Rotate180();
     }
+}
+
+void ImagePane::ResetRotation()
+{
+    if (m_image)
+    {
+        m_image->ResetRotation();
+    }
+}
+
+void ImagePane::ToggleSampling()
+{
+    if (m_image)
+    {
+        m_image->ToggleSampling();
+    }
+}
+
+bool ImagePane::HighQualitySampling() const
+{
+    return m_image &&
+        m_image->HighQualitySampling();
+}
+
+void ImagePane::FitToScreen()
+{
+    if (m_image)
+    {
+        m_image->FitToScreen();
+    }
+}
+
+bool ImagePane::SelectMip(uint32_t mipLevel)
+{
+    if (!m_image ||
+        m_loadStatus != LoadStatus::Ready)
+    {
+        return false;
+    }
+
+    m_mipError.clear();
+    SyncContentOverlay();
+    return m_image->SelectMip(mipLevel);
+}
+
+uint32_t ImagePane::MipLevel() const
+{
+    return m_image ? m_image->MipLevel() : 0;
+}
+
+uint32_t ImagePane::MipLevels() const
+{
+    return m_image ? m_image->MipLevels() : 1;
+}
+
+ImagePresentation::ContentInfo
+ImagePane::ContentInfo() const
+{
+    return m_image
+        ? m_image->GetContentInfo()
+        : ImagePresentation::ContentInfo {};
+}
+
+std::wstring ImagePane::InformationText() const
+{
+    if (!m_image ||
+        m_loadStatus != LoadStatus::Ready)
+    {
+        return L"No image is loaded.";
+    }
+
+    const ImagePresentation::ContentInfo info =
+        m_image->GetContentInfo();
+    const ImageViewState state =
+        m_image->GetState();
+    const ImageCore::AlphaUsage alpha =
+        m_image->EffectiveAlphaUsage();
+
+    std::wstring text =
+        L"Path: " +
+        m_path +
+        L"\n\nDimensions: " +
+        std::to_wstring(info.width) +
+        L" \u00d7 " +
+        std::to_wstring(info.height) +
+        L"\nFormat: " +
+        FormatName(info.format) +
+        L"\nMip level: " +
+        std::to_wstring(info.sourceMipIndex) +
+        L" of " +
+        std::to_wstring(info.sourceMipLevels) +
+        L"\nSource compression: " +
+        (info.alpha.sourceWasBlockCompressed
+            ? L"Block compressed"
+            : L"Uncompressed") +
+        L"\nAlpha usage: " +
+        (alpha == ImageCore::AlphaUsage::Data
+            ? L"Opaque data"
+            : L"Transparency") +
+        L"\n\nZoom: " +
+        std::to_wstring(
+            static_cast<int>(
+                std::lround(state.zoom * 100.0f))) +
+        L"%\nRotation: " +
+        std::to_wstring(
+            (state.rotation & 3) * 90) +
+        L"\u00b0\nSampling: " +
+        (state.highQualitySampling
+            ? L"Smooth"
+            : L"Nearest-neighbor");
+    return text;
 }
 
 ImagePane::ImageViewState ImagePane::ViewState() const
@@ -207,17 +414,31 @@ void ImagePane::SetViewState(
     if (m_image)
     {
         m_image->SetState(state);
+        UpdateInfoLabel();
     }
 }
 
 void ImagePane::SetOnViewChanged(
     std::function<void(const ImageViewState&)> handler)
 {
+    m_onViewChanged = std::move(handler);
+}
+
+void ImagePane::SetOnAnimationRequested(
+    std::function<void()> handler)
+{
     if (m_image)
     {
-        m_image->SetOnViewChanged(
+        m_image->SetOnAnimationRequested(
             std::move(handler));
     }
+}
+
+bool ImagePane::TickViewAnimation(
+    unsigned long long nowMs)
+{
+    return m_image &&
+        m_image->TickViewAnimation(nowMs);
 }
 
 void ImagePane::OnLoadCompleted(
@@ -246,6 +467,7 @@ void ImagePane::OnLoadCompleted(
     }
 
     UpdatePathLabel();
+    UpdateInfoLabel();
     SyncContentOverlay();
     Invalidate();
 }
@@ -277,7 +499,7 @@ void ImagePane::SyncContentOverlay()
     m_statusOverlay->SetText(
         m_loadStatus == LoadStatus::Failed
             ? L"Failed to load image"
-            : L"");
+            : m_mipError);
     m_statusOverlay->Invalidate();
 }
 
@@ -319,6 +541,61 @@ void ImagePane::UpdatePathLabel()
     m_pathLabel->SetText(text);
     m_pathLabel->SetCopyText(copyText);
     m_pathLabel->Invalidate();
+}
+
+void ImagePane::UpdateInfoLabel()
+{
+    if (!m_infoLabel)
+    {
+        return;
+    }
+
+    std::wstring text;
+    if (m_loadStatus == LoadStatus::Ready &&
+        m_image)
+    {
+        const ImagePresentation::ContentInfo info =
+            m_image->GetContentInfo();
+        const ImageViewState state =
+            m_image->GetState();
+        text =
+            std::to_wstring(info.width) +
+            L" \u00d7 " +
+            std::to_wstring(info.height) +
+            L"  |  " +
+            FormatName(info.format) +
+            L"  |  " +
+            (info.sourceMipLevels > 1
+                ? L"Mip " +
+                    std::to_wstring(
+                        info.sourceMipIndex) +
+                    L" of " +
+                    std::to_wstring(
+                        info.sourceMipLevels) +
+                    L"  |  "
+                : L"") +
+            (state.highQualitySampling
+                ? L"Smooth"
+                : L"Nearest") +
+            L"  |  " +
+            std::to_wstring(
+                static_cast<int>(
+                    std::lround(
+                        state.zoom * 100.0f))) +
+            L"%";
+        if ((state.rotation & 3) != 0)
+        {
+            text +=
+                L"  " +
+                std::to_wstring(
+                    (state.rotation & 3) * 90) +
+                L"\u00b0";
+        }
+    }
+
+    m_infoLabel->SetText(text);
+    m_infoLabel->SetTooltipText(text);
+    m_infoLabel->Invalidate();
 }
 
 } // namespace nsk

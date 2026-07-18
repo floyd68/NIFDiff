@@ -158,6 +158,8 @@ documents every control in detail.
 | `Enter` / `Backspace` (`Ctrl+Up`) | Enter the selected folder / jump to the parent folder |
 | Type a name (strip focused) | Type-to-select: jump to the matching tile; repeat the key to cycle |
 | `Ctrl+E` / `F12` | Show active pane's file in Explorer / save its screenshot |
+| Image pane: wheel / drag / `F` | Smooth pointer zoom / clamped pan / fit to screen |
+| Image pane: `[` / `]` / `\`, `Ctrl+[` / `Ctrl+]`, `Alt+Q`, `I` | Rotate left/right/180°, previous/next DDS mip, sampling quality, image information |
 
 > Numpad view keys need NumLock on. Thumbnail-strip navigation acts on the
 > active pane and, with Sync Files on, mirrors each pick into the others.
@@ -295,8 +297,16 @@ documents every control in detail.
 - **Per-pane context menu**: open/close the pane, reopen a **recent file**
   into it (an MRU submenu of the last dozen opened .nifs, most-recent
   first, with a "Clear Recent Files" entry), open the containing folder in
-  Explorer with the file selected, and save the pane's 3D render as a PNG
-  (defaults next to the .nif, auto-numbered).
+  Explorer with the file selected, and save the pane's rendered content as a
+  PNG (`F12`; defaults next to the file, auto-numbered) - a NIF pane's clean
+  3D render, or an image pane's actual on-screen presentation (zoom, pan,
+  rotation, channel isolation, checkerboard - whatever is currently shown),
+  read back from the app's own composited D3D+D2D frame rather than a desktop
+  screen-grab so an occluding window can never leak into the saved image. An
+  image pane's context menu additionally has an **Image View** submenu (Fit to
+  Screen, Rotate 90°/Left/Right/180°, Reset Rotation), a **Sampling**
+  smooth/nearest toggle, an **Image Information** item, and - for a DDS with
+  more than one mip - a **Mip Level** submenu.
 - **Path tooltips + copy**: every control that shows a path (a pane's
   .nif path strip, the Game Data label) reveals the full path in a hover
   tooltip when the strip is too narrow to show it in full, and copies the
@@ -357,7 +367,18 @@ documents every control in detail.
   Because the strip is never torn down, picking a texture while browsing a NIF's
   folder (or a `.nif` while browsing textures) **swaps the content in place** and
   browsing continues - the strip's folder, scroll and selection survive the
-  swap. Image content supports **zoom / pan / rotate**, a **checkerboard**
+  swap. Image content supports **smooth pointer zoom**, rotation-aware
+  **clamped pan**, 90°/180° rotation, fit/reset commands, switchable
+  smooth/nearest sampling, and a live dimensions/format/zoom information bar
+  (`I` opens the same details, plus mip level and source compression, in a
+  dialog). A DDS with a mip chain can be **browsed mip by mip**
+  (`Ctrl+[`/`Ctrl+]`, or the context menu's **Mip Level** submenu with each
+  entry labelled by that level's resolution) - useful for judging how a
+  texture holds up at a size smaller than its authored resolution. A **Loading**
+  spinner covers the pane while a texture decodes, and a red **"Failed to load
+  image"** overlay (with the path label itself turned red) marks a decode
+  failure without leaving stale content on screen - a failed path is also kept
+  out of Recent Files and the saved session. It also provides a **checkerboard**
   backdrop behind transparent areas, and **channel isolation** (view R, G, B, or
   A alone, or the full RGBA) - and with Sync Views on, pan/zoom/channel changes
   mirror across
@@ -365,12 +386,12 @@ documents every control in detail.
   normal map or two mods' versions of one texture. Compressed DDS (BC1-BC7) is
   uploaded straight to the GPU as its native block format rather than decoded to
   RGBA on the CPU, so 4K textures open effectively instantly. Once uploaded, a
-  texture's GPU view is kept in a small **path->SRV cache** (device-generation
-  aware, LRU-capped), so stepping back to a recently-viewed texture in the strip
-  re-shows it synchronously - no decode round-trip, no re-upload. (Textures
-  referenced *by a NIF* have their own richer equivalent: a process-wide
-  `TextureRepository` keyed on the engine-resolved source, so panes comparing
-  the same-named mesh share one upload of each shared texture.)
+  texture's GPU view is kept in a small **path+mip->SRV cache** (device-generation
+  aware, LRU/VRAM-budget capped), so stepping back to a recently-viewed texture -
+  or mip level - in the strip re-shows it synchronously - no decode round-trip,
+  no re-upload. (Textures referenced *by a NIF* have their own richer equivalent:
+  a process-wide `TextureRepository` keyed on the engine-resolved source, so
+  panes comparing the same-named mesh share one upload of each shared texture.)
 - **Alpha, done right for game textures.** An alpha channel might be *coverage*
   (transparency) or packed *data* (a parallax height, a specular mask) - and DDS
   metadata often doesn't say. NIFDiff decodes losslessly (never premultiplying
@@ -425,8 +446,12 @@ documents every control in detail.
   every pane at once and each model streams in independently; re-pointing or
   closing a pane mid-load drops the superseded load instead of letting a
   stale result land in the wrong pane.
-- Session persistence (open files, splitter ratios, recent-files list,
-  Game Data path, override folders, and the window size/position - restored
+- Session persistence (open files - including a pane that was showing a file
+  or implicit folder *inside* a BSA/BA2/ZIP/7z/RAR archive, restored through
+  the same Floar virtual-filesystem lookup the browsing strip uses rather than
+  a plain on-disk existence check, so archive members survive a restart too -
+  splitter ratios, recent-files list, Game Data path, override folders, and
+  the window size/position - restored
   clamped to a monitor's work area so it never comes back off-screen after a
   display change), stored per-user in `%LOCALAPPDATA%\NIFDiff\NIFDiff.ini`
   (the Windows-recommended location, so it works from a read-only install

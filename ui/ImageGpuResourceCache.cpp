@@ -1,5 +1,7 @@
 #include "ImageGpuResourceCache.h"
 
+#include <algorithm>
+
 namespace nsk
 {
 
@@ -54,21 +56,25 @@ void ImageGpuResourceCache::Clear()
 
 bool ImageGpuResourceCache::TryGet(
     const std::wstring& path,
+    uint32_t mipLevel,
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv,
     UINT& outW, UINT& outH, DXGI_FORMAT& outFmt,
     ImageAlphaInfo& outAlpha,
+    uint32_t& outSourceMipLevels,
+    uint32_t& outSourceMipIndex,
     uint64_t deviceGeneration)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     EnsureDeviceGenerationUnlocked(deviceGeneration);
 
-    auto it = m_cache.find(path);
+    const Key key { path, mipLevel };
+    auto it = m_cache.find(key);
     if (it == m_cache.end() || !it->second.srv)
         return false;
 
     // Promote to most-recently-used.
     m_lru.erase(it->second.lruIt);
-    m_lru.push_front(path);
+    m_lru.push_front(key);
     it->second.lruIt = m_lru.begin();
 
     outSrv = it->second.srv;
@@ -76,13 +82,20 @@ bool ImageGpuResourceCache::TryGet(
     outH = it->second.height;
     outFmt = it->second.format;
     outAlpha = it->second.alpha;
+    outSourceMipLevels =
+        it->second.sourceMipLevels;
+    outSourceMipIndex =
+        it->second.sourceMipIndex;
     return true;
 }
 
 void ImageGpuResourceCache::Put(
     const std::wstring& path,
+    uint32_t mipLevel,
     const Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv,
     UINT w, UINT h, DXGI_FORMAT format, const ImageAlphaInfo& alpha,
+    uint32_t sourceMipLevels,
+    uint32_t sourceMipIndex,
     uint64_t deviceGeneration)
 {
     if (!srv)
@@ -91,24 +104,29 @@ void ImageGpuResourceCache::Put(
     std::lock_guard<std::mutex> lock(m_mutex);
     EnsureDeviceGenerationUnlocked(deviceGeneration);
 
-    if (auto it = m_cache.find(path); it != m_cache.end())
+    const Key key { path, mipLevel };
+    if (auto it = m_cache.find(key); it != m_cache.end())
     {
         m_bytesInUse -= it->second.bytes;
         m_lru.erase(it->second.lruIt);
         m_cache.erase(it);
     }
 
-    m_lru.push_front(path);
+    m_lru.push_front(key);
     Entry entry {};
     entry.srv = srv;
     entry.width = w;
     entry.height = h;
     entry.format = format;
     entry.alpha = alpha;
+    entry.sourceMipLevels =
+        (std::max)(1u, sourceMipLevels);
+    entry.sourceMipIndex =
+        sourceMipIndex;
     entry.bytes = EstimateBytes(w, h, format);
     entry.lruIt = m_lru.begin();
     m_bytesInUse += entry.bytes;
-    m_cache.emplace(path, std::move(entry));
+    m_cache.emplace(key, std::move(entry));
 
     // Evict LRU past EITHER bound (entry count or VRAM budget). Always keep the
     // just-inserted entry, even if it alone exceeds the budget (an 8K/16K image):
@@ -117,7 +135,7 @@ void ImageGpuResourceCache::Put(
            (m_cache.size() > m_capacity || m_bytesInUse > m_byteBudget) &&
            !m_lru.empty())
     {
-        const std::wstring victimKey = m_lru.back();
+        const Key victimKey = m_lru.back();
         m_lru.pop_back();
         if (auto vit = m_cache.find(victimKey); vit != m_cache.end())
         {

@@ -88,6 +88,14 @@ namespace
     constexpr UINT kMenuIdAlphaAuto = 16;
     constexpr UINT kMenuIdAlphaCoverage = 17;
     constexpr UINT kMenuIdAlphaData = 18;
+    constexpr UINT kMenuIdImageRotateCCW = 19;
+    constexpr UINT kMenuIdImageRotateCW = 20;
+    constexpr UINT kMenuIdImageRotate180 = 21;
+    constexpr UINT kMenuIdImageResetView = 22;
+    constexpr UINT kMenuIdImageSampling = 23;
+    constexpr UINT kMenuIdImageInformation = 24;
+    constexpr UINT kMenuIdImageResetRotation = 25;
+    constexpr UINT kMenuIdImageMipBase = 1000;
     // Recent-files (MRU) submenu entries occupy a reserved id range above
     // the fixed items: entry i uses kMenuIdRecentBase + i.
     constexpr UINT kMenuIdRecentBase = 100;
@@ -302,6 +310,95 @@ namespace
             // data); this overrides the rare misjudgment per image.
             if (imageReady)
             {
+                HMENU viewMenu = CreatePopupMenu();
+                AppendMenuW(
+                    viewMenu,
+                    MF_STRING,
+                    kMenuIdImageResetView,
+                    L"&Fit to Screen\tF");
+                AppendMenuW(viewMenu, MF_SEPARATOR, 0, nullptr);
+                AppendMenuW(
+                    viewMenu,
+                    MF_STRING,
+                    kMenuIdImageRotateCCW,
+                    L"Rotate 90\u00b0 &Left\t[");
+                AppendMenuW(
+                    viewMenu,
+                    MF_STRING,
+                    kMenuIdImageRotateCW,
+                    L"Rotate 90\u00b0 &Right\t]");
+                AppendMenuW(
+                    viewMenu,
+                    MF_STRING,
+                    kMenuIdImageRotate180,
+                    L"Rotate &180\u00b0");
+                AppendMenuW(
+                    viewMenu,
+                    MF_STRING,
+                    kMenuIdImageResetRotation,
+                    L"R&eset Rotation");
+                AppendMenuW(
+                    menu,
+                    MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(viewMenu),
+                    L"Image &View");
+
+                AppendMenuW(
+                    menu,
+                    MF_STRING |
+                        (imgPane->HighQualitySampling()
+                            ? MF_CHECKED
+                            : MF_UNCHECKED),
+                    kMenuIdImageSampling,
+                    imgPane->HighQualitySampling()
+                        ? L"&Sampling: Smooth\tAlt+Q"
+                        : L"&Sampling: Nearest\tAlt+Q");
+                AppendMenuW(
+                    menu,
+                    MF_STRING,
+                    kMenuIdImageInformation,
+                    L"Image &Information...\tI");
+                if (imgPane->MipLevels() > 1)
+                {
+                    HMENU mipMenu = CreatePopupMenu();
+                    const ImagePresentation::ContentInfo info =
+                        imgPane->ContentInfo();
+                    for (uint32_t mip = 0;
+                         mip < imgPane->MipLevels();
+                         ++mip)
+                    {
+                        const UINT width =
+                            (std::max)(
+                                1u,
+                                info.sourceWidth >> mip);
+                        const UINT height =
+                            (std::max)(
+                                1u,
+                                info.sourceHeight >> mip);
+                        const std::wstring label =
+                            L"Mip " +
+                            std::to_wstring(mip) +
+                            L" (" +
+                            std::to_wstring(width) +
+                            L" \u00d7 " +
+                            std::to_wstring(height) +
+                            L")";
+                        AppendMenuW(
+                            mipMenu,
+                            MF_STRING |
+                                (mip == imgPane->MipLevel()
+                                    ? MF_CHECKED
+                                    : MF_UNCHECKED),
+                            kMenuIdImageMipBase + mip,
+                            label.c_str());
+                    }
+                    AppendMenuW(
+                        menu,
+                        MF_POPUP,
+                        reinterpret_cast<UINT_PTR>(mipMenu),
+                        L"&Mip Level\tCtrl+[ / Ctrl+]");
+                }
+
                 HMENU alphaMenu = CreatePopupMenu();
                 const ImageCore::AlphaUsage ov = imgPane->AlphaUsageOverride();
                 auto aItem = [&](UINT id, const wchar_t* label, ImageCore::AlphaUsage u)
@@ -364,6 +461,15 @@ namespace
             }
             return;
         }
+        if (imgPane != nullptr &&
+            cmd >= kMenuIdImageMipBase &&
+            cmd < kMenuIdImageMipBase +
+                imgPane->MipLevels())
+        {
+            imgPane->SelectMip(
+                cmd - kMenuIdImageMipBase);
+            return;
+        }
 
         switch (cmd)
         {
@@ -404,6 +510,35 @@ namespace
             break;
         case kMenuIdAlphaData:
             if (imgPane != nullptr) imgPane->SetAlphaUsageOverride(ImageCore::AlphaUsage::Data);
+            break;
+
+        case kMenuIdImageRotateCCW:
+            if (imgPane != nullptr) imgPane->RotateCCW();
+            break;
+        case kMenuIdImageRotateCW:
+            if (imgPane != nullptr) imgPane->RotateCW();
+            break;
+        case kMenuIdImageRotate180:
+            if (imgPane != nullptr) imgPane->Rotate180();
+            break;
+        case kMenuIdImageResetView:
+            if (imgPane != nullptr) imgPane->FitToScreen();
+            break;
+        case kMenuIdImageSampling:
+            if (imgPane != nullptr) imgPane->ToggleSampling();
+            break;
+        case kMenuIdImageInformation:
+            if (imgPane != nullptr)
+            {
+                MessageBoxW(
+                    hwnd,
+                    imgPane->InformationText().c_str(),
+                    L"Image Information",
+                    MB_ICONINFORMATION | MB_OK);
+            }
+            break;
+        case kMenuIdImageResetRotation:
+            if (imgPane != nullptr) imgPane->ResetRotation();
             break;
 
         case kMenuIdClearRecent:

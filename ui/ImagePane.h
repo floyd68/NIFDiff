@@ -33,7 +33,16 @@ public:
     void ToggleAlphaCheckerboard();
     void RotateCW();
     void RotateCCW();
-    void ResetView();
+    void Rotate180();
+    void ResetRotation();
+    void ToggleSampling();
+    bool HighQualitySampling() const;
+    void FitToScreen();
+    bool SelectMip(uint32_t mipLevel);
+    uint32_t MipLevel() const;
+    uint32_t MipLevels() const;
+    ImagePresentation::ContentInfo ContentInfo() const;
+    std::wstring InformationText() const;
 
     // Per-pane alpha-usage override for the ambiguous cases the Auto policy can't
     // decide (a compressed straight alpha that IS real transparency, or a loose
@@ -48,6 +57,8 @@ public:
     ImageViewState ViewState() const;
     void SetViewState(const ImageViewState& state);          // applies without re-notifying
     void SetOnViewChanged(std::function<void(const ImageViewState&)> handler);
+    void SetOnAnimationRequested(std::function<void()> handler);
+    bool TickViewAnimation(unsigned long long nowMs);
     bool TryGetScreenshotClientRect(D2D1_RECT_F& rect) const;
 
 private:
@@ -64,16 +75,20 @@ private:
         HRESULT result);
     void SyncContentOverlay();
     void UpdatePathLabel();
+    void UpdateInfoLabel();
 
     std::shared_ptr<FD2D::OverlayPanel> m_contentOverlay;
     std::shared_ptr<ImagePresentation> m_image;
     std::shared_ptr<FD2D::Spinner> m_spinner;
     std::shared_ptr<FD2D::Text> m_statusOverlay;
     std::shared_ptr<FD2D::Text> m_pathLabel;
+    std::shared_ptr<FD2D::Text> m_infoLabel;
     std::wstring m_path;
     std::wstring m_pendingPath;
     std::wstring m_failedPath;
+    std::wstring m_mipError;
     LoadStatus m_loadStatus { LoadStatus::Empty };
+    std::function<void(const ImageViewState&)> m_onViewChanged;
 };
 
 } // namespace nsk

@@ -339,6 +339,11 @@ void NifCompareView::WireContent(PaneContent* c)
             }
             m_applyingSync = false;
         });
+        img->SetOnAnimationRequested(
+            [this]()
+            {
+                EnsureCameraAnimTimer();
+            });
     }
 }
 
@@ -2040,6 +2045,42 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     // key jumps the strip's selection to the next name-matching tile instead of
     // firing a single-letter display shortcut (G/X/W/...). Focus falls back to
     // the 3D view on the next viewport click, restoring the shortcuts.
+    if (!ctrl && alt)
+    {
+        if (ImagePane* img = AsImage(ActivePane()))
+        {
+            switch (event.keyCode)
+            {
+            case 'Q': img->ToggleSampling(); return true;
+            case 'X': img->FitToScreen(); return true;
+            default: break;
+            }
+        }
+    }
+    if (ctrl && !alt)
+    {
+        if (ImagePane* img = AsImage(ActivePane()))
+        {
+            if (event.keyCode == VK_OEM_4)
+            {
+                const uint32_t mip = img->MipLevel();
+                if (mip > 0)
+                {
+                    img->SelectMip(mip - 1);
+                }
+                return true;
+            }
+            if (event.keyCode == VK_OEM_6)
+            {
+                const uint32_t mip = img->MipLevel();
+                if (mip + 1 < img->MipLevels())
+                {
+                    img->SelectMip(mip + 1);
+                }
+                return true;
+            }
+        }
+    }
     if (!ctrl && !alt)
     {
         if (ComparePane* active = ActivePane(); active && active->ThumbnailStripHasFocus())
@@ -2069,9 +2110,21 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
             case 'A': img->SetChannelMode(4); return true;
             case 'N': img->SetChannelMode(0); return true;
             case 'K': img->ToggleAlphaCheckerboard(); return true;
+            case 'S': img->ToggleSampling(); return true;
+            case 'I':
+                if (FD2D::Backplate* backplate = BackplateRef())
+                {
+                    MessageBoxW(
+                        backplate->Window(),
+                        img->InformationText().c_str(),
+                        L"Image Information",
+                        MB_ICONINFORMATION | MB_OK);
+                }
+                return true;
             case VK_OEM_4: img->RotateCCW(); return true; // '['
             case VK_OEM_6: img->RotateCW(); return true;  // ']'
-            case 'F': case VK_HOME: img->ResetView(); return true;
+            case VK_OEM_5: img->Rotate180(); return true; // '\'
+            case 'F': case VK_HOME: img->FitToScreen(); return true;
             default: break;
             }
         }
@@ -2634,6 +2687,16 @@ void NifCompareView::TickCameraAnimations()
         if (vp.TickCameraAnimation(now)) any = true;
         if (vp.TickAnimation(now)) any = true;
     });
+    for (auto& pane : m_panes)
+    {
+        if (ImagePane* image = AsImage(pane.get()))
+        {
+            if (image->TickViewAnimation(now))
+            {
+                any = true;
+            }
+        }
+    }
     // Follow the active pane's clock on the Time slider while playing (also
     // flips the Play button back when a one-shot clip reaches its end).
     if (NifComparePane* active = AsNif(ActivePane()); active && active->Viewport().HasAnimations())

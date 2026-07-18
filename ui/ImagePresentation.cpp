@@ -26,7 +26,9 @@ struct ImagePresentation::LoadState
     std::uint64_t generation { 0 };
     ImageCore::ImageHandle handle { 0 };
     std::uint64_t cpuRetryGeneration { 0 };
+    uint32_t mipLevel { 0 };
     bool loadReported { true };
+    bool selectingMip { false };
     bool shuttingDown { false };
     std::weak_ptr<ImagePresentation> presentation;
 };
@@ -75,7 +77,9 @@ bool ImagePresentation::Load(const std::wstring& path)
         m_loadState->path = path;
         generation = ++m_loadState->generation;
         m_loadState->cpuRetryGeneration = 0;
+        m_loadState->mipLevel = 0;
         m_loadState->loadReported = false;
+        m_loadState->selectingMip = false;
         m_loadState->presentation =
             std::static_pointer_cast<ImagePresentation>(
                 FD2D::Wnd::shared_from_this());
@@ -99,13 +103,18 @@ bool ImagePresentation::Load(const std::wstring& path)
     }
 
     m_srvAlpha = {};
+    m_sourceFormat = DXGI_FORMAT_UNKNOWN;
+    m_sourceMipLevels = 1;
+    m_sourceMipIndex = 0;
+    m_sourceWidth = 0;
+    m_sourceHeight = 0;
     m_usingD2DBitmap = false;
     m_srvPath.clear();
     FD2D::Image::Clear();
-    ResetView();
+    ResetViewState();
     SetAlphaUsageOverride(ImageCore::AlphaUsage::Auto);
 
-    if (TryApplyCachedSrv(path, generation))
+    if (TryApplyCachedSrv(path, 0, generation))
     {
         PublishLoadResult(path, generation, S_OK);
         Invalidate();
@@ -115,7 +124,7 @@ bool ImagePresentation::Load(const std::wstring& path)
     FD2D::Backplate* backplate = BackplateRef();
     const bool allowGpuCompressedDDS =
         backplate && backplate->D3DDevice();
-    StartDecode(path, generation, allowGpuCompressedDDS);
+    StartDecode(path, 0, generation, allowGpuCompressedDDS);
     Invalidate();
     return true;
 }
@@ -128,7 +137,9 @@ void ImagePresentation::ClearImage()
         ++m_loadState->generation;
         m_loadState->path.clear();
         m_loadState->cpuRetryGeneration = 0;
+        m_loadState->mipLevel = 0;
         m_loadState->loadReported = true;
+        m_loadState->selectingMip = false;
         handle = std::exchange(m_loadState->handle, 0);
     }
 
@@ -150,6 +161,11 @@ void ImagePresentation::ClearImage()
     }
 
     m_srvAlpha = {};
+    m_sourceFormat = DXGI_FORMAT_UNKNOWN;
+    m_sourceMipLevels = 1;
+    m_sourceMipIndex = 0;
+    m_sourceWidth = 0;
+    m_sourceHeight = 0;
     m_usingD2DBitmap = false;
     m_srvPath.clear();
     FD2D::Image::Clear();
@@ -162,8 +178,87 @@ std::wstring ImagePresentation::CurrentPath() const
     return m_loadState->path;
 }
 
+bool ImagePresentation::SelectMip(uint32_t mipLevel)
+{
+    if (mipLevel >= (std::max)(1u, m_sourceMipLevels))
+    {
+        return false;
+    }
+    if (mipLevel == m_sourceMipIndex)
+    {
+        return true;
+    }
+
+    ImageCore::ImageHandle oldHandle = 0;
+    std::wstring path;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_loadState->mutex);
+        if (m_loadState->shuttingDown ||
+            m_loadState->path.empty())
+        {
+            return false;
+        }
+
+        oldHandle = std::exchange(
+            m_loadState->handle,
+            0);
+        path = m_loadState->path;
+        m_loadState->mipLevel = mipLevel;
+        generation = ++m_loadState->generation;
+        m_loadState->cpuRetryGeneration = 0;
+        m_loadState->loadReported = false;
+        m_loadState->selectingMip = true;
+    }
+
+    if (oldHandle)
+    {
+        ImageCore::ImageLoader::Instance().Cancel(oldHandle);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_payloadMutex);
+        m_payload = {};
+        m_payloadPath.clear();
+        m_payloadGeneration = 0;
+        m_needUpload = false;
+        m_failurePath.clear();
+        m_failureGeneration = 0;
+        m_failureResult = S_OK;
+        m_hasPendingFailure = false;
+    }
+
+    if (TryApplyCachedSrv(path, mipLevel, generation))
+    {
+        ClampPan();
+        PublishLoadResult(path, generation, S_OK);
+        Invalidate();
+        return true;
+    }
+
+    FD2D::Backplate* backplate = BackplateRef();
+    StartDecode(
+        path,
+        mipLevel,
+        generation,
+        backplate && backplate->D3DDevice());
+    Invalidate();
+    return true;
+}
+
+uint32_t ImagePresentation::MipLevel() const
+{
+    return m_sourceMipIndex;
+}
+
+uint32_t ImagePresentation::MipLevels() const
+{
+    return (std::max)(1u, m_sourceMipLevels);
+}
+
 bool ImagePresentation::TryApplyCachedSrv(
     const std::wstring& path,
+    uint32_t mipLevel,
     std::uint64_t generation)
 {
     FD2D::Backplate* backplate = BackplateRef();
@@ -177,13 +272,18 @@ bool ImagePresentation::TryApplyCachedSrv(
     UINT height = 0;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     ImageAlphaInfo alpha {};
+    uint32_t sourceMipLevels = 1;
+    uint32_t sourceMipIndex = 0;
     if (!ImageGpuResourceCache::Instance().TryGet(
             path,
+            mipLevel,
             srv,
             width,
             height,
             format,
             alpha,
+            sourceMipLevels,
+            sourceMipIndex,
             backplate->GetGraphicsGeneration().device))
     {
         return false;
@@ -207,6 +307,15 @@ bool ImagePresentation::TryApplyCachedSrv(
     SetShaderResource(srv);
     m_usingD2DBitmap = false;
     m_srvAlpha = alpha;
+    m_sourceFormat = format;
+    m_sourceMipLevels =
+        (std::max)(1u, sourceMipLevels);
+    m_sourceMipIndex = sourceMipIndex;
+    if (sourceMipIndex == 0)
+    {
+        m_sourceWidth = width;
+        m_sourceHeight = height;
+    }
     m_srvPath = path;
     PushDrawState();
     return true;
@@ -214,6 +323,7 @@ bool ImagePresentation::TryApplyCachedSrv(
 
 void ImagePresentation::StartDecode(
     const std::wstring& path,
+    uint32_t mipLevel,
     std::uint64_t generation,
     bool allowGpuCompressedDDS)
 {
@@ -222,12 +332,13 @@ void ImagePresentation::StartDecode(
         ImageCore::ImagePurpose::FullResolution);
     request.allowGpuCompressedDDS = allowGpuCompressedDDS;
     request.srgb = true;
+    request.mipLevel = mipLevel;
 
     std::shared_ptr<LoadState> state = m_loadState;
     const ImageCore::ImageHandle handle =
         ImageCore::ImageLoader::Instance().RequestDecoded(
             request,
-            [state, path, generation](
+            [state, path, generation, mipLevel](
                 HRESULT result,
                 ImageCore::DecodedImage image)
             {
@@ -236,7 +347,8 @@ void ImagePresentation::StartDecode(
                     std::lock_guard<std::mutex> lock(state->mutex);
                     if (state->shuttingDown ||
                         state->generation != generation ||
-                        state->path != path)
+                        state->path != path ||
+                        state->mipLevel != mipLevel)
                     {
                         return;
                     }
@@ -270,7 +382,8 @@ void ImagePresentation::StartDecode(
         std::lock_guard<std::mutex> lock(state->mutex);
         if (state->shuttingDown ||
             state->generation != generation ||
-            state->path != path)
+            state->path != path ||
+            state->mipLevel != mipLevel)
         {
             cancel = true;
         }
@@ -290,6 +403,7 @@ void ImagePresentation::ReloadCurrent(bool allowGpuCompressedDDS)
 {
     ImageCore::ImageHandle oldHandle = 0;
     std::wstring path;
+    uint32_t mipLevel = 0;
     std::uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lock(m_loadState->mutex);
@@ -300,6 +414,7 @@ void ImagePresentation::ReloadCurrent(bool allowGpuCompressedDDS)
 
         oldHandle = std::exchange(m_loadState->handle, 0);
         path = m_loadState->path;
+        mipLevel = m_loadState->mipLevel;
         generation = ++m_loadState->generation;
         m_loadState->cpuRetryGeneration = 0;
         m_loadState->presentation =
@@ -320,7 +435,11 @@ void ImagePresentation::ReloadCurrent(bool allowGpuCompressedDDS)
         m_needUpload = false;
     }
 
-    StartDecode(path, generation, allowGpuCompressedDDS);
+    StartDecode(
+        path,
+        mipLevel,
+        generation,
+        allowGpuCompressedDDS);
 }
 
 void ImagePresentation::RequestCpuRetry(
@@ -328,6 +447,7 @@ void ImagePresentation::RequestCpuRetry(
     std::uint64_t generation)
 {
     ImageCore::ImageHandle oldHandle = 0;
+    uint32_t mipLevel = 0;
     {
         std::lock_guard<std::mutex> lock(m_loadState->mutex);
         if (m_loadState->shuttingDown ||
@@ -339,6 +459,7 @@ void ImagePresentation::RequestCpuRetry(
         }
 
         m_loadState->cpuRetryGeneration = generation;
+        mipLevel = m_loadState->mipLevel;
         oldHandle = std::exchange(m_loadState->handle, 0);
     }
 
@@ -347,7 +468,7 @@ void ImagePresentation::RequestCpuRetry(
         ImageCore::ImageLoader::Instance().Cancel(oldHandle);
     }
 
-    StartDecode(path, generation, false);
+    StartDecode(path, mipLevel, generation, false);
 }
 
 void ImagePresentation::StagePayload(
@@ -424,6 +545,9 @@ void ImagePresentation::PublishLoadResult(
     HRESULT result)
 {
     std::function<void(const std::wstring&, HRESULT)> handler;
+    std::function<void(uint32_t, HRESULT)> mipHandler;
+    uint32_t mipLevel = 0;
+    bool selectingMip = false;
     {
         std::lock_guard<std::mutex> lock(m_loadState->mutex);
         if (m_loadState->shuttingDown ||
@@ -436,16 +560,35 @@ void ImagePresentation::PublishLoadResult(
 
         m_loadState->loadReported = true;
         m_loadState->handle = 0;
-        if (FAILED(result))
+        selectingMip = m_loadState->selectingMip;
+        m_loadState->selectingMip = false;
+        mipLevel = m_loadState->mipLevel;
+        if (FAILED(result) && !selectingMip)
         {
             m_loadState->path.clear();
         }
-        handler = m_onLoadCompleted;
+        else if (FAILED(result) && selectingMip)
+        {
+            m_loadState->mipLevel =
+                m_sourceMipIndex;
+        }
+        if (selectingMip)
+        {
+            mipHandler = m_onMipSelectionCompleted;
+        }
+        else
+        {
+            handler = m_onLoadCompleted;
+        }
     }
 
     if (handler)
     {
         handler(path, result);
+    }
+    if (mipHandler)
+    {
+        mipHandler(mipLevel, result);
     }
 }
 
@@ -646,7 +789,22 @@ void ImagePresentation::OnRenderD3D(ID3D11DeviceContext* context)
                     SetShaderResource(srv);
                     m_usingD2DBitmap = false;
                     m_srvAlpha = AlphaInfoFromDecodedImage(image);
+                    m_sourceFormat =
+                        TypedSrvFormat(
+                            image.dxgiFormat);
+                    m_sourceMipLevels =
+                        (std::max)(
+                            1u,
+                            image.sourceMipLevels);
+                    m_sourceMipIndex =
+                        image.sourceMipIndex;
+                    if (image.sourceMipIndex == 0)
+                    {
+                        m_sourceWidth = image.width;
+                        m_sourceHeight = image.height;
+                    }
                     m_srvPath = path;
+                    ClampPan();
                     PushDrawState();
 
                     std::uint64_t deviceGeneration = 0;
@@ -657,11 +815,14 @@ void ImagePresentation::OnRenderD3D(ID3D11DeviceContext* context)
                     }
                     ImageGpuResourceCache::Instance().Put(
                         path,
+                        image.sourceMipIndex,
                         srv,
                         image.width,
                         image.height,
                         srvDesc.Format,
                         m_srvAlpha,
+                        image.sourceMipLevels,
+                        image.sourceMipIndex,
                         deviceGeneration);
                     uploaded = true;
                     PublishLoadResult(
@@ -703,7 +864,10 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
             TakeMode::UncompressedForD2D) &&
         IsCurrent(path, generation))
     {
-        m_srvAlpha = AlphaInfoFromDecodedImage(image);
+        const ImageAlphaInfo imageAlpha =
+            AlphaInfoFromDecodedImage(image);
+        const DXGI_FORMAT imageFormat =
+            TypedSrvFormat(image.dxgiFormat);
         const ImageCore::AlphaUsage usage =
             ResolveAlphaUsage(
                 m_srvAlpha,
@@ -739,7 +903,21 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
         {
             SetBitmap(bitmap);
             m_usingD2DBitmap = true;
+            m_srvAlpha = imageAlpha;
+            m_sourceFormat = imageFormat;
+            m_sourceMipLevels =
+                (std::max)(
+                    1u,
+                    image.sourceMipLevels);
+            m_sourceMipIndex =
+                image.sourceMipIndex;
+            if (image.sourceMipIndex == 0)
+            {
+                m_sourceWidth = image.width;
+                m_sourceHeight = image.height;
+            }
             m_srvPath = path;
+            ClampPan();
             PublishLoadResult(
                 path,
                 generation,
@@ -758,8 +936,9 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
     FD2D::Image::OnRender(target);
 }
 
-void ImagePresentation::ResetView()
+void ImagePresentation::ResetViewState()
 {
+    CancelZoomAnimation();
     m_zoom = 1.0f;
     m_panX = 0.0f;
     m_panY = 0.0f;
@@ -770,13 +949,54 @@ void ImagePresentation::ResetView()
 
 void ImagePresentation::RotateCW()
 {
+    CancelZoomAnimation();
     m_rotation = (m_rotation + 1) & 3;
+    ClampPan();
     ApplyDrawState();
 }
 
 void ImagePresentation::RotateCCW()
 {
+    CancelZoomAnimation();
     m_rotation = (m_rotation + 3) & 3;
+    ClampPan();
+    ApplyDrawState();
+}
+
+void ImagePresentation::Rotate180()
+{
+    CancelZoomAnimation();
+    m_rotation = (m_rotation + 2) & 3;
+    ClampPan();
+    ApplyDrawState();
+}
+
+void ImagePresentation::ResetRotation()
+{
+    CancelZoomAnimation();
+    m_rotation = 0;
+    ClampPan();
+    ApplyDrawState();
+}
+
+void ImagePresentation::ToggleSampling()
+{
+    m_highQualitySampling =
+        !m_highQualitySampling;
+    ApplyDrawState();
+}
+
+bool ImagePresentation::HighQualitySampling() const
+{
+    return m_highQualitySampling;
+}
+
+void ImagePresentation::FitToScreen()
+{
+    CancelZoomAnimation();
+    m_zoom = 1.0f;
+    m_panX = 0.0f;
+    m_panY = 0.0f;
     ApplyDrawState();
 }
 
@@ -804,17 +1024,51 @@ ImagePresentation::ViewState ImagePresentation::GetState() const
     state.rotation = m_rotation;
     state.channelMode = m_channelMode;
     state.checkerboard = m_checkerboard;
+    state.highQualitySampling =
+        m_highQualitySampling;
+    state.mipLevel = m_sourceMipIndex;
     return state;
+}
+
+ImagePresentation::ContentInfo
+ImagePresentation::GetContentInfo() const
+{
+    const D2D1_SIZE_U pixels =
+        ContentPixelSize();
+    ContentInfo info;
+    info.width = pixels.width;
+    info.height = pixels.height;
+    info.format = m_sourceFormat;
+    info.alpha = m_srvAlpha;
+    info.sourceMipLevels =
+        (std::max)(1u, m_sourceMipLevels);
+    info.sourceMipIndex = m_sourceMipIndex;
+    info.sourceWidth = m_sourceWidth;
+    info.sourceHeight = m_sourceHeight;
+    return info;
 }
 
 void ImagePresentation::SetState(const ViewState& state)
 {
-    m_zoom = state.zoom;
+    const uint32_t maxMip =
+        (std::max)(1u, m_sourceMipLevels) - 1;
+    SelectMip((std::min)(state.mipLevel, maxMip));
+    CancelZoomAnimation();
+    m_zoom = std::clamp(
+        state.zoom,
+        kMinZoom,
+        kMaxZoom);
     m_panX = state.panX;
     m_panY = state.panY;
-    m_rotation = state.rotation;
-    m_channelMode = state.channelMode;
+    m_rotation = state.rotation & 3;
+    m_channelMode = std::clamp(
+        state.channelMode,
+        0,
+        4);
     m_checkerboard = state.checkerboard;
+    m_highQualitySampling =
+        state.highQualitySampling;
+    ClampPan();
     PushDrawState();
 }
 
@@ -824,10 +1078,23 @@ void ImagePresentation::SetOnViewChanged(
     m_onViewChanged = std::move(handler);
 }
 
+void ImagePresentation::SetOnAnimationRequested(
+    std::function<void()> handler)
+{
+    m_onAnimationRequested =
+        std::move(handler);
+}
+
 void ImagePresentation::SetOnLoadCompleted(
     std::function<void(const std::wstring&, HRESULT)> handler)
 {
     m_onLoadCompleted = std::move(handler);
+}
+
+void ImagePresentation::SetOnMipSelectionCompleted(
+    std::function<void(uint32_t, HRESULT)> handler)
+{
+    m_onMipSelectionCompleted = std::move(handler);
 }
 
 bool ImagePresentation::OnInputEvent(
@@ -841,11 +1108,26 @@ bool ImagePresentation::OnInputEvent(
                 LayoutRect(),
                 event.point))
         {
+            if (m_zoomAnimating)
+            {
+                TickViewAnimation(
+                    FD2D::Util::NowMs());
+            }
             const float oldZoom = m_zoom;
             const float notches =
                 static_cast<float>(event.wheelDelta) / 120.0f;
-            m_zoom = std::clamp(
-                m_zoom * std::pow(1.2f, notches),
+            const float baseZoom =
+                m_zoomAnimating
+                    ? m_zoomTarget
+                    : m_zoom;
+            const float zoomStep =
+                event.modifiers.shift
+                    ? 1.1f
+                    : 1.5f;
+            const float targetZoom = std::clamp(
+                baseZoom * std::pow(
+                    zoomStep,
+                    notches),
                 kMinZoom,
                 kMaxZoom);
 
@@ -862,10 +1144,67 @@ bool ImagePresentation::OnInputEvent(
                 static_cast<float>(event.point.y) -
                 centerY -
                 m_panY;
-            const float scale = 1.0f - m_zoom / oldZoom;
-            m_panX += relativeX * scale;
-            m_panY += relativeY * scale;
-            ApplyDrawState();
+            const float scale =
+                1.0f -
+                targetZoom / oldZoom;
+            float anchorX = relativeX;
+            float anchorY = relativeY;
+            switch (m_rotation & 3)
+            {
+            case 1:
+                anchorX = relativeY;
+                anchorY = -relativeX;
+                break;
+            case 2:
+                anchorX = -relativeX;
+                anchorY = -relativeY;
+                break;
+            case 3:
+                anchorX = -relativeY;
+                anchorY = relativeX;
+                break;
+            default:
+                break;
+            }
+
+            m_zoomStart = m_zoom;
+            m_zoomPanStartX = m_panX;
+            m_zoomPanStartY = m_panY;
+            m_zoomTarget = targetZoom;
+            m_zoomPanTargetX =
+                m_panX +
+                anchorX * scale;
+            m_zoomPanTargetY =
+                m_panY +
+                anchorY * scale;
+
+            const float currentZoom = m_zoom;
+            const float currentPanX = m_panX;
+            const float currentPanY = m_panY;
+            m_zoom = m_zoomTarget;
+            m_panX = m_zoomPanTargetX;
+            m_panY = m_zoomPanTargetY;
+            ClampPan();
+            m_zoomPanTargetX = m_panX;
+            m_zoomPanTargetY = m_panY;
+            m_zoom = currentZoom;
+            m_panX = currentPanX;
+            m_panY = currentPanY;
+
+            m_zoomStartMs = FD2D::Util::NowMs();
+            m_zoomAnimating = true;
+            if (m_onAnimationRequested)
+            {
+                m_onAnimationRequested();
+            }
+            else
+            {
+                m_zoom = m_zoomTarget;
+                m_panX = m_zoomPanTargetX;
+                m_panY = m_zoomPanTargetY;
+                m_zoomAnimating = false;
+                ApplyDrawState();
+            }
             return true;
         }
         return false;
@@ -877,31 +1216,81 @@ bool ImagePresentation::OnInputEvent(
                 LayoutRect(),
                 event.point))
         {
-            m_panning = true;
+            if (m_zoomAnimating)
+            {
+                TickViewAnimation(
+                    FD2D::Util::NowMs());
+            }
+            CancelZoomAnimation();
+            m_panArmed = true;
+            m_panning = false;
             m_dragStartX = event.point.x;
             m_dragStartY = event.point.y;
             m_panStartX = m_panX;
             m_panStartY = m_panY;
+            if (BackplateRef() != nullptr &&
+                BackplateRef()->Window() != nullptr)
+            {
+                SetCapture(
+                    BackplateRef()->Window());
+            }
             return true;
         }
         return false;
 
     case FD2D::InputEventType::MouseMove:
-        if (m_panning)
+        if (m_panArmed ||
+            m_panning)
         {
             if (!event.modifiers.leftButton)
             {
+                m_panArmed = false;
                 m_panning = false;
+                ReleaseCapture();
                 return false;
             }
-            m_panX =
-                m_panStartX +
+
+            const float screenX =
                 static_cast<float>(
                     event.point.x - m_dragStartX);
-            m_panY =
-                m_panStartY +
+            const float screenY =
                 static_cast<float>(
                     event.point.y - m_dragStartY);
+            if (!m_panning)
+            {
+                constexpr float kPanThreshold = 3.0f;
+                if (screenX * screenX +
+                        screenY * screenY <
+                    kPanThreshold * kPanThreshold)
+                {
+                    return true;
+                }
+                m_panning = true;
+            }
+
+            float panDeltaX = screenX;
+            float panDeltaY = screenY;
+            switch (m_rotation & 3)
+            {
+            case 1:
+                panDeltaX = screenY;
+                panDeltaY = -screenX;
+                break;
+            case 2:
+                panDeltaX = -screenX;
+                panDeltaY = -screenY;
+                break;
+            case 3:
+                panDeltaX = -screenY;
+                panDeltaY = screenX;
+                break;
+            default:
+                break;
+            }
+
+            m_panX = m_panStartX + panDeltaX;
+            m_panY = m_panStartY + panDeltaY;
+            ClampPan();
             ApplyDrawState();
             return true;
         }
@@ -909,11 +1298,19 @@ bool ImagePresentation::OnInputEvent(
 
     case FD2D::InputEventType::MouseUp:
         if (event.button == FD2D::MouseButton::Left &&
-            m_panning)
+            (m_panArmed ||
+             m_panning))
         {
+            m_panArmed = false;
             m_panning = false;
+            ReleaseCapture();
             return true;
         }
+        return false;
+
+    case FD2D::InputEventType::CaptureChanged:
+        m_panArmed = false;
+        m_panning = false;
         return false;
 
     case FD2D::InputEventType::MouseDoubleClick:
@@ -922,11 +1319,7 @@ bool ImagePresentation::OnInputEvent(
                 LayoutRect(),
                 event.point))
         {
-            ResetView();
-            if (m_onViewChanged)
-            {
-                m_onViewChanged(GetState());
-            }
+            FitToScreen();
             return true;
         }
         return false;
@@ -945,6 +1338,145 @@ void ImagePresentation::ApplyDrawState()
     }
 }
 
+void ImagePresentation::ClampPan()
+{
+    const D2D1_RECT_F layout = LayoutRect();
+    const float layoutWidth =
+        layout.right - layout.left;
+    const float layoutHeight =
+        layout.bottom - layout.top;
+    const D2D1_SIZE_U pixels =
+        ContentPixelSize();
+    if (layoutWidth <= 0.0f ||
+        layoutHeight <= 0.0f ||
+        pixels.width == 0 ||
+        pixels.height == 0)
+    {
+        return;
+    }
+
+    const D2D1_RECT_F fitted =
+        FD2D::Util::ComputeAspectFitRect(
+            layout,
+            D2D1::SizeF(
+                static_cast<float>(pixels.width),
+                static_cast<float>(pixels.height)),
+            m_rotation);
+    float displayedWidth =
+        fitted.right - fitted.left;
+    float displayedHeight =
+        fitted.bottom - fitted.top;
+    if ((m_rotation & 1) != 0)
+    {
+        std::swap(
+            displayedWidth,
+            displayedHeight);
+    }
+
+    displayedWidth *= m_zoom;
+    displayedHeight *= m_zoom;
+    constexpr float kMinVisible = 1.0f;
+    const float limitX =
+        displayedWidth <= layoutWidth
+            ? 0.0f
+            : (layoutWidth + displayedWidth) *
+                    0.5f -
+                kMinVisible;
+    const float limitY =
+        displayedHeight <= layoutHeight
+            ? 0.0f
+            : (layoutHeight + displayedHeight) *
+                    0.5f -
+                kMinVisible;
+    const bool rotatedSideways =
+        (m_rotation & 1) != 0;
+    const float panLimitX =
+        rotatedSideways
+            ? limitY
+            : limitX;
+    const float panLimitY =
+        rotatedSideways
+            ? limitX
+            : limitY;
+    m_panX = std::clamp(
+        m_panX,
+        -panLimitX,
+        panLimitX);
+    m_panY = std::clamp(
+        m_panY,
+        -panLimitY,
+        panLimitY);
+}
+
+void ImagePresentation::CancelZoomAnimation()
+{
+    m_zoomAnimating = false;
+    m_zoomTarget = m_zoom;
+    m_zoomPanTargetX = m_panX;
+    m_zoomPanTargetY = m_panY;
+}
+
+bool ImagePresentation::TickViewAnimation(
+    unsigned long long now)
+{
+    if (!m_zoomAnimating)
+    {
+        return false;
+    }
+
+    constexpr float kDurationMs = 140.0f;
+    const float linear = std::clamp(
+        static_cast<float>(
+            now - m_zoomStartMs) /
+            kDurationMs,
+        0.0f,
+        1.0f);
+    const float inverse = 1.0f - linear;
+    const float eased =
+        1.0f -
+        inverse * inverse * inverse;
+
+    m_zoom =
+        m_zoomStart +
+        (m_zoomTarget - m_zoomStart) * eased;
+    m_panX =
+        m_zoomPanStartX +
+        (m_zoomPanTargetX - m_zoomPanStartX) *
+            eased;
+    m_panY =
+        m_zoomPanStartY +
+        (m_zoomPanTargetY - m_zoomPanStartY) *
+            eased;
+    ClampPan();
+
+    if (linear >= 1.0f)
+    {
+        m_zoom = m_zoomTarget;
+        m_panX = m_zoomPanTargetX;
+        m_panY = m_zoomPanTargetY;
+        ClampPan();
+        m_zoomAnimating = false;
+    }
+
+    ApplyDrawState();
+    return m_zoomAnimating;
+}
+
+void ImagePresentation::Arrange(FD2D::Rect finalRect)
+{
+    FD2D::Image::Arrange(finalRect);
+
+    const float oldPanX = m_panX;
+    const float oldPanY = m_panY;
+    ClampPan();
+    if (oldPanX != m_panX ||
+        oldPanY != m_panY)
+    {
+        CancelZoomAnimation();
+        ApplyDrawState();
+    }
+}
+
 void ImagePresentation::PushDrawState()
 {
     FD2D::Image::DrawState drawState;
@@ -952,7 +1484,8 @@ void ImagePresentation::PushDrawState()
     drawState.panX = m_panX;
     drawState.panY = m_panY;
     drawState.rotationQuarters = m_rotation;
-    drawState.highQualitySampling = true;
+    drawState.highQualitySampling =
+        m_highQualitySampling;
     drawState.alphaCheckerboardEnabled = m_checkerboard;
     drawState.channelMode = m_channelMode;
     drawState.sourceAlphaEncoding =

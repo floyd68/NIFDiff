@@ -420,6 +420,35 @@ endif()
 add_test(NAME TexturePipelineTest COMMAND TexturePipelineTest)
 
 # ---------------------------------------------------------------------------
+# ImageMipDecodeTest - DDS mip metadata, selection, range, and cache identity
+# ---------------------------------------------------------------------------
+add_executable(ImageMipDecodeTest
+    app/ImageMipDecodeTest.cpp
+)
+target_include_directories(ImageMipDecodeTest PRIVATE
+    ${NIFDIFF_THIRD_PARTY_ROOT}
+)
+target_link_libraries(ImageMipDecodeTest PRIVATE
+    ImageCore
+    DirectXTex
+    windowscodecs
+    ole32
+)
+target_compile_definitions(ImageMipDecodeTest PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+)
+if(MSVC)
+    target_compile_options(ImageMipDecodeTest PRIVATE
+        /permissive-
+        /utf-8
+        /W3
+    )
+endif()
+add_test(NAME ImageMipDecodeTest COMMAND ImageMipDecodeTest)
+
+# ---------------------------------------------------------------------------
 # RenderSurfaceCaptureTest - occlusion-independent composed-frame readback
 # ---------------------------------------------------------------------------
 add_executable(RenderSurfaceCaptureTest
