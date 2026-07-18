@@ -1045,6 +1045,7 @@ ImagePresentation::GetContentInfo() const
     info.sourceMipIndex = m_sourceMipIndex;
     info.sourceWidth = m_sourceWidth;
     info.sourceHeight = m_sourceHeight;
+    info.gpuPresentation = !m_usingD2DBitmap;
     return info;
 }
 

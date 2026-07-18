@@ -45,6 +45,7 @@ public:
         uint32_t sourceMipIndex { 0 };
         UINT sourceWidth { 0 };
         UINT sourceHeight { 0 };
+        bool gpuPresentation { false };
     };
 
     explicit ImagePresentation(const std::wstring& name);

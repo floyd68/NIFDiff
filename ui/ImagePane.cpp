@@ -3,6 +3,7 @@
 #include <d2d1.h>
 
 #include <cmath>
+#include <cwctype>
 #include <utility>
 
 namespace nsk
@@ -50,6 +51,106 @@ const wchar_t* FormatName(DXGI_FORMAT format)
         return L"BC7 sRGB";
     default:
         return L"Unknown";
+    }
+}
+
+int BitsPerPixel(DXGI_FORMAT format)
+{
+    switch (format)
+    {
+    case DXGI_FORMAT_BC1_UNORM:
+    case DXGI_FORMAT_BC1_UNORM_SRGB:
+    case DXGI_FORMAT_BC4_UNORM:
+    case DXGI_FORMAT_BC4_SNORM:
+        return 4;
+
+    case DXGI_FORMAT_BC2_UNORM:
+    case DXGI_FORMAT_BC2_UNORM_SRGB:
+    case DXGI_FORMAT_BC3_UNORM:
+    case DXGI_FORMAT_BC3_UNORM_SRGB:
+    case DXGI_FORMAT_BC5_UNORM:
+    case DXGI_FORMAT_BC5_SNORM:
+    case DXGI_FORMAT_BC6H_UF16:
+    case DXGI_FORMAT_BC6H_SF16:
+    case DXGI_FORMAT_BC7_UNORM:
+    case DXGI_FORMAT_BC7_UNORM_SRGB:
+        return 8;
+
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        return 32;
+
+    default:
+        return 0;
+    }
+}
+
+std::wstring FileFormatName(const std::wstring& path)
+{
+    const size_t dot = path.find_last_of(L'.');
+    if (dot == std::wstring::npos ||
+        dot + 1 >= path.size())
+    {
+        return L"Unknown";
+    }
+
+    std::wstring extension = path.substr(dot + 1);
+    for (wchar_t& value : extension)
+    {
+        value = static_cast<wchar_t>(
+            std::towupper(value));
+    }
+    return extension;
+}
+
+const wchar_t* AlphaEncodingName(
+    ImageCore::AlphaEncoding encoding)
+{
+    switch (encoding)
+    {
+    case ImageCore::AlphaEncoding::Straight:
+        return L"Straight";
+    case ImageCore::AlphaEncoding::Premultiplied:
+        return L"Premultiplied";
+    case ImageCore::AlphaEncoding::Opaque:
+        return L"Opaque";
+    case ImageCore::AlphaEncoding::Unknown:
+    default:
+        return L"Unknown";
+    }
+}
+
+const wchar_t* AlphaUsageName(
+    ImageCore::AlphaUsage usage)
+{
+    switch (usage)
+    {
+    case ImageCore::AlphaUsage::Coverage:
+        return L"Transparency";
+    case ImageCore::AlphaUsage::Data:
+        return L"Data";
+    case ImageCore::AlphaUsage::Auto:
+    default:
+        return L"Auto";
+    }
+}
+
+const wchar_t* ChannelName(int mode)
+{
+    switch (mode)
+    {
+    case 1:
+        return L"R";
+    case 2:
+        return L"G";
+    case 3:
+        return L"B";
+    case 4:
+        return L"A";
+    case 0:
+    default:
+        return L"RGBA";
     }
 }
 
@@ -133,11 +234,26 @@ ImagePane::ImagePane(const std::wstring& name)
     m_infoLabel =
         std::make_shared<FD2D::Text>(
             name + L"_Info");
-    m_infoLabel->SetFont(L"Segoe UI", 12.0f);
+    m_infoLabel->SetFont(L"Segoe UI", 11.0f);
+    m_infoLabel->SetTextAlignment(
+        DWRITE_TEXT_ALIGNMENT_TRAILING);
     m_infoLabel->SetEllipsisTrimmingEnabled(true);
     m_infoLabel->SetColor(
-        D2D1::ColorF(0.58f, 0.63f, 0.70f));
+        D2D1::ColorF(0.70f, 0.74f, 0.80f));
     m_infoLabel->SetTooltipOnTruncation(true);
+    m_infoLabel->SetCopyTextOnRightClick(true);
+
+    m_viewInfoLabel =
+        std::make_shared<FD2D::Text>(
+            name + L"_ViewInfo");
+    m_viewInfoLabel->SetFont(L"Segoe UI", 11.0f);
+    m_viewInfoLabel->SetTextAlignment(
+        DWRITE_TEXT_ALIGNMENT_TRAILING);
+    m_viewInfoLabel->SetEllipsisTrimmingEnabled(true);
+    m_viewInfoLabel->SetColor(
+        D2D1::ColorF(0.55f, 0.61f, 0.69f));
+    m_viewInfoLabel->SetTooltipOnTruncation(true);
+    m_viewInfoLabel->SetCopyTextOnRightClick(true);
 
     m_contentOverlay =
         std::make_shared<FD2D::OverlayPanel>(
@@ -148,6 +264,8 @@ ImagePane::ImagePane(const std::wstring& name)
 
     AddChild(m_pathLabel);
     SetChildDock(m_pathLabel, FD2D::Dock::Top);
+    AddChild(m_viewInfoLabel);
+    SetChildDock(m_viewInfoLabel, FD2D::Dock::Bottom);
     AddChild(m_infoLabel);
     SetChildDock(m_infoLabel, FD2D::Dock::Bottom);
     AddChild(m_contentOverlay);
@@ -363,41 +481,82 @@ std::wstring ImagePane::InformationText() const
         m_image->GetContentInfo();
     const ImageViewState state =
         m_image->GetState();
-    const ImageCore::AlphaUsage alpha =
+    const ImageCore::AlphaUsage effectiveAlpha =
         m_image->EffectiveAlphaUsage();
+    const ImageCore::AlphaUsage overrideAlpha =
+        m_image->AlphaUsageOverride();
+    const int bitsPerPixel =
+        BitsPerPixel(info.format);
 
     std::wstring text =
         L"Path: " +
         m_path +
-        L"\n\nDimensions: " +
+        L"\nFile format: " +
+        FileFormatName(m_path) +
+        L"\n\nCurrent dimensions: " +
         std::to_wstring(info.width) +
         L" \u00d7 " +
         std::to_wstring(info.height) +
-        L"\nFormat: " +
+        L"\nSource dimensions: " +
+        std::to_wstring(info.sourceWidth) +
+        L" \u00d7 " +
+        std::to_wstring(info.sourceHeight) +
+        L"\nPixel format: " +
         FormatName(info.format) +
+        L"\nEffective bits per pixel: " +
+        (bitsPerPixel > 0
+            ? std::to_wstring(bitsPerPixel)
+            : L"Unknown") +
         L"\nMip level: " +
         std::to_wstring(info.sourceMipIndex) +
-        L" of " +
+        L" / " +
+        std::to_wstring(info.sourceMipLevels - 1) +
+        L" (" +
         std::to_wstring(info.sourceMipLevels) +
+        L" levels)" +
         L"\nSource compression: " +
         (info.alpha.sourceWasBlockCompressed
             ? L"Block compressed"
             : L"Uncompressed") +
-        L"\nAlpha usage: " +
-        (alpha == ImageCore::AlphaUsage::Data
-            ? L"Opaque data"
-            : L"Transparency") +
-        L"\n\nZoom: " +
+        L"\nPresentation: " +
+        (info.gpuPresentation
+            ? L"D3D11 texture"
+            : L"D2D bitmap") +
+        L"\n\nAlpha encoding: " +
+        AlphaEncodingName(info.alpha.encoding) +
+        L"\nAlpha decoder hint: " +
+        AlphaUsageName(info.alpha.usageHint) +
+        L"\nAlpha override: " +
+        AlphaUsageName(overrideAlpha) +
+        L"\nEffective alpha usage: " +
+        AlphaUsageName(effectiveAlpha) +
+        L"\n\nChannel: " +
+        ChannelName(state.channelMode) +
+        L"\nCheckerboard: " +
+        (state.checkerboard ? L"On" : L"Off") +
+        L"\nZoom: " +
         std::to_wstring(
             static_cast<int>(
                 std::lround(state.zoom * 100.0f))) +
         L"%\nRotation: " +
         std::to_wstring(
             (state.rotation & 3) * 90) +
-        L"\u00b0\nSampling: " +
+        L"\u00b0\nPan: " +
+        std::to_wstring(
+            static_cast<int>(
+                std::lround(state.panX))) +
+        L", " +
+        std::to_wstring(
+            static_cast<int>(
+                std::lround(state.panY))) +
+        L" px\nSampling: " +
         (state.highQualitySampling
-            ? L"Smooth"
-            : L"Nearest-neighbor");
+            ? (info.gpuPresentation
+                ? L"D3D11 anisotropic"
+                : L"D2D smooth")
+            : (info.gpuPresentation
+                ? L"D3D11 point"
+                : L"D2D nearest"));
     return text;
 }
 
@@ -545,12 +704,14 @@ void ImagePane::UpdatePathLabel()
 
 void ImagePane::UpdateInfoLabel()
 {
-    if (!m_infoLabel)
+    if (!m_infoLabel || !m_viewInfoLabel)
     {
         return;
     }
 
-    std::wstring text;
+    std::wstring contentText;
+    std::wstring viewText;
+    std::wstring details;
     if (m_loadStatus == LoadStatus::Ready &&
         m_image)
     {
@@ -558,44 +719,112 @@ void ImagePane::UpdateInfoLabel()
             m_image->GetContentInfo();
         const ImageViewState state =
             m_image->GetState();
-        text =
+        const int bitsPerPixel =
+            BitsPerPixel(info.format);
+        const ImageCore::AlphaUsage effectiveAlpha =
+            m_image->EffectiveAlphaUsage();
+        const ImageCore::AlphaUsage overrideAlpha =
+            m_image->AlphaUsageOverride();
+
+        contentText =
+            FileFormatName(m_path) +
+            L"  |  " +
             std::to_wstring(info.width) +
             L" \u00d7 " +
-            std::to_wstring(info.height) +
+            std::to_wstring(info.height);
+        if (bitsPerPixel > 0)
+        {
+            contentText +=
+                L" \u00d7 " +
+                std::to_wstring(bitsPerPixel) +
+                L" bpp";
+        }
+        contentText += L"  |  ";
+        contentText += FormatName(info.format);
+        contentText += L"  |  ";
+        contentText +=
+            info.alpha.sourceWasBlockCompressed
+                ? L"Block compressed"
+                : L"Uncompressed";
+        if (info.sourceMipLevels > 1)
+        {
+            contentText +=
+                L"  |  Mip " +
+                std::to_wstring(info.sourceMipIndex) +
+                L" / " +
+                std::to_wstring(
+                    info.sourceMipLevels - 1) +
+                L" (" +
+                std::to_wstring(
+                    info.sourceMipLevels) +
+                L" levels)";
+        }
+        if (info.sourceMipIndex != 0)
+        {
+            contentText +=
+                L"  |  Source " +
+                std::to_wstring(info.sourceWidth) +
+                L" \u00d7 " +
+                std::to_wstring(info.sourceHeight);
+        }
+
+        viewText =
+            std::wstring(ChannelName(state.channelMode)) +
+            L"  |  Alpha " +
+            AlphaEncodingName(info.alpha.encoding) +
+            L" \u2192 " +
+            AlphaUsageName(effectiveAlpha);
+        if (overrideAlpha == ImageCore::AlphaUsage::Auto)
+        {
+            viewText += L" (Auto)";
+        }
+        else
+        {
+            viewText += L" (Override)";
+        }
+        viewText +=
+            L"  |  Checker " +
+            std::wstring(
+                state.checkerboard ? L"On" : L"Off") +
             L"  |  " +
-            FormatName(info.format) +
-            L"  |  " +
-            (info.sourceMipLevels > 1
-                ? L"Mip " +
-                    std::to_wstring(
-                        info.sourceMipIndex) +
-                    L" of " +
-                    std::to_wstring(
-                        info.sourceMipLevels) +
-                    L"  |  "
-                : L"") +
+            (info.gpuPresentation
+                ? L"D3D11 "
+                : L"D2D ") +
             (state.highQualitySampling
-                ? L"Smooth"
-                : L"Nearest") +
-            L"  |  " +
+                ? (info.gpuPresentation
+                    ? L"Anisotropic"
+                    : L"Smooth")
+                : (info.gpuPresentation
+                    ? L"Point"
+                    : L"Nearest")) +
+            L"  |  Zoom " +
             std::to_wstring(
                 static_cast<int>(
                     std::lround(
                         state.zoom * 100.0f))) +
-            L"%";
-        if ((state.rotation & 3) != 0)
-        {
-            text +=
-                L"  " +
-                std::to_wstring(
-                    (state.rotation & 3) * 90) +
-                L"\u00b0";
-        }
+            L"%  |  Rot " +
+            std::to_wstring(
+                (state.rotation & 3) * 90) +
+            L"\u00b0  |  Pan " +
+            std::to_wstring(
+                static_cast<int>(
+                    std::lround(state.panX))) +
+            L", " +
+            std::to_wstring(
+                static_cast<int>(
+                    std::lround(state.panY))) +
+            L" px";
+        details = InformationText();
     }
 
-    m_infoLabel->SetText(text);
-    m_infoLabel->SetTooltipText(text);
+    m_infoLabel->SetText(contentText);
+    m_infoLabel->SetTooltipText(details);
+    m_infoLabel->SetCopyText(details);
     m_infoLabel->Invalidate();
+    m_viewInfoLabel->SetText(viewText);
+    m_viewInfoLabel->SetTooltipText(details);
+    m_viewInfoLabel->SetCopyText(details);
+    m_viewInfoLabel->Invalidate();
 }
 
 } // namespace nsk

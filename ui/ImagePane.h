@@ -83,6 +83,7 @@ private:
     std::shared_ptr<FD2D::Text> m_statusOverlay;
     std::shared_ptr<FD2D::Text> m_pathLabel;
     std::shared_ptr<FD2D::Text> m_infoLabel;
+    std::shared_ptr<FD2D::Text> m_viewInfoLabel;
     std::wstring m_path;
     std::wstring m_pendingPath;
     std::wstring m_failedPath;
