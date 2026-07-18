@@ -79,7 +79,6 @@ public:
         // The cached alpha mode (decoder-determined) keeps isolation correct on a
         // cache-hit re-select too - no format guessing.
         m_srvAlphaMode = alphaMode;
-        m_srvPremultiplied = (alphaMode == ImageCore::AlphaMode::Premultiplied);
         m_srvPath = path;
         PushDrawState();
         return true;
@@ -94,7 +93,6 @@ public:
             m_needUpload = false;
         }
         m_srvAlphaMode = ImageCore::AlphaMode::Unknown;
-        m_srvPremultiplied = false;
         m_srvPath.clear();
         Clear(); // FD2D::Image::Clear (drops the current bitmap/SRV)
         Invalidate();
@@ -173,11 +171,9 @@ public:
                     if (SUCCEEDED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
                     {
                         SetShaderResource(srv);
-                        // Use the decoder's real alpha mode (NOT a format guess):
-                        // WIC/normalized CPU output is premultiplied, straight BCn
-                        // is not. Drives the isolation shader (see PushDrawState).
+                        // Record the decoder's real alpha mode (NOT a format guess)
+                        // - drives display compositing + isolation (see PushDrawState).
                         m_srvAlphaMode = img.alphaMode;
-                        m_srvPremultiplied = (img.alphaMode == ImageCore::AlphaMode::Premultiplied);
                         PushDrawState();
                         // Pool the uploaded SRV so re-selecting this texture is a
                         // synchronous cache hit (see TryApplyCachedSrv) - now for
@@ -354,12 +350,26 @@ private:
         ds.highQualitySampling = true;
         ds.alphaCheckerboardEnabled = m_checkerboard;
         ds.channelMode = m_channelMode;
-        // From the decoder's real alpha mode (m_srvAlphaMode), not a format guess:
-        // lets the shader premultiply a straight source for display and unpremultiply
-        // a premultiplied one for accurate channel isolation.
-        ds.sourcePremultiplied = m_srvPremultiplied;
+        // From the decoder's real alpha mode (not a format guess): the shader
+        // premultiplies a straight source for display, unpremultiplies a
+        // premultiplied one for accurate isolation, and treats opaque/custom alpha
+        // as non-coverage (forces display alpha=1).
+        ds.sourceAlphaMode = ShaderAlphaMode(m_srvAlphaMode);
         SetDrawState(ds);
         Invalidate();
+    }
+
+    // Map ImageCore's alpha mode to FD2D::Image::DrawState::sourceAlphaMode
+    // (0=straight, 1=premultiplied, 2=opaque/custom - alpha is not coverage).
+    static int ShaderAlphaMode(ImageCore::AlphaMode mode)
+    {
+        switch (mode)
+        {
+        case ImageCore::AlphaMode::Premultiplied: return 1;
+        case ImageCore::AlphaMode::Opaque:        return 2;
+        case ImageCore::AlphaMode::Custom:        return 2;
+        default:                                  return 0; // Straight / Unknown
+        }
     }
 
     // True for the block-compressed DDS formats (BC1..BC7, all TYPELESS/UNORM/
@@ -434,8 +444,7 @@ private:
     float m_panY = 0.0f;
     int m_rotation = 0;      // 0/1/2/3 quarter-turns CW
     int m_channelMode = 0;   // 0=RGBA, 1=R, 2=G, 3=B, 4=A
-    ImageCore::AlphaMode m_srvAlphaMode = ImageCore::AlphaMode::Unknown; // current SRV's alpha mode
-    bool m_srvPremultiplied = false; // == (m_srvAlphaMode == Premultiplied); drives the shader
+    ImageCore::AlphaMode m_srvAlphaMode = ImageCore::AlphaMode::Unknown; // current SRV's alpha mode (drives the shader)
     bool m_checkerboard = false;
     bool m_panning = false;
     LONG m_dragStartX = 0;
