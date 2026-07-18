@@ -7,6 +7,48 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
+## 1.1.0
+
+### Textures
+- Any pane can show a texture (`.dds`/`.png`/`.tga`/`.bmp`/...) in place of a
+  NIF - the same pane, the same thumbnail strip, swapping content as you browse
+- Smooth pointer zoom, rotation-aware clamped pan, 90°/180° rotation, fit to
+  screen, and a switchable smooth/nearest sampling mode
+- A live dimensions/format/zoom/rotation info bar, plus a full detail dialog
+  (`I`) that adds mip level and source compression
+- Browse a DDS's mip chain directly (`Ctrl+[` / `Ctrl+]`, or the context
+  menu's Mip Level submenu), each level labelled with its resolution
+- Checkerboard backdrop behind transparency, R/G/B/A channel isolation, and a
+  per-pane Alpha Channel override (Auto / Transparency / Opaque) for the rare
+  case the automatic policy gets it wrong
+- Lossless alpha handling throughout - loose/uncompressed alpha is treated as
+  transparency, block-compressed alpha as data, so a parallax normal map is
+  no longer darkened by its own height channel
+- Compressed DDS (BC1-BC7) uploads straight to the GPU in its native block
+  format - 4K textures open effectively instantly, and a cache keyed on path
+  and mip level makes revisiting one instant too
+- A loading spinner and a "Failed to load image" state, so a bad file never
+  leaves stale content on screen or pollutes Recent Files
+- Screenshot (`F12` / context menu) now captures an image pane's actual
+  on-screen view, not just NIF panes
+
+### Resources
+- Register Game Data folders for every supported game at once - **Detect**
+  finds and registers Skyrim LE, Skyrim SE and Fallout 4 in one click,
+  **Set Active** assigns a folder to whichever game the active pane's NIF
+  belongs to
+- Texture lookups are scoped to the NIF's own game, so two games' assets
+  sharing a relative path can no longer cross-resolve to the wrong one
+- A saved session's file living inside a BSA/BA2/archive now restores
+  correctly on restart (previously only plain filesystem paths did)
+
+### Fixes
+- Texture Inspector previews render correctly again (a prior refactor let a
+  NIF pane's own 3D render silently cover them)
+- A custom shader placed in a subfolder can `#include "Common.hlsli"` and
+  its own nested includes correctly, instead of silently falling back to the
+  built-in shader
+
 ## 1.0.116
 
 First public release.
