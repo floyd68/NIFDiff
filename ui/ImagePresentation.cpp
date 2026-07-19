@@ -225,7 +225,6 @@ bool ImagePresentation::SelectMip(uint32_t mipLevel)
 
     if (TryApplyCachedSrv(path, mipLevel, generation))
     {
-        ClampPan();
         PublishLoadResult(path, generation, S_OK);
         Invalidate();
         return true;
@@ -799,7 +798,6 @@ void ImagePresentation::OnRenderD3D(ID3D11DeviceContext* context)
                         m_sourceHeight = image.height;
                     }
                     m_srvPath = path;
-                    ClampPan();
                     PushDrawState();
 
                     std::uint64_t deviceGeneration = 0;
@@ -912,7 +910,6 @@ void ImagePresentation::OnRender(ID2D1RenderTarget* target)
                 m_sourceHeight = image.height;
             }
             m_srvPath = path;
-            ClampPan();
             PushDrawState();
             PublishLoadResult(
                 path,
@@ -947,7 +944,6 @@ void ImagePresentation::RotateCW()
 {
     CancelZoomAnimation();
     m_rotation = (m_rotation + 1) & 3;
-    ClampPan();
     ApplyDrawState();
 }
 
@@ -955,7 +951,6 @@ void ImagePresentation::RotateCCW()
 {
     CancelZoomAnimation();
     m_rotation = (m_rotation + 3) & 3;
-    ClampPan();
     ApplyDrawState();
 }
 
@@ -963,7 +958,6 @@ void ImagePresentation::Rotate180()
 {
     CancelZoomAnimation();
     m_rotation = (m_rotation + 2) & 3;
-    ClampPan();
     ApplyDrawState();
 }
 
@@ -971,7 +965,6 @@ void ImagePresentation::ResetRotation()
 {
     CancelZoomAnimation();
     m_rotation = 0;
-    ClampPan();
     ApplyDrawState();
 }
 
@@ -1065,7 +1058,6 @@ void ImagePresentation::SetState(const ViewState& state)
     m_checkerboard = state.checkerboard;
     m_highQualitySampling =
         state.highQualitySampling;
-    ClampPan();
     PushDrawState();
 }
 
@@ -1181,7 +1173,6 @@ bool ImagePresentation::OnInputEvent(
             m_zoom = m_zoomTarget;
             m_panX = m_zoomPanTargetX;
             m_panY = m_zoomPanTargetY;
-            ClampPan();
             m_zoomPanTargetX = m_panX;
             m_zoomPanTargetY = m_panY;
             m_zoom = currentZoom;
@@ -1287,7 +1278,6 @@ bool ImagePresentation::OnInputEvent(
 
             m_panX = m_panStartX + panDeltaX;
             m_panY = m_panStartY + panDeltaY;
-            ClampPan();
             ApplyDrawState();
             return true;
         }
@@ -1335,76 +1325,6 @@ void ImagePresentation::ApplyDrawState()
     }
 }
 
-void ImagePresentation::ClampPan()
-{
-    const D2D1_RECT_F layout = LayoutRect();
-    const float layoutWidth =
-        layout.right - layout.left;
-    const float layoutHeight =
-        layout.bottom - layout.top;
-    const D2D1_SIZE_U pixels =
-        ContentPixelSize();
-    if (layoutWidth <= 0.0f ||
-        layoutHeight <= 0.0f ||
-        pixels.width == 0 ||
-        pixels.height == 0)
-    {
-        return;
-    }
-
-    const D2D1_RECT_F fitted =
-        FD2D::Util::ComputeAspectFitRect(
-            layout,
-            D2D1::SizeF(
-                static_cast<float>(pixels.width),
-                static_cast<float>(pixels.height)),
-            m_rotation);
-    float displayedWidth =
-        fitted.right - fitted.left;
-    float displayedHeight =
-        fitted.bottom - fitted.top;
-    if ((m_rotation & 1) != 0)
-    {
-        std::swap(
-            displayedWidth,
-            displayedHeight);
-    }
-
-    displayedWidth *= m_zoom;
-    displayedHeight *= m_zoom;
-    constexpr float kMinVisible = 1.0f;
-    const float limitX =
-        displayedWidth <= layoutWidth
-            ? 0.0f
-            : (layoutWidth + displayedWidth) *
-                    0.5f -
-                kMinVisible;
-    const float limitY =
-        displayedHeight <= layoutHeight
-            ? 0.0f
-            : (layoutHeight + displayedHeight) *
-                    0.5f -
-                kMinVisible;
-    const bool rotatedSideways =
-        (m_rotation & 1) != 0;
-    const float panLimitX =
-        rotatedSideways
-            ? limitY
-            : limitX;
-    const float panLimitY =
-        rotatedSideways
-            ? limitX
-            : limitY;
-    m_panX = std::clamp(
-        m_panX,
-        -panLimitX,
-        panLimitX);
-    m_panY = std::clamp(
-        m_panY,
-        -panLimitY,
-        panLimitY);
-}
-
 void ImagePresentation::CancelZoomAnimation()
 {
     m_zoomAnimating = false;
@@ -1444,14 +1364,12 @@ bool ImagePresentation::TickViewAnimation(
         m_zoomPanStartY +
         (m_zoomPanTargetY - m_zoomPanStartY) *
             eased;
-    ClampPan();
 
     if (linear >= 1.0f)
     {
         m_zoom = m_zoomTarget;
         m_panX = m_zoomPanTargetX;
         m_panY = m_zoomPanTargetY;
-        ClampPan();
         m_zoomAnimating = false;
     }
 
@@ -1462,16 +1380,6 @@ bool ImagePresentation::TickViewAnimation(
 void ImagePresentation::Arrange(FD2D::Rect finalRect)
 {
     FD2D::Image::Arrange(finalRect);
-
-    const float oldPanX = m_panX;
-    const float oldPanY = m_panY;
-    ClampPan();
-    if (oldPanX != m_panX ||
-        oldPanY != m_panY)
-    {
-        CancelZoomAnimation();
-        ApplyDrawState();
-    }
 }
 
 void ImagePresentation::PushDrawState()

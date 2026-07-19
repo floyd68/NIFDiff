@@ -134,7 +134,6 @@ private:
     void ApplyDrawState();
     void PushDrawState();
     void ResetViewState();
-    void ClampPan();
     void CancelZoomAnimation();
     bool TakePending(
         ImageCore::DecodedImage& out,
