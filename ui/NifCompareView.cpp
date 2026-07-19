@@ -841,45 +841,85 @@ void NifCompareView::SetOnThumbnailStripSizeChanged(std::function<void(float)> h
     m_onThumbStripSizeCommitted = std::move(handler);
 }
 
-bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
+bool NifCompareView::IsOverlayActive(FD2D::OverlayLayer layer) const
 {
-    if (HandleNodeTransformDiffInput(event))
+    switch (layer)
     {
-        return true;
+    case FD2D::OverlayLayer::Chrome:
+        // Collapse tab is the only interactive chrome. Decorative glows /
+        // badges / drag tint do not need to claim the Chrome band.
+        return m_controlsScroll != nullptr;
+    case FD2D::OverlayLayer::Inspector:
+        // Live flags are set only when the panel actually painted, so the
+        // Inspector band does not suppress tooltips while a toggle is on
+        // but nothing selectable is visible.
+        return m_matPanelLive ||
+            m_texPanelLive ||
+            m_matResizing;
+    case FD2D::OverlayLayer::Popup:
+        return false;
+    case FD2D::OverlayLayer::Modal:
+        return m_showNodeTransformDiff;
+    }
+    return false;
+}
+
+bool NifCompareView::OnOverlayInput(
+    const FD2D::InputEvent& event,
+    FD2D::OverlayLayer layer)
+{
+    if (layer == FD2D::OverlayLayer::Modal)
+    {
+        return HandleNodeTransformDiffInput(event);
     }
 
-    if (event.type == FD2D::InputEventType::MouseDoubleClick &&
-        event.hasPoint &&
-        event.button == FD2D::MouseButton::Left &&
-        HandleTextureInspectorDoubleClick(event.point))
+    if (layer == FD2D::OverlayLayer::Chrome)
     {
-        return true;
-    }
-
-    // Clicks over the texture inspector overlay belong to IT, not to the
-    // viewport underneath (row select / channel cycle / plain swallow).
-    if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint &&
-        event.button == FD2D::MouseButton::Left &&
-        HandleTextureInspectorClick(event.point))
-        return true;
-
-    // Control-strip collapse tab: toggle on press, and also swallow the release
-    // over the tab so it never falls through to a pane (the viewport picks a
-    // sub-mesh on MouseUp - same lesson as the material panel below).
-    if (event.hasPoint && event.button == FD2D::MouseButton::Left &&
-        FD2D::Util::RectContainsPoint(m_collapseTabRect, event.point))
-    {
-        if (event.type == FD2D::InputEventType::MouseDown)
+        if (event.hasPoint &&
+            event.button == FD2D::MouseButton::Left &&
+            FD2D::Util::RectContainsPoint(m_collapseTabRect, event.point))
         {
-            SetControlStripCollapsed(!m_controlsCollapsed, /*notify=*/true);
+            if (event.type == FD2D::InputEventType::MouseDown)
+            {
+                SetControlStripCollapsed(!m_controlsCollapsed, /*notify=*/true);
+                return true;
+            }
+            if (event.type == FD2D::InputEventType::MouseUp)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (layer != FD2D::OverlayLayer::Inspector)
+    {
+        return false;
+    }
+
+    // The texture inspector is the later-painted inspector and therefore owns
+    // every mouse event inside its visible panel, not only left MouseDown.
+    if (event.hasPoint &&
+        m_texPanelLive &&
+        FD2D::Util::RectContainsPoint(m_texPanelRect, event.point))
+    {
+        if (event.type == FD2D::InputEventType::MouseDoubleClick &&
+            event.button == FD2D::MouseButton::Left)
+        {
+            return HandleTextureInspectorDoubleClick(event.point);
+        }
+        if (event.type == FD2D::InputEventType::MouseDown &&
+            event.button == FD2D::MouseButton::Left)
+        {
+            (void)HandleTextureInspectorClick(event.point);
             return true;
         }
-        if (event.type == FD2D::InputEventType::MouseUp)
+        if (FD2D::Util::IsMouseInputEventType(event.type))
+        {
             return true;
+        }
     }
 
-    // A material-panel column-width drag in progress owns every mouse event
-    // until release.
     if (m_matResizing)
     {
         if (event.type == FD2D::InputEventType::MouseMove && event.hasPoint)
@@ -896,36 +936,43 @@ bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
             ReleaseCapture();
             return true;
         }
-        return true; // swallow anything else mid-drag
+        return true;
     }
 
-    // Track the hovered material-panel texture cell so the tooltip repaints as
-    // the cursor moves across cells (mouse-move alone triggers no redraw).
     if (event.type == FD2D::InputEventType::MouseMove && event.hasPoint)
+    {
         UpdateMaterialHover(event.point);
+    }
 
-    // Right-click on a material-panel texture cell copies its full relative
-    // path (and swallows the event so no pane context menu appears).
     if (event.type == FD2D::InputEventType::MouseUp &&
         event.button == FD2D::MouseButton::Right &&
         event.hasPoint &&
         HandleMaterialPanelCopy(event.point))
+    {
         return true;
+    }
 
-    // A press over the material panel belongs to IT: header toggles collapse, a
-    // corner grip starts a width drag, and everything else is swallowed so the
-    // pane behind the overlay doesn't become active or start an orbit drag.
-    if (event.type == FD2D::InputEventType::MouseDown && event.hasPoint &&
+    if (event.type == FD2D::InputEventType::MouseDown &&
+        event.button == FD2D::MouseButton::Left &&
+        event.hasPoint &&
         HandleMaterialPanelMouseDown(event.point))
+    {
         return true;
+    }
 
-    // The overlay is drawn, not a child window, so a release over it would
-    // otherwise fall through to the pane behind - and the viewport picks a
-    // sub-mesh on MouseUp. Swallow every release over the live panel so a
-    // header collapse/expand click never selects the mesh underneath.
-    if (event.type == FD2D::InputEventType::MouseUp && event.hasPoint &&
-        m_matPanelLive && FD2D::Util::RectContainsPoint(m_matPanelRect, event.point))
+    if (event.hasPoint &&
+        m_matPanelLive &&
+        FD2D::Util::RectContainsPoint(m_matPanelRect, event.point) &&
+        FD2D::Util::IsMouseInputEventType(event.type))
+    {
         return true;
+    }
+
+    return false;
+}
+
+bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
+{
 
     // Any click inside a pane makes it the active one (FICture2's focused
     // browser), BEFORE the children consume the event - a viewport orbit
@@ -3280,7 +3327,11 @@ bool NifCompareView::HandleNodeTransformDiffInput(
         }
         return true;
     }
-    return false;
+
+    // Modal owns the whole input surface, including the outer margin around
+    // the table. Clicks outside the panel must not activate panes or open
+    // context menus beneath the modal.
+    return true;
 }
 
 void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
@@ -3762,14 +3813,31 @@ void NifCompareView::DrawSyncBadges(ID2D1RenderTarget* target)
     }
 }
 
-void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
+void NifCompareView::OnRenderOverlay(
+    ID2D1RenderTarget* target,
+    FD2D::OverlayLayer layer)
 {
-    FD2D::SplitPanel::OnRenderOverlay(target);
     if (target == nullptr)
+    {
         return;
+    }
 
-    DrawMaterialDiffPanel(target);
-    DrawTextureInspector(target);
+    if (layer == FD2D::OverlayLayer::Inspector)
+    {
+        DrawMaterialDiffPanel(target);
+        DrawTextureInspector(target);
+        return;
+    }
+    if (layer == FD2D::OverlayLayer::Modal)
+    {
+        DrawNodeTransformDiffPanel(target);
+        return;
+    }
+    if (layer != FD2D::OverlayLayer::Chrome)
+    {
+        return;
+    }
+
     DrawSyncBadges(target);
 
     // Collapse/expand tab for the bottom control strip: a small centered
@@ -3835,7 +3903,6 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
 
     if (m_dragOverlayKind == DragOverlayKind::None || m_dragOverlayPane == nullptr)
     {
-        DrawNodeTransformDiffPanel(target);
         return;
     }
     // A deferred close during the drag could have destroyed the pane;
@@ -3845,7 +3912,6 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
         alive = alive || p.get() == m_dragOverlayPane;
     if (!alive)
     {
-        DrawNodeTransformDiffPanel(target);
         return;
     }
 
@@ -3865,10 +3931,6 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
         if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 1.0f, 0.0f, 0.18f), &brush)))
             target->FillRectangle(rc, brush.Get());
     }
-    // Modal Node Diff must be the final overlay. Pane selection glows, the
-    // control-strip drawer handle, and drag feedback otherwise paint over its
-    // table because they belong to this same overlay pass.
-    DrawNodeTransformDiffPanel(target);
 }
 
 bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)

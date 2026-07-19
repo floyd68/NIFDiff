@@ -202,8 +202,15 @@ public:
     bool OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual) override;
     bool OnFileDropPaths(const std::vector<std::wstring>& paths, const POINT& clientPt) override;
     void OnFileDragLeave() override;
-    // Draws the drag overlay above the pane content (second D2D pass).
-    void OnRenderOverlay(ID2D1RenderTarget* target) override;
+    // Fixed-band overlays keep pane chrome, inspectors, popups, and modals in
+    // deterministic render/input order.
+    void OnRenderOverlay(
+        ID2D1RenderTarget* target,
+        FD2D::OverlayLayer layer) override;
+    bool IsOverlayActive(FD2D::OverlayLayer layer) const override;
+    bool OnOverlayInput(
+        const FD2D::InputEvent& event,
+        FD2D::OverlayLayer layer) override;
 
     // `clientPt` is in window client coordinates.
     void SetOnContextMenuRequested(std::function<void(POINT clientPt, ComparePane* pane)> handler);
