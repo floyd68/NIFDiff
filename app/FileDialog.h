@@ -18,4 +18,17 @@ bool ShowPickFolderDialog(void* ownerWindowHwnd, const wchar_t* title, std::wstr
 bool ShowSavePngDialog(void* ownerWindowHwnd, const std::wstring& initialFolder,
                        const std::wstring& initialFileName, std::wstring& outPath);
 
+enum class NodeTransformExportFormat
+{
+    Csv,
+    Json
+};
+
+bool ShowSaveNodeTransformDialog(
+    void* ownerWindowHwnd,
+    const std::wstring& initialFolder,
+    const std::wstring& initialFileName,
+    std::wstring& outPath,
+    NodeTransformExportFormat& outFormat);
+
 } // namespace nsk

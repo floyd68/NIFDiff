@@ -34,6 +34,8 @@ public:
 
     void SetOnAddPane(std::function<void()> handler);
     void SetOnResetCameras(std::function<void()> handler);
+    void SetOnNodeTransformDiff(
+        std::function<void()> handler);
 
     void SetOnSyncViewsChanged(std::function<void(bool)> handler);
     void SetOnSyncLightingChanged(std::function<void(bool)> handler);
@@ -161,6 +163,7 @@ private:
     std::vector<std::shared_ptr<FD2D::DynamicPanel>> m_columnRows; // 2-column group rows, collapsed by SetCompact
     std::shared_ptr<FD2D::Button> m_addPaneBtn;
     std::shared_ptr<FD2D::Button> m_resetBtn;
+    std::shared_ptr<FD2D::Button> m_nodeTransformDiffBtn;
     std::shared_ptr<FD2D::CheckBox> m_syncViewsChk;
     std::shared_ptr<FD2D::CheckBox> m_syncLightingChk;
     std::shared_ptr<FD2D::CheckBox> m_syncFilesChk;

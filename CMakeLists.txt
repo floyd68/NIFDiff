@@ -214,12 +214,17 @@ add_executable(NIFDiff WIN32
     app/res/resource.h
     app/res/NIFDiff.rc
     app/res/version.h.in
+    core/CollisionMetadata.h
     core/NifTypes.h
     core/NifStream.h
     core/NifValue.h
     core/NifItem.h
     core/NifDocument.h
     core/NifDocument.cpp
+    core/NodeTransformDiff.h
+    core/NodeTransformDiff.cpp
+    core/NodeTransformExport.h
+    core/NodeTransformExport.cpp
     core/AnimController.h
     core/AnimController.cpp
     core/SceneBuilder.h
@@ -340,6 +345,7 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(NifValidate
     app/ValidateNif.cpp
+    core/CollisionMetadata.h
     core/NifTypes.h
     core/NifStream.h
     core/NifValue.h
@@ -363,6 +369,73 @@ set_target_properties(NifValidate PROPERTIES
 if(MSVC)
     target_compile_options(NifValidate PRIVATE /permissive- /utf-8 /W3)
 endif()
+
+# ---------------------------------------------------------------------------
+# CollisionMetadataTest - bhkCompressedMeshShapeData material-table parser
+# ---------------------------------------------------------------------------
+add_executable(CollisionMetadataTest
+    app/CollisionMetadataTest.cpp
+    core/CollisionMetadata.h
+)
+target_include_directories(CollisionMetadataTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+)
+target_compile_definitions(CollisionMetadataTest PRIVATE NOMINMAX)
+set_target_properties(CollisionMetadataTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
+if(MSVC)
+    target_compile_options(CollisionMetadataTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME CollisionMetadataTest COMMAND CollisionMetadataTest)
+
+# ---------------------------------------------------------------------------
+# NodeTransformDiffTest - hierarchy matching and bind-transform deltas
+# ---------------------------------------------------------------------------
+add_executable(NodeTransformDiffTest
+    app/NodeTransformDiffTest.cpp
+    core/NifDocument.h
+    core/NifDocument.cpp
+    core/NodeTransformDiff.h
+    core/NodeTransformDiff.cpp
+)
+target_include_directories(NodeTransformDiffTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_compile_definitions(NodeTransformDiffTest PRIVATE NOMINMAX)
+set_target_properties(NodeTransformDiffTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
+if(MSVC)
+    target_compile_options(NodeTransformDiffTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME NodeTransformDiffTest COMMAND NodeTransformDiffTest)
+
+# ---------------------------------------------------------------------------
+# NodeTransformExportTest - CSV/JSON escaping and schema smoke test
+# ---------------------------------------------------------------------------
+add_executable(NodeTransformExportTest
+    app/NodeTransformExportTest.cpp
+    core/NifDocument.h
+    core/NifDocument.cpp
+    core/NodeTransformDiff.h
+    core/NodeTransformDiff.cpp
+    core/NodeTransformExport.h
+    core/NodeTransformExport.cpp
+)
+target_include_directories(NodeTransformExportTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_compile_definitions(NodeTransformExportTest PRIVATE NOMINMAX)
+set_target_properties(NodeTransformExportTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
+if(MSVC)
+    target_compile_options(NodeTransformExportTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME NodeTransformExportTest COMMAND NodeTransformExportTest)
 
 # ---------------------------------------------------------------------------
 # ResourceResolveTest - Bethesda search-order smoke test (uses Floar for BSA)

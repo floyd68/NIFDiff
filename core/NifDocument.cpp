@@ -184,6 +184,11 @@ bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string
     m_geometries.clear();
     m_materials.clear();
     m_textureSets.clear();
+    m_collisionMaterials.clear();
+    m_collisionObjectBodyRefs.clear();
+    m_collisionBodyShapeRefs.clear();
+    m_collisionShapeChildRefs.clear();
+    m_compressedShapeDataRefs.clear();
     m_roots.clear();
     m_blockIndexToNodeIndex.clear();
     m_skinInstanceToPartitionRef.clear();
@@ -383,6 +388,20 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiBoolData(in, i);
         else if (t == "NiSkinPartition")
             parseNiSkinPartition(in, i);
+        else if (t == "bhkCompressedMeshShapeData")
+            parseBhkCompressedMeshShapeData(in, i);
+        else if (t == "bhkCollisionObject" ||
+                 t == "bhkBlendCollisionObject")
+            parseBhkCollisionObject(in, i);
+        else if (t == "bhkRigidBody" ||
+                 t == "bhkRigidBodyT")
+            parseBhkRigidBody(in, i);
+        else if (t == "bhkMoppBvTreeShape" ||
+                 t == "bhkTransformShape" ||
+                 t == "bhkConvexTransformShape")
+            parseBhkShapeChild(in, i);
+        else if (t == "bhkCompressedMeshShape")
+            parseBhkCompressedMeshShape(in, i);
         else
         {
             // Everything else: intentionally left unparsed. Next block's
@@ -464,6 +483,7 @@ void NifDocument::parseNiNode(NifIStream& in, int blockIndex, bool /*isFadeNodeL
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
     node.controllerRef = hdr.controllerRef;
+    node.collisionObjectRef = hdr.collisionObjectRef;
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = false;
 
@@ -493,6 +513,7 @@ void NifDocument::parseNiTriShapeOrStrips(NifIStream& in, int blockIndex, bool /
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
     node.controllerRef = hdr.controllerRef;
+    node.collisionObjectRef = hdr.collisionObjectRef;
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
 
@@ -655,6 +676,7 @@ void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex)
     node.blockIndex = blockIndex;
     node.localTransform = hdr.transform;
     node.controllerRef = hdr.controllerRef;
+    node.collisionObjectRef = hdr.collisionObjectRef;
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
     node.geometryBlockIndex = kNoRef; // inline geometry, not a separate *Data block
@@ -1298,6 +1320,198 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
 
     m_skinPartitionGeometries[blockIndex] = std::move(geo);
     m_skinPartitionWeights[blockIndex] = haveEmbeddedWeights ? std::move(embeddedWeights) : std::move(weights);
+}
+
+// --- bhk collision metadata -------------------------------------------------
+void NifDocument::parseBhkCollisionObject(
+    NifIStream& in,
+    int blockIndex)
+{
+    const RawBlockInfo& block =
+        m_blocks[static_cast<std::size_t>(blockIndex)];
+    // NiCollisionObject::Target + bhkNiCollisionObject::Flags + Body.
+    if (block.size < 10)
+    {
+        return;
+    }
+    in.i32();
+    in.u16();
+    m_collisionObjectBodyRefs[blockIndex] =
+        in.i32();
+}
+
+void NifDocument::parseBhkRigidBody(
+    NifIStream& in,
+    int blockIndex)
+{
+    const RawBlockInfo& block =
+        m_blocks[static_cast<std::size_t>(blockIndex)];
+    // bhkWorldObject::Shape is the first serialized field inherited by
+    // bhkRigidBody/bhkRigidBodyT. The large CInfo tail is irrelevant here.
+    if (block.size < sizeof(std::int32_t))
+    {
+        return;
+    }
+    m_collisionBodyShapeRefs[blockIndex] =
+        in.i32();
+}
+
+void NifDocument::parseBhkShapeChild(
+    NifIStream& in,
+    int blockIndex)
+{
+    const RawBlockInfo& block =
+        m_blocks[static_cast<std::size_t>(blockIndex)];
+    // MOPP/transform shape wrappers all serialize their child Shape ref first.
+    if (block.size < sizeof(std::int32_t))
+    {
+        return;
+    }
+    m_collisionShapeChildRefs[blockIndex] =
+        in.i32();
+}
+
+void NifDocument::parseBhkCompressedMeshShape(
+    NifIStream& in,
+    int blockIndex)
+{
+    const RawBlockInfo& block =
+        m_blocks[static_cast<std::size_t>(blockIndex)];
+    // Target, User Data, Radius, Unknown Float, Scale, Radius Copy,
+    // Scale Copy, then the bhkCompressedMeshShapeData ref.
+    constexpr std::size_t kDataRefOffset = 52;
+    if (block.size <
+        kDataRefOffset + sizeof(std::int32_t))
+    {
+        return;
+    }
+    in.skip(kDataRefOffset);
+    m_compressedShapeDataRefs[blockIndex] =
+        in.i32();
+}
+
+std::vector<NifCollisionMaterial>
+NifDocument::collisionMaterialsForNode(
+    int nodeIndex) const
+{
+    std::int32_t collisionRef = kNoRef;
+    std::vector<bool> visitedNodes(
+        m_nodes.size(),
+        false);
+    while (nodeIndex >= 0 &&
+           static_cast<std::size_t>(nodeIndex) <
+               m_nodes.size() &&
+           !visitedNodes[static_cast<std::size_t>(
+               nodeIndex)])
+    {
+        visitedNodes[static_cast<std::size_t>(
+            nodeIndex)] = true;
+        const NifSceneNode& node =
+            m_nodes[static_cast<std::size_t>(
+                nodeIndex)];
+        if (node.collisionObjectRef != kNoRef)
+        {
+            collisionRef =
+                node.collisionObjectRef;
+            break;
+        }
+        nodeIndex = node.parentIndex;
+    }
+    if (collisionRef == kNoRef)
+    {
+        return {};
+    }
+
+    const auto bodyIt =
+        m_collisionObjectBodyRefs.find(
+            collisionRef);
+    if (bodyIt ==
+        m_collisionObjectBodyRefs.end())
+    {
+        return {};
+    }
+    const auto shapeIt =
+        m_collisionBodyShapeRefs.find(
+            bodyIt->second);
+    if (shapeIt ==
+        m_collisionBodyShapeRefs.end())
+    {
+        return {};
+    }
+
+    std::int32_t shapeRef = shapeIt->second;
+    std::vector<bool> visitedBlocks(
+        m_blocks.size(),
+        false);
+    for (int depth = 0;
+         depth < 16 &&
+         shapeRef >= 0 &&
+         static_cast<std::size_t>(shapeRef) <
+             m_blocks.size() &&
+         !visitedBlocks[static_cast<std::size_t>(
+             shapeRef)];
+         ++depth)
+    {
+        visitedBlocks[static_cast<std::size_t>(
+            shapeRef)] = true;
+        const auto dataIt =
+            m_compressedShapeDataRefs.find(
+                shapeRef);
+        if (dataIt !=
+            m_compressedShapeDataRefs.end())
+        {
+            const auto materialsIt =
+                m_collisionMaterials.find(
+                    dataIt->second);
+            return materialsIt !=
+                    m_collisionMaterials.end()
+                ? materialsIt->second
+                : std::vector<
+                      NifCollisionMaterial>();
+        }
+        const auto childIt =
+            m_collisionShapeChildRefs.find(
+                shapeRef);
+        if (childIt ==
+            m_collisionShapeChildRefs.end())
+        {
+            break;
+        }
+        shapeRef = childIt->second;
+    }
+    return {};
+}
+
+// --- bhkCompressedMeshShapeData --------------------------------------------
+void NifDocument::parseBhkCompressedMeshShapeData(
+    NifIStream&,
+    int blockIndex)
+{
+    const RawBlockInfo& block =
+        m_blocks[static_cast<std::size_t>(blockIndex)];
+    if (block.fileOffset > m_fileBytes.size() ||
+        block.size > m_fileBytes.size() - block.fileOffset)
+    {
+        NIFLOG_WARN(
+            "bhkCompressedMeshShapeData block {} is out of range",
+            blockIndex);
+        return;
+    }
+
+    const std::span<const std::uint8_t> bytes(
+        m_fileBytes.data() + block.fileOffset,
+        static_cast<std::size_t>(block.size));
+    std::vector<NifCollisionMaterial> materials;
+    if (!ParseBhkCompressedMeshMaterials(bytes, materials))
+    {
+        NIFLOG_WARN(
+            "bhkCompressedMeshShapeData block {} has a truncated "
+            "or invalid material table",
+            blockIndex);
+        return;
+    }
+    m_collisionMaterials[blockIndex] =
+        std::move(materials);
 }
 
 // --- BSLightingShaderProperty -----------------------------------------------

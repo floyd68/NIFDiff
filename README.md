@@ -124,6 +124,13 @@ documents every control in detail.
   the same-named mesh in every other pane and highlights what differs (with
   loose-vs-BSA source markers); the **Texture inspector** (`T`) shows each bound
   texture's format / size / source and previews its channels.
+- **Compare an entire skeleton or FaceGen hierarchy** with **Node Diff**
+  (`L`): every parsed node and bone - including non-renderable `NiNode`s - is
+  matched by hierarchy path and same-name sibling index. The virtualized table
+  reports local translation, quaternion rotation and scale, identifies added,
+  removed, reparented, ambiguous, absent and invalid nodes, supports hierarchy
+  search and filters for all/differences/presence/reparent/T/R/S/invalid, and
+  exports the complete report as CSV or JSON.
 - **Isolate a difference** with the CHANNELS toggles (Diffuse / Vertex Colors /
   Specular / Emissive / Lighting) - switch one input off at a time to find which
   one makes two panes look different - and the MATERIALS toggles (Parallax /
@@ -155,7 +162,7 @@ documents every control in detail.
 | `F` / `R` | Reset all views / active pane's view |
 | `C` | Focus the active pane's selected sub-mesh |
 | `G` `X` `W` `H` `N` `Shift+N` `M` | Grid / Axes / Wireframe / Hidden / Normals / Tangents / MSAA |
-| `I` / `T` | Material diff panel / Texture inspector |
+| `I` / `T` / `L` | Material diff panel / Texture inspector / full Node-Bone Transform Diff |
 | `1`-`8` / `Tab` / `Shift+Tab` | Select the active pane |
 | `Ctrl+O` / `Ctrl+Shift+O` | Open a file into the active pane / a new pane |
 | `Ctrl+W` (`Ctrl+F4`) / `Del` | Close the active pane / clear its document |
@@ -552,6 +559,17 @@ documents every control in detail.
   to copy that path to the clipboard. Click the header row to
   **collapse/expand** the panel (the `▾`/`▸` chevron), and drag the
   bottom-left grip to widen or narrow the value columns.
+- **Node / Bone Transform Diff** (`L` or PANES → `Node Diff...`): the active
+  NIF is the baseline for a bind-pose comparison of every parsed hierarchy
+  node. Exact paths use case-insensitive names plus same-parent sibling
+  indices; unique name/type fallbacks identify reparented nodes without
+  guessing among ambiguous duplicates. Mouse wheel/arrow/Page keys scroll,
+  Shift+wheel scrolls pane columns, typing filters hierarchy paths, Backspace
+  edits the search, and Escape closes the table. `Export...` writes an
+  Excel-friendly UTF-8 CSV or structured JSON report with authored T/Q/S
+  values, deltas, tolerances and match status. Click the filter button to cycle
+  All, Differences, Added/Removed, Reparented, Translation, Rotation, Scale and
+  Invalid views.
 - **Texture inspector** (`T` to toggle): lists the selected sub-mesh's
   bound texture slots with resolution, pixel format, mip count and the
   resolved source (loose file path vs BSA archive - mod-conflict

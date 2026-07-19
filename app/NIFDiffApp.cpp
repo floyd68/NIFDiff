@@ -7,6 +7,7 @@
 #include "AppSetup.h"
 #include "FileDialog.h"
 #include "ScreenshotUtil.h"
+#include "../core/NodeTransformExport.h"
 #include "../ui/IpcOpenRequest.h"
 #include "../ui/NifCompareView.h"
 #include "../ui/ImagePane.h" // ImagePane + ImageCore::AlphaUsage (alpha-usage override menu)
@@ -1297,6 +1298,76 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             if (bp && bp->Window() != nullptr)
                 SavePaneScreenshot(*bp, pane);
         });
+
+        compareView->SetOnNodeTransformExportRequested(
+            [weakBackplate](
+                const NodeTransformDiffReport& report)
+            {
+                auto bp = weakBackplate.lock();
+                if (!bp ||
+                    bp->Window() == nullptr ||
+                    report.panes.empty() ||
+                    report.baselinePane >=
+                        report.panes.size())
+                {
+                    return;
+                }
+
+                const std::filesystem::path source(
+                    report.panes[
+                        report.baselinePane]
+                        .sourcePath);
+                std::wstring initialFolder;
+                std::error_code ec;
+                if (!source.empty() &&
+                    std::filesystem::is_directory(
+                        source.parent_path(),
+                        ec))
+                {
+                    initialFolder =
+                        source.parent_path()
+                            .wstring();
+                }
+                std::wstring initialName =
+                    source.stem().empty()
+                        ? L"node-transform-diff"
+                        : source.stem().wstring() +
+                              L"-node-transform-diff";
+                std::wstring path;
+                NodeTransformExportFormat format =
+                    NodeTransformExportFormat::Csv;
+                if (!ShowSaveNodeTransformDialog(
+                        bp->Window(),
+                        initialFolder,
+                        initialName,
+                        path,
+                        format))
+                {
+                    return;
+                }
+
+                std::string error;
+                const bool saved =
+                    format ==
+                            NodeTransformExportFormat::Json
+                        ? ExportNodeTransformJson(
+                              report,
+                              path,
+                              &error)
+                        : ExportNodeTransformCsv(
+                              report,
+                              path,
+                              &error);
+                if (!saved)
+                {
+                    MessageBoxW(
+                        bp->Window(),
+                        L"Could not export the node transform diff.",
+                        L"NIFDiff",
+                        MB_OK |
+                            MB_ICONERROR);
+                }
+            });
 
         compareView->SetOnPaneOpenRequested([weakView, weakBackplate](ComparePane& pane)
         {

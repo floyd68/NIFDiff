@@ -10,6 +10,7 @@
 #include <ArchiveReader.h> // Floar: which archive extensions this build supports
 #include "ImageCore/ImageDecodeDispatcher.h" // which image extensions decode
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,107 @@ namespace
 
         outPath = path;
         CoTaskMemFree(path);
+        return true;
+    }
+
+    bool ShowSaveDialog(
+        void* ownerWindowHwnd,
+        const wchar_t* title,
+        const COMDLG_FILTERSPEC* filters,
+        UINT filterCount,
+        UINT initialFilterIndex,
+        const wchar_t* defaultExtension,
+        const std::wstring& initialFolder,
+        const std::wstring& initialFileName,
+        std::wstring& outPath,
+        UINT* outFilterIndex = nullptr)
+    {
+        using Microsoft::WRL::ComPtr;
+
+        ComPtr<IFileSaveDialog> dialog;
+        HRESULT hr = CoCreateInstance(
+            CLSID_FileSaveDialog,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&dialog));
+        if (FAILED(hr) || !dialog)
+        {
+            return false;
+        }
+        if (filters != nullptr &&
+            filterCount != 0)
+        {
+            dialog->SetFileTypes(
+                filterCount,
+                filters);
+            dialog->SetFileTypeIndex(
+                initialFilterIndex);
+        }
+        if (defaultExtension != nullptr)
+        {
+            dialog->SetDefaultExtension(
+                defaultExtension);
+        }
+        if (title != nullptr)
+        {
+            dialog->SetTitle(title);
+        }
+        if (!initialFileName.empty())
+        {
+            dialog->SetFileName(
+                initialFileName.c_str());
+        }
+        if (!initialFolder.empty())
+        {
+            ComPtr<IShellItem> folder;
+            if (SUCCEEDED(
+                    SHCreateItemFromParsingName(
+                        initialFolder.c_str(),
+                        nullptr,
+                        IID_PPV_ARGS(&folder))) &&
+                folder)
+            {
+                dialog->SetFolder(folder.Get());
+            }
+        }
+
+        DWORD flags = 0;
+        dialog->GetOptions(&flags);
+        dialog->SetOptions(
+            flags |
+            FOS_FORCEFILESYSTEM |
+            FOS_OVERWRITEPROMPT);
+        hr = dialog->Show(
+            reinterpret_cast<HWND>(
+                ownerWindowHwnd));
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
+        UINT filterIndex = initialFilterIndex;
+        dialog->GetFileTypeIndex(
+            &filterIndex);
+        ComPtr<IShellItem> item;
+        hr = dialog->GetResult(&item);
+        if (FAILED(hr) || !item)
+        {
+            return false;
+        }
+        PWSTR path = nullptr;
+        hr = item->GetDisplayName(
+            SIGDN_FILESYSPATH,
+            &path);
+        if (FAILED(hr) || !path)
+        {
+            return false;
+        }
+        outPath = path;
+        CoTaskMemFree(path);
+        if (outFilterIndex != nullptr)
+        {
+            *outFilterIndex = filterIndex;
+        }
         return true;
     }
 }
@@ -126,50 +228,70 @@ bool ShowPickFolderDialog(void* ownerWindowHwnd, const wchar_t* title, std::wstr
 bool ShowSavePngDialog(void* ownerWindowHwnd, const std::wstring& initialFolder,
                        const std::wstring& initialFileName, std::wstring& outPath)
 {
-    using Microsoft::WRL::ComPtr;
-
-    ComPtr<IFileSaveDialog> dialog;
-    HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
-    if (FAILED(hr) || !dialog)
-        return false;
-
     static constexpr COMDLG_FILTERSPEC kFilters[] =
     {
         { L"PNG image (*.png)", L"*.png" },
     };
-    dialog->SetFileTypes(static_cast<UINT>(std::size(kFilters)), kFilters);
-    dialog->SetFileTypeIndex(1);
-    dialog->SetDefaultExtension(L"png");
-    dialog->SetTitle(L"Save Screenshot");
-    if (!initialFileName.empty())
-        dialog->SetFileName(initialFileName.c_str());
-    if (!initialFolder.empty())
+    return ShowSaveDialog(
+        ownerWindowHwnd,
+        L"Save Screenshot",
+        kFilters,
+        static_cast<UINT>(
+            std::size(kFilters)),
+        1,
+        L"png",
+        initialFolder,
+        initialFileName,
+        outPath);
+}
+
+bool ShowSaveNodeTransformDialog(
+    void* ownerWindowHwnd,
+    const std::wstring& initialFolder,
+    const std::wstring& initialFileName,
+    std::wstring& outPath,
+    NodeTransformExportFormat& outFormat)
+{
+    static constexpr COMDLG_FILTERSPEC kFilters[] =
     {
-        ComPtr<IShellItem> folder;
-        if (SUCCEEDED(SHCreateItemFromParsingName(initialFolder.c_str(), nullptr, IID_PPV_ARGS(&folder))) && folder)
-            dialog->SetFolder(folder.Get());
+        { L"CSV table (*.csv)", L"*.csv" },
+        { L"JSON report (*.json)", L"*.json" },
+    };
+    UINT filterIndex = 1;
+    if (!ShowSaveDialog(
+            ownerWindowHwnd,
+            L"Export Node Transform Diff",
+            kFilters,
+            static_cast<UINT>(
+                std::size(kFilters)),
+            1,
+            L"csv",
+            initialFolder,
+            initialFileName,
+            outPath,
+            &filterIndex))
+    {
+        return false;
     }
+    outFormat =
+        filterIndex == 2
+            ? NodeTransformExportFormat::Json
+            : NodeTransformExportFormat::Csv;
 
-    DWORD flags = 0;
-    dialog->GetOptions(&flags);
-    dialog->SetOptions(flags | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
-
-    hr = dialog->Show(reinterpret_cast<HWND>(ownerWindowHwnd));
-    if (FAILED(hr))
-        return false;
-
-    ComPtr<IShellItem> item;
-    hr = dialog->GetResult(&item);
-    if (FAILED(hr) || !item)
-        return false;
-
-    PWSTR path = nullptr;
-    hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
-    if (FAILED(hr) || !path)
-        return false;
-
-    outPath = path;
-    CoTaskMemFree(path);
+    std::filesystem::path normalized(outPath);
+    const std::wstring desiredExtension =
+        outFormat ==
+                NodeTransformExportFormat::Json
+            ? L".json"
+            : L".csv";
+    if (normalized.extension().empty() ||
+        normalized.extension() == L".csv" ||
+        normalized.extension() == L".json")
+    {
+        normalized.replace_extension(
+            desiredExtension);
+        outPath = normalized.wstring();
+    }
     return true;
 }
 

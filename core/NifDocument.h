@@ -43,6 +43,7 @@
 // ============================================================================
 #pragma once
 
+#include "CollisionMetadata.h"
 #include "NifTypes.h"
 #include "NifItem.h"
 #include <array>
@@ -351,6 +352,7 @@ struct NifSceneNode
     // NiObjectNET Controller ref: head of this node's NiTimeController chain
     // (kNoRef when the node isn't animated) - see timeControllers().
     std::int32_t controllerRef = kNoRef;
+    std::int32_t collisionObjectRef = kNoRef;
 
     bool isShape = false;
     // NiAVObject Flags bit 0 ("Hidden"/App_Culled): the engine never draws
@@ -424,6 +426,12 @@ public:
     const std::unordered_map<std::int32_t, NifGeometry>& geometries() const { return m_geometries; }
     const std::unordered_map<std::int32_t, NifMaterial>& materials() const { return m_materials; }
     const std::unordered_map<std::int32_t, std::vector<std::string>>& textureSets() const { return m_textureSets; }
+    const std::unordered_map<std::int32_t, std::vector<NifCollisionMaterial>>& collisionMaterials() const
+    {
+        return m_collisionMaterials;
+    }
+    std::vector<NifCollisionMaterial> collisionMaterialsForNode(
+        int nodeIndex) const;
 
     // Skinning data, used by SceneBuilder::applySkinning() - see
     // NifSceneNode::hasSkinWeights / NifSkinData's comment for the math.
@@ -520,6 +528,21 @@ private:
     // data for a skinned Skyrim SE shape whose own BSTriShape vertex buffer
     // is empty.
     void parseNiSkinPartition(class NifIStream& in, int blockIndex);
+    void parseBhkCompressedMeshShapeData(
+        class NifIStream& in,
+        int blockIndex);
+    void parseBhkCollisionObject(
+        class NifIStream& in,
+        int blockIndex);
+    void parseBhkRigidBody(
+        class NifIStream& in,
+        int blockIndex);
+    void parseBhkShapeChild(
+        class NifIStream& in,
+        int blockIndex);
+    void parseBhkCompressedMeshShape(
+        class NifIStream& in,
+        int blockIndex);
     // Shared BSVertexDataSSE/BSVertexData per-vertex decode, used by both
     // parseBSTriShape's inline buffer and parseNiSkinPartition's global
     // vertex buffer (identical wire format - nif.xml's BSVertexDesc-driven
@@ -570,6 +593,11 @@ private:
     std::unordered_map<std::int32_t, NifGeometry> m_geometries;      // block index (NiTriShapeData/NiTriStripsData) -> geometry
     std::unordered_map<std::int32_t, NifMaterial> m_materials;       // block index (BSLightingShaderProperty/NiMaterialProperty) -> material
     std::unordered_map<std::int32_t, std::vector<std::string>> m_textureSets; // block index (BSShaderTextureSet) -> texture paths
+    std::unordered_map<std::int32_t, std::vector<NifCollisionMaterial>> m_collisionMaterials; // bhkCompressedMeshShapeData block -> chunk material table
+    std::unordered_map<std::int32_t, std::int32_t> m_collisionObjectBodyRefs;
+    std::unordered_map<std::int32_t, std::int32_t> m_collisionBodyShapeRefs;
+    std::unordered_map<std::int32_t, std::int32_t> m_collisionShapeChildRefs;
+    std::unordered_map<std::int32_t, std::int32_t> m_compressedShapeDataRefs;
     std::vector<int> m_roots;
 
     // Parse-time scratch state, resolved once (in buildHierarchyAndRoots())

@@ -65,6 +65,14 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_resetBtn->SetLabel(L"Reset View");
     panes->AddChild(m_resetBtn);
 
+    m_nodeTransformDiffBtn =
+        std::make_shared<FD2D::Button>(
+            L"NodeTransformDiff");
+    m_nodeTransformDiffBtn->SetLabel(
+        L"Node Diff...");
+    panes->AddChild(
+        m_nodeTransformDiffBtn);
+
     // --- VIEW: camera preset + cross-pane sync --------------------------
     auto view = makeGroup(L"View", L"VIEW");
 
@@ -433,6 +441,12 @@ void NifCompareControlPanel::OnRender(ID2D1RenderTarget* target)
 
 void NifCompareControlPanel::SetOnAddPane(std::function<void()> handler) { m_addPaneBtn->OnClick(std::move(handler)); }
 void NifCompareControlPanel::SetOnResetCameras(std::function<void()> handler) { m_resetBtn->OnClick(std::move(handler)); }
+void NifCompareControlPanel::SetOnNodeTransformDiff(
+    std::function<void()> handler)
+{
+    m_nodeTransformDiffBtn->OnClick(
+        std::move(handler));
+}
 
 void NifCompareControlPanel::SetOnSyncViewsChanged(std::function<void(bool)> handler) { m_syncViewsChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnSyncLightingChanged(std::function<void(bool)> handler) { m_syncLightingChk->OnCheckedChanged(std::move(handler)); }

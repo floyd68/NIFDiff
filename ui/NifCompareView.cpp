@@ -15,6 +15,8 @@
 #include <cwctype>
 #include <filesystem>
 #include <format>
+#include <limits>
+#include <tuple>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -56,6 +58,11 @@ NifCompareView::NifCompareView(const std::wstring& name)
     {
         ForEachViewport([](NifViewport& vp) { vp.ResetCamera(); });
     });
+    m_controls->SetOnNodeTransformDiff(
+        [this]()
+        {
+            ToggleNodeTransformDiff();
+        });
     m_controls->SetOnSyncViewsChanged([this](bool on) { m_syncViews = on; });
     m_controls->SetOnSyncLightingChanged([this](bool on) { m_syncLighting = on; });
     m_controls->SetOnSyncFilesChanged([this](bool on) { m_syncThumbnails = on; });
@@ -326,6 +333,8 @@ void NifCompareView::WireContent(PaneContent* c)
             RefreshExtendedMaterialControls();
             RefreshAnimationControls();
             UpdateIpcOpenSnapshot();
+            m_nodeTransformDiffDirty = true;
+            Invalidate();
         });
         // File-opened -> MRU is wired once at the ComparePane level (CreatePane),
         // so every content kind and the browse-a-container case share one channel.
@@ -803,6 +812,7 @@ void NifCompareView::SetActivePane(ComparePane* pane)
     if (m_activePane == pane)
         return;
     m_activePane = pane;
+    m_nodeTransformDiffDirty = true;
     RefreshAnimationControls(); // ANIMATION group mirrors the active pane's player
     NotifyActivePathChanged();
     Invalidate();
@@ -833,6 +843,11 @@ void NifCompareView::SetOnThumbnailStripSizeChanged(std::function<void(float)> h
 
 bool NifCompareView::OnInputEvent(const FD2D::InputEvent& event)
 {
+    if (HandleNodeTransformDiffInput(event))
+    {
+        return true;
+    }
+
     if (event.type == FD2D::InputEventType::MouseDoubleClick &&
         event.hasPoint &&
         event.button == FD2D::MouseButton::Left &&
@@ -1118,9 +1133,160 @@ namespace
         return L"…" + w.substr(w.size() - maxChars);
     }
 
+    struct NodePathSegment
+    {
+        std::string name;
+        int siblingIndex = 0;
+
+        bool operator==(
+            const NodePathSegment&) const = default;
+    };
+    using NodePath = std::vector<NodePathSegment>;
+
+    std::string LowerAscii(std::string value)
+    {
+        for (char& c : value)
+        {
+            c = static_cast<char>(
+                std::tolower(
+                    static_cast<unsigned char>(c)));
+        }
+        return value;
+    }
+
+    NodePath BuildNodePath(
+        const NifDocument& document,
+        int nodeIndex)
+    {
+        const std::vector<NifSceneNode>& nodes =
+            document.nodes();
+        NodePath reversed;
+        std::vector<bool> visited(nodes.size(), false);
+        while (nodeIndex >= 0 &&
+               static_cast<std::size_t>(nodeIndex) <
+                   nodes.size() &&
+               !visited[static_cast<std::size_t>(nodeIndex)])
+        {
+            visited[static_cast<std::size_t>(nodeIndex)] =
+                true;
+            const NifSceneNode& node =
+                nodes[static_cast<std::size_t>(nodeIndex)];
+            const std::string name = LowerAscii(node.name);
+            int siblingIndex = 0;
+            for (int i = 0; i < nodeIndex; ++i)
+            {
+                const NifSceneNode& candidate =
+                    nodes[static_cast<std::size_t>(i)];
+                if (candidate.parentIndex ==
+                        node.parentIndex &&
+                    LowerAscii(candidate.name) == name)
+                {
+                    ++siblingIndex;
+                }
+            }
+            reversed.push_back(
+                { name, siblingIndex });
+            nodeIndex = node.parentIndex;
+        }
+        std::reverse(
+            reversed.begin(),
+            reversed.end());
+        return reversed;
+    }
+
+    std::wstring FormatNodePath(
+        const NifDocument& document,
+        int nodeIndex)
+    {
+        const NodePath path =
+            BuildNodePath(document, nodeIndex);
+        std::wstring result;
+        for (const NodePathSegment& segment : path)
+        {
+            if (!result.empty())
+            {
+                result += L"/";
+            }
+            result += segment.name.empty()
+                ? L"(unnamed)"
+                : Utf8ToWideStr(segment.name);
+            if (segment.siblingIndex > 0)
+            {
+                result += std::format(
+                    L"[{}]",
+                    segment.siblingIndex);
+            }
+        }
+        return result;
+    }
+
     std::wstring F2(float v)  { return std::format(L"{:.2f}", v); }
     std::wstring Vec2Str(const Vector2& v) { return std::format(L"{:.2f}, {:.2f}", v[0], v[1]); }
+    std::wstring Vec3Str(const Vector3& v) { return std::format(L"{:.3f}, {:.3f}, {:.3f}", v[0], v[1], v[2]); }
     std::wstring Col3Str(const Color3& c)  { return std::format(L"{:.2f} {:.2f} {:.2f}", c[0], c[1], c[2]); }
+    std::wstring Mat3Str(const Matrix& m)
+    {
+        return std::format(
+            L"{:.3f} {:.3f} {:.3f} | {:.3f} {:.3f} {:.3f} | {:.3f} {:.3f} {:.3f}",
+            m(0, 0), m(0, 1), m(0, 2),
+            m(1, 0), m(1, 1), m(1, 2),
+            m(2, 0), m(2, 1), m(2, 2));
+    }
+    std::wstring CollisionMaterialsStr(
+        const NifDocument& document,
+        int nodeIndex)
+    {
+        std::vector<NifCollisionMaterial> values =
+            document.collisionMaterialsForNode(
+                nodeIndex);
+        const auto less =
+            [](const NifCollisionMaterial& lhs,
+               const NifCollisionMaterial& rhs)
+            {
+                return std::tie(
+                           lhs.material,
+                           lhs.layer,
+                           lhs.flags,
+                           lhs.group) <
+                    std::tie(
+                           rhs.material,
+                           rhs.layer,
+                           rhs.flags,
+                           rhs.group);
+            };
+        const auto equal =
+            [](const NifCollisionMaterial& lhs,
+               const NifCollisionMaterial& rhs)
+            {
+                return lhs.material == rhs.material &&
+                    lhs.layer == rhs.layer &&
+                    lhs.flags == rhs.flags &&
+                    lhs.group == rhs.group;
+            };
+        std::sort(values.begin(), values.end(), less);
+        values.erase(
+            std::unique(
+                values.begin(),
+                values.end(),
+                equal),
+            values.end());
+
+        std::wstring result;
+        for (const NifCollisionMaterial& value : values)
+        {
+            if (!result.empty())
+            {
+                result += L", ";
+            }
+            result += std::format(
+                L"0x{:08X} [L{} F{:02X} G{}]",
+                value.material,
+                static_cast<unsigned>(value.layer),
+                static_cast<unsigned>(value.flags),
+                value.group);
+        }
+        return result;
+    }
     std::wstring Hex32(std::uint32_t v)    { return std::format(L"{:08X}", v); }
 }
 
@@ -1145,8 +1311,16 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         const RenderMesh* mesh = nullptr;
         std::wstring header;
     };
-    std::string selNameLower = sel->nodeName;
-    for (char& c : selNameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const NifDocument* activeDocument =
+        active->Document();
+    const NodePath selectedPath =
+        activeDocument != nullptr
+            ? BuildNodePath(
+                  *activeDocument,
+                  sel->sourceNodeIndex)
+            : NodePath();
+    const std::string selNameLower =
+        LowerAscii(sel->nodeName);
 
     std::vector<Column> cols;
     int paneNo = 0;
@@ -1165,21 +1339,50 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         else
         {
             const std::vector<RenderMesh>& meshes = n->Viewport().Meshes();
-            for (const RenderMesh& m : meshes)
+            const NifDocument* document =
+                n->Document();
+            if (document != nullptr &&
+                !selectedPath.empty())
             {
-                std::string nameLower = m.nodeName;
-                for (char& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (nameLower == selNameLower)
+                for (const RenderMesh& m : meshes)
                 {
-                    col.mesh = &m;
-                    break;
+                    if (BuildNodePath(
+                            *document,
+                            m.sourceNodeIndex) ==
+                        selectedPath)
+                    {
+                        col.mesh = &m;
+                        break;
+                    }
+                }
+            }
+            // Hierarchy drift between variants can make an exact path
+            // unavailable. Retain the old name/index fallbacks, but only
+            // after the unambiguous hierarchy match.
+            if (col.mesh == nullptr)
+            {
+                for (const RenderMesh& m : meshes)
+                {
+                    if (LowerAscii(m.nodeName) ==
+                        selNameLower)
+                    {
+                        col.mesh = &m;
+                        break;
+                    }
                 }
             }
             if (col.mesh == nullptr)
             {
-                const int idx = active->Viewport().SelectedMeshIndex();
-                if (idx >= 0 && static_cast<std::size_t>(idx) < meshes.size())
-                    col.mesh = &meshes[static_cast<std::size_t>(idx)];
+                const int idx =
+                    active->Viewport().SelectedMeshIndex();
+                if (idx >= 0 &&
+                    static_cast<std::size_t>(idx) <
+                        meshes.size())
+                {
+                    col.mesh =
+                        &meshes[static_cast<std::size_t>(
+                            idx)];
+                }
             }
         }
         col.header = L"Pane " + std::to_wstring(paneNo) + (n == active ? L" ●" : L"");
@@ -1197,6 +1400,7 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         std::wstring label;
         std::vector<std::wstring> vals;
         bool differs = false;
+        std::vector<bool> cellDiffers;
         bool isTexture = false;                   // texture-slot rows get hover/copy
         std::vector<std::wstring> fullPaths;      // untruncated relative path per column
         std::vector<std::wstring> resolvedPaths;  // resolved source per column (loose abs / bsa)
@@ -1217,6 +1421,13 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
             return;
         for (const std::wstring& v : r.vals)
             r.differs = r.differs || v != r.vals.front();
+        r.cellDiffers.resize(r.vals.size(), false);
+        if (r.differs && !r.cellDiffers.empty())
+        {
+            r.cellDiffers.front() = true;
+            for (std::size_t i = 1; i < r.vals.size(); ++i)
+                r.cellDiffers[i] = r.vals[i] != r.vals.front();
+        }
         rows.push_back(std::move(r));
     };
     // Texture cells carry a resolve-source marker so two panes whose SAME
@@ -1262,27 +1473,126 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         r.label = label;
         r.isTexture = true;
         bool anyContent = false;
+        std::vector<std::string> identities;
         for (const Column& c : cols)
         {
             std::string rel = c.mesh != nullptr ? field(*c.mesh) : std::string();
             std::wstring disp = c.mesh != nullptr ? tex(rel, *c.pane) : std::wstring(L"-");
             std::wstring resolved;
+            std::string sourceKey;
             if (!rel.empty())
                 if (TextureRepository::Entry* e = c.pane->Viewport().TextureEntry(rel))
+                {
                     resolved = texResolved(e->sourceKey);
+                    sourceKey = e->sourceKey;
+                }
             anyContent = anyContent || !rel.empty();
             r.vals.push_back(std::move(disp));
             r.fullPaths.push_back(Utf8ToWideStr(rel));
             r.resolvedPaths.push_back(std::move(resolved));
+            // Compare the complete authored path plus the exact resolved
+            // source. The visible cell is intentionally abbreviated, so using
+            // it here would hide conflicts whose tails and "(bsa)/(loose)"
+            // markers happen to match.
+            identities.push_back(
+                c.mesh != nullptr
+                    ? rel + '\n' + sourceKey
+                    : std::string("\xff"));
         }
         if (!anyContent)
             return;
-        for (const std::wstring& v : r.vals)
-            r.differs = r.differs || v != r.vals.front();
+        for (const std::string& identity : identities)
+            r.differs = r.differs || identity != identities.front();
+        r.cellDiffers.resize(identities.size(), false);
+        if (r.differs && !r.cellDiffers.empty())
+        {
+            r.cellDiffers.front() = true;
+            for (std::size_t i = 1; i < identities.size(); ++i)
+                r.cellDiffers[i] =
+                    identities[i] != identities.front();
+        }
         rows.push_back(std::move(r));
     };
 
+    addRow(
+        L"Hierarchy",
+        [](const RenderMesh& m, NifComparePane& pane)
+        {
+            const NifDocument* document =
+                pane.Document();
+            return document
+                ? FormatNodePath(
+                      *document,
+                      m.sourceNodeIndex)
+                : std::wstring(L"-");
+        });
     addRow(L"Mesh",        [](const RenderMesh& m, NifComparePane&) { return Utf8ToWideStr(m.nodeName); });
+    const auto nodeTransform =
+        [](const RenderMesh& m, NifComparePane& pane)
+            -> const Transform*
+        {
+            const NifDocument* document = pane.Document();
+            if (document == nullptr ||
+                m.sourceNodeIndex < 0 ||
+                static_cast<std::size_t>(m.sourceNodeIndex) >=
+                    document->nodes().size())
+            {
+                return nullptr;
+            }
+            return &document
+                ->nodes()[static_cast<std::size_t>(
+                    m.sourceNodeIndex)]
+                .localTransform;
+        };
+    addRow(
+        L"Node Translate",
+        [nodeTransform](
+            const RenderMesh& m,
+            NifComparePane& pane)
+        {
+            const Transform* transform =
+                nodeTransform(m, pane);
+            return transform
+                ? Vec3Str(transform->translation)
+                : std::wstring(L"-");
+        });
+    addRow(
+        L"Node Rotation",
+        [nodeTransform](
+            const RenderMesh& m,
+            NifComparePane& pane)
+        {
+            const Transform* transform =
+                nodeTransform(m, pane);
+            return transform
+                ? Mat3Str(transform->rotation)
+                : std::wstring(L"-");
+        });
+    addRow(
+        L"Node Scale",
+        [nodeTransform](
+            const RenderMesh& m,
+            NifComparePane& pane)
+        {
+            const Transform* transform =
+                nodeTransform(m, pane);
+            return transform
+                ? std::format(L"{:.6f}", transform->scale)
+                : std::wstring(L"-");
+        });
+    addRow(
+        L"Collision Mats",
+        [](const RenderMesh& m, NifComparePane& pane)
+        {
+            const NifDocument* document =
+                pane.Document();
+            return document
+                ? CollisionMaterialsStr(
+                      *document,
+                      m.sourceNodeIndex)
+                : std::wstring();
+        },
+        true);
     addRow(L"Triangles",   [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.geometry ? m.geometry->triangles.size() : 0); });
     addRow(L"Shader",      [](const RenderMesh& m, NifComparePane& p) { return p.Viewport().ShaderKindFor(m); });
     addRow(L"Shader Type", [](const RenderMesh& m, NifComparePane&) { return std::to_wstring(m.material.shaderType); });
@@ -1296,6 +1606,7 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
     addTexRow(L"Env Mask",    [](const RenderMesh& m) -> const std::string& { return m.material.envMaskTexture; });
     addTexRow(L"Inner/Tint",  [](const RenderMesh& m) -> const std::string& { return m.material.innerTexture; });
     addTexRow(L"Backlight",   [](const RenderMesh& m) -> const std::string& { return m.material.backlightTexture; });
+    addTexRow(L"Greyscale",   [](const RenderMesh& m) -> const std::string& { return m.material.greyscaleTexture; });
     addRow(L"Spec Color",  [](const RenderMesh& m, NifComparePane&) { return Col3Str(m.material.specularColor); });
     addRow(L"Spec Strength", [](const RenderMesh& m, NifComparePane&) { return F2(m.material.specularStrength); });
     addRow(L"Glossiness",  [](const RenderMesh& m, NifComparePane&) { return F2(m.material.glossiness); });
@@ -1405,7 +1716,9 @@ void NifCompareView::DrawMaterialDiffPanel(ID2D1RenderTarget* target)
         for (std::size_t c = 0; c < row.vals.size(); ++c)
         {
             const float cx = panel.left + kPad + kLabelW + colW * c;
-            const bool highlight = row.differs && (c == 0 || row.vals[c] != row.vals.front());
+            const bool highlight =
+                c < row.cellDiffers.size() &&
+                row.cellDiffers[c];
             drawCell(row.vals[c], cx, y, colW, highlight ? kDiffCol : kValueCol);
             // Remember non-empty texture cells for hover/copy hit-testing.
             if (row.isTexture && c < row.fullPaths.size() && !row.fullPaths[c].empty())
@@ -1623,6 +1936,1062 @@ bool NifCompareView::ResolveTextureInspectorPreview(
         aspect = static_cast<float>(entry->width) / static_cast<float>(entry->height);
     }
     return entry != nullptr && entry->srv != nullptr;
+}
+
+void NifCompareView::RebuildNodeTransformDiffReport()
+{
+    std::vector<NodeTransformSnapshotSet> panes;
+    std::size_t baselinePane = 0;
+    int paneNumber = 0;
+    for (const auto& pane : m_panes)
+    {
+        ++paneNumber;
+        NifComparePane* nif = AsNif(pane);
+        if (nif == nullptr ||
+            nif->Document() == nullptr)
+        {
+            continue;
+        }
+        if (pane.get() == ActivePane())
+        {
+            baselinePane = panes.size();
+        }
+        panes.push_back(
+            BuildNodeTransformSnapshotSet(
+                *nif->Document(),
+                L"Pane " +
+                    std::to_wstring(paneNumber)));
+    }
+
+    if (panes.empty())
+    {
+        m_nodeTransformDiffReport.reset();
+    }
+    else
+    {
+        m_nodeTransformDiffReport =
+            BuildNodeTransformDiffReport(
+                std::move(panes),
+                baselinePane);
+    }
+    m_nodeTransformFirstRow = 0;
+    m_nodeTransformHorizontalScroll = 0.0f;
+    m_nodeTransformDiffDirty = false;
+}
+
+void NifCompareView::DrawNodeTransformDiffPanel(
+    ID2D1RenderTarget* target)
+{
+    m_nodeTransformPanelLive = false;
+    m_nodeTransformPanelRect = {};
+    m_nodeTransformCloseRect = {};
+    m_nodeTransformFilterRect = {};
+    m_nodeTransformExportRect = {};
+    if (!m_showNodeTransformDiff ||
+        target == nullptr)
+    {
+        return;
+    }
+    if (m_nodeTransformDiffDirty)
+    {
+        RebuildNodeTransformDiffReport();
+    }
+    if (!m_matPanelText)
+    {
+        FD2D::Core::DWriteFactory()->CreateTextFormat(
+            L"Segoe UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            12.0f,
+            L"",
+            &m_matPanelText);
+        if (m_matPanelText)
+        {
+            m_matPanelText->SetWordWrapping(
+                DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+    }
+    if (!m_matPanelText)
+    {
+        return;
+    }
+
+    const D2D1_RECT_F view = LayoutRect();
+    const float width =
+        (std::max)(
+            420.0f,
+            view.right - view.left - 48.0f);
+    const float height =
+        (std::max)(
+            240.0f,
+            view.bottom - view.top - 72.0f);
+    const D2D1_RECT_F panel
+    {
+        view.left + 24.0f,
+        view.top + 36.0f,
+        view.left + 24.0f + width,
+        view.top + 36.0f + height,
+    };
+    m_nodeTransformPanelRect = panel;
+    m_nodeTransformPanelLive = true;
+
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(
+            target->CreateSolidColorBrush(
+                D2D1::ColorF(
+                    0.04f,
+                    0.045f,
+                    0.055f,
+                    0.97f),
+                &brush)))
+    {
+        return;
+    }
+    target->FillRectangle(
+        panel,
+        brush.Get());
+    brush->SetColor(
+        D2D1::ColorF(
+            1.0f,
+            1.0f,
+            1.0f,
+            0.25f));
+    target->DrawRectangle(
+        panel,
+        brush.Get(),
+        1.0f);
+
+    constexpr float kPad = 10.0f;
+    constexpr float kHeaderH = 32.0f;
+    constexpr float kToolsH = 28.0f;
+    constexpr float kColumnsH = 24.0f;
+    constexpr float kRowH = 22.0f;
+    constexpr float kStatusW = 92.0f;
+    constexpr float kPathW = 330.0f;
+    constexpr float kTypeW = 116.0f;
+    constexpr float kPaneW = 500.0f;
+
+    const auto drawText =
+        [&](const std::wstring& text,
+            const D2D1_RECT_F& rect,
+            const D2D1_COLOR_F& color)
+        {
+            brush->SetColor(color);
+            target->DrawTextW(
+                text.c_str(),
+                static_cast<UINT32>(
+                    text.size()),
+                m_matPanelText.Get(),
+                rect,
+                brush.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        };
+    const D2D1_COLOR_F normal =
+        D2D1::ColorF(
+            0.88f,
+            0.89f,
+            0.92f);
+    const D2D1_COLOR_F muted =
+        D2D1::ColorF(
+            0.58f,
+            0.62f,
+            0.68f);
+
+    drawText(
+        L"NODE / BONE TRANSFORM DIFF (L)",
+        {
+            panel.left + kPad,
+            panel.top + 8.0f,
+            panel.right - 80.0f,
+            panel.top + kHeaderH,
+        },
+        normal);
+    m_nodeTransformCloseRect =
+    {
+        panel.right - 34.0f,
+        panel.top + 5.0f,
+        panel.right - 8.0f,
+        panel.top + 29.0f,
+    };
+    drawText(
+        L"×",
+        m_nodeTransformCloseRect,
+        muted);
+
+    std::vector<std::size_t> filteredRows;
+    std::size_t differenceCount = 0;
+    std::wstring normalizedSearch =
+        m_nodeTransformSearch;
+    std::transform(
+        normalizedSearch.begin(),
+        normalizedSearch.end(),
+        normalizedSearch.begin(),
+        [](wchar_t c)
+        {
+            return static_cast<wchar_t>(
+                std::towlower(c));
+        });
+    const auto rowMatchesFilter =
+        [this](const NodeTransformDiffRow& row)
+        {
+            if (m_nodeTransformFilter ==
+                NodeTransformFilter::All)
+            {
+                return true;
+            }
+            if (m_nodeTransformFilter ==
+                NodeTransformFilter::Differences)
+            {
+                return row.differs();
+            }
+            for (const NodeTransformCell& cell :
+                 row.cells)
+            {
+                if (m_nodeTransformFilter ==
+                        NodeTransformFilter::Presence &&
+                    (cell.status ==
+                         NodeMatchStatus::Added ||
+                     cell.status ==
+                         NodeMatchStatus::Removed))
+                {
+                    return true;
+                }
+                if (m_nodeTransformFilter ==
+                        NodeTransformFilter::Reparented &&
+                    cell.status ==
+                        NodeMatchStatus::Reparented)
+                {
+                    return true;
+                }
+                if (m_nodeTransformFilter ==
+                        NodeTransformFilter::Invalid &&
+                    cell.status ==
+                        NodeMatchStatus::Invalid)
+                {
+                    return true;
+                }
+                if (!cell.delta ||
+                    !cell.delta->valid)
+                {
+                    continue;
+                }
+                if (m_nodeTransformFilter ==
+                        NodeTransformFilter::Translation &&
+                    cell.delta
+                        ->translationChanged)
+                {
+                    return true;
+                }
+                if (m_nodeTransformFilter ==
+                        NodeTransformFilter::Rotation &&
+                    cell.delta->rotationChanged)
+                {
+                    return true;
+                }
+                if (m_nodeTransformFilter ==
+                        NodeTransformFilter::Scale &&
+                    cell.delta->scaleChanged)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+    if (m_nodeTransformDiffReport)
+    {
+        const auto& rows =
+            m_nodeTransformDiffReport->rows;
+        filteredRows.reserve(rows.size());
+        for (std::size_t i = 0;
+             i < rows.size();
+             ++i)
+        {
+            if (rows[i].differs())
+            {
+                ++differenceCount;
+            }
+            std::wstring path =
+                Utf8ToWideStr(
+                    rows[i].displayPath);
+            std::transform(
+                path.begin(),
+                path.end(),
+                path.begin(),
+                [](wchar_t c)
+                {
+                    return static_cast<wchar_t>(
+                        std::towlower(c));
+                });
+            const bool searchMatches =
+                normalizedSearch.empty() ||
+                path.find(normalizedSearch) !=
+                    std::wstring::npos;
+            if (rowMatchesFilter(rows[i]) &&
+                searchMatches)
+            {
+                filteredRows.push_back(i);
+            }
+        }
+    }
+
+    const float toolsTop =
+        panel.top + kHeaderH;
+    m_nodeTransformFilterRect =
+    {
+        panel.left + kPad,
+        toolsTop + 3.0f,
+        panel.left + kPad + 150.0f,
+        toolsTop + 25.0f,
+    };
+    brush->SetColor(
+        m_nodeTransformFilter !=
+                NodeTransformFilter::All
+            ? D2D1::ColorF(
+                  0.20f,
+                  0.42f,
+                  0.68f,
+                  0.9f)
+            : D2D1::ColorF(
+                  0.15f,
+                  0.16f,
+                  0.18f,
+                  0.9f));
+    target->FillRectangle(
+        m_nodeTransformFilterRect,
+        brush.Get());
+    const wchar_t* filterLabel =
+        L"Differences";
+    switch (m_nodeTransformFilter)
+    {
+    case NodeTransformFilter::Differences:
+        filterLabel = L"Differences";
+        break;
+    case NodeTransformFilter::All:
+        filterLabel = L"All nodes";
+        break;
+    case NodeTransformFilter::Presence:
+        filterLabel = L"Added / Removed";
+        break;
+    case NodeTransformFilter::Reparented:
+        filterLabel = L"Reparented";
+        break;
+    case NodeTransformFilter::Translation:
+        filterLabel = L"Translation";
+        break;
+    case NodeTransformFilter::Rotation:
+        filterLabel = L"Rotation";
+        break;
+    case NodeTransformFilter::Scale:
+        filterLabel = L"Scale";
+        break;
+    case NodeTransformFilter::Invalid:
+        filterLabel = L"Invalid";
+        break;
+    }
+    drawText(
+        filterLabel,
+        {
+            m_nodeTransformFilterRect.left + 8.0f,
+            m_nodeTransformFilterRect.top + 3.0f,
+            m_nodeTransformFilterRect.right - 4.0f,
+            m_nodeTransformFilterRect.bottom,
+        },
+        normal);
+
+    m_nodeTransformExportRect =
+    {
+        m_nodeTransformFilterRect.right + 8.0f,
+        toolsTop + 3.0f,
+        m_nodeTransformFilterRect.right + 92.0f,
+        toolsTop + 25.0f,
+    };
+    brush->SetColor(
+        D2D1::ColorF(
+            0.15f,
+            0.16f,
+            0.18f,
+            0.9f));
+    target->FillRectangle(
+        m_nodeTransformExportRect,
+        brush.Get());
+    drawText(
+        L"Export...",
+        {
+            m_nodeTransformExportRect.left + 8.0f,
+            m_nodeTransformExportRect.top + 3.0f,
+            m_nodeTransformExportRect.right - 4.0f,
+            m_nodeTransformExportRect.bottom,
+        },
+        normal);
+
+    const D2D1_RECT_F searchRect
+    {
+        m_nodeTransformExportRect.right + 8.0f,
+        toolsTop + 3.0f,
+        m_nodeTransformExportRect.right + 228.0f,
+        toolsTop + 25.0f,
+    };
+    brush->SetColor(
+        D2D1::ColorF(
+            0.10f,
+            0.11f,
+            0.13f,
+            0.95f));
+    target->FillRectangle(
+        searchRect,
+        brush.Get());
+    drawText(
+        m_nodeTransformSearch.empty()
+            ? L"Type to search hierarchy..."
+            : m_nodeTransformSearch,
+        {
+            searchRect.left + 8.0f,
+            searchRect.top + 3.0f,
+            searchRect.right - 4.0f,
+            searchRect.bottom,
+        },
+        m_nodeTransformSearch.empty()
+            ? muted
+            : normal);
+
+    const std::size_t totalRows =
+        m_nodeTransformDiffReport
+            ? m_nodeTransformDiffReport->rows.size()
+            : 0;
+    drawText(
+        std::format(
+            L"{} nodes · {} differences",
+            totalRows,
+            differenceCount),
+        {
+            searchRect.right + 12.0f,
+            toolsTop + 6.0f,
+            panel.right - kPad,
+            toolsTop + 25.0f,
+        },
+        muted);
+
+    const float columnsTop =
+        toolsTop + kToolsH;
+    const D2D1_RECT_F body
+    {
+        panel.left + kPad,
+        columnsTop + kColumnsH,
+        panel.right - kPad,
+        panel.bottom - kPad,
+    };
+    const int visibleRows =
+        (std::max)(
+            1,
+            static_cast<int>(
+                (body.bottom - body.top) /
+                kRowH));
+    const int maxFirst =
+        (std::max)(
+            0,
+            static_cast<int>(
+                filteredRows.size()) -
+                visibleRows);
+    m_nodeTransformFirstRow =
+        (std::clamp)(
+            m_nodeTransformFirstRow,
+            0,
+            maxFirst);
+
+    const float fixedStart =
+        panel.left + kPad;
+    const float dataStart =
+        fixedStart +
+        kStatusW +
+        kPathW +
+        kTypeW;
+    const std::size_t paneCount =
+        m_nodeTransformDiffReport
+            ? m_nodeTransformDiffReport->panes.size()
+            : 0;
+    const float dataViewportW =
+        panel.right - kPad - dataStart;
+    const float dataContentW =
+        kPaneW *
+        static_cast<float>(paneCount);
+    const float maxHorizontal =
+        (std::max)(
+            0.0f,
+            dataContentW -
+                dataViewportW);
+    m_nodeTransformHorizontalScroll =
+        (std::clamp)(
+            m_nodeTransformHorizontalScroll,
+            0.0f,
+            maxHorizontal);
+
+    drawText(
+        L"Status",
+        {
+            fixedStart,
+            columnsTop + 3.0f,
+            fixedStart + kStatusW,
+            columnsTop + kColumnsH,
+        },
+        muted);
+    drawText(
+        L"Hierarchy",
+        {
+            fixedStart + kStatusW,
+            columnsTop + 3.0f,
+            fixedStart + kStatusW + kPathW,
+            columnsTop + kColumnsH,
+        },
+        muted);
+    drawText(
+        L"Type",
+        {
+            fixedStart + kStatusW + kPathW,
+            columnsTop + 3.0f,
+            dataStart,
+            columnsTop + kColumnsH,
+        },
+        muted);
+
+    target->PushAxisAlignedClip(
+        {
+            dataStart,
+            columnsTop,
+            panel.right - kPad,
+            panel.bottom - kPad,
+        },
+        D2D1_ANTIALIAS_MODE_ALIASED);
+    if (m_nodeTransformDiffReport)
+    {
+        for (std::size_t paneIndex = 0;
+             paneIndex < paneCount;
+             ++paneIndex)
+        {
+            const float x =
+                dataStart +
+                kPaneW *
+                    static_cast<float>(
+                        paneIndex) -
+                m_nodeTransformHorizontalScroll;
+            std::wstring header =
+                m_nodeTransformDiffReport
+                    ->panes[paneIndex]
+                    .label;
+            if (paneIndex ==
+                m_nodeTransformDiffReport
+                    ->baselinePane)
+            {
+                header += L"  (Baseline)";
+            }
+            drawText(
+                header,
+                {
+                    x + 6.0f,
+                    columnsTop + 3.0f,
+                    x + kPaneW - 6.0f,
+                    columnsTop + kColumnsH,
+                },
+                muted);
+        }
+    }
+    target->PopAxisAlignedClip();
+
+    target->PushAxisAlignedClip(
+        body,
+        D2D1_ANTIALIAS_MODE_ALIASED);
+    for (int visible = 0;
+         visible < visibleRows;
+         ++visible)
+    {
+        const int filteredIndex =
+            m_nodeTransformFirstRow +
+            visible;
+        if (filteredIndex >=
+            static_cast<int>(
+                filteredRows.size()) ||
+            !m_nodeTransformDiffReport)
+        {
+            break;
+        }
+        const NodeTransformDiffRow& row =
+            m_nodeTransformDiffReport
+                ->rows[filteredRows[
+                    static_cast<std::size_t>(
+                        filteredIndex)]];
+        const float y =
+            body.top +
+            kRowH *
+                static_cast<float>(visible);
+        if ((filteredIndex & 1) != 0)
+        {
+            brush->SetColor(
+                D2D1::ColorF(
+                    1.0f,
+                    1.0f,
+                    1.0f,
+                    0.035f));
+            target->FillRectangle(
+                {
+                    body.left,
+                    y,
+                    body.right,
+                    y + kRowH,
+                },
+                brush.Get());
+        }
+
+        NodeMatchStatus displayStatus =
+            NodeMatchStatus::Equal;
+        for (std::size_t paneIndex = 0;
+             paneIndex < row.cells.size();
+             ++paneIndex)
+        {
+            if (paneIndex ==
+                m_nodeTransformDiffReport
+                    ->baselinePane)
+            {
+                continue;
+            }
+            const NodeMatchStatus candidate =
+                row.cells[paneIndex].status;
+            if (candidate ==
+                    NodeMatchStatus::Ambiguous ||
+                candidate ==
+                    NodeMatchStatus::Invalid ||
+                candidate ==
+                    NodeMatchStatus::Reparented ||
+                candidate ==
+                    NodeMatchStatus::Added ||
+                candidate ==
+                    NodeMatchStatus::Removed)
+            {
+                displayStatus = candidate;
+                break;
+            }
+            if (candidate ==
+                NodeMatchStatus::Changed)
+            {
+                displayStatus = candidate;
+            }
+        }
+        D2D1_COLOR_F statusColor = normal;
+        switch (displayStatus)
+        {
+        case NodeMatchStatus::Changed:
+            statusColor =
+                D2D1::ColorF(
+                    1.0f,
+                    0.64f,
+                    0.24f);
+            break;
+        case NodeMatchStatus::Added:
+            statusColor =
+                D2D1::ColorF(
+                    0.38f,
+                    0.86f,
+                    0.48f);
+            break;
+        case NodeMatchStatus::Removed:
+            statusColor =
+                D2D1::ColorF(
+                    1.0f,
+                    0.38f,
+                    0.38f);
+            break;
+        case NodeMatchStatus::Reparented:
+        case NodeMatchStatus::Ambiguous:
+            statusColor =
+                D2D1::ColorF(
+                    0.78f,
+                    0.50f,
+                    1.0f);
+            break;
+        case NodeMatchStatus::Invalid:
+            statusColor =
+                D2D1::ColorF(
+                    1.0f,
+                    0.28f,
+                    0.45f);
+            break;
+        case NodeMatchStatus::NotPresent:
+        case NodeMatchStatus::Equal:
+            statusColor = muted;
+            break;
+        }
+        drawText(
+            NodeMatchStatusName(
+                displayStatus),
+            {
+                fixedStart,
+                y + 3.0f,
+                fixedStart + kStatusW - 4.0f,
+                y + kRowH,
+            },
+            statusColor);
+
+        const NodeTransformSnapshot* representative =
+            nullptr;
+        for (const NodeTransformCell& cell :
+             row.cells)
+        {
+            if (cell.node &&
+                cell.node->transformValid)
+            {
+                representative =
+                    &*cell.node;
+                break;
+            }
+        }
+        drawText(
+            Utf8ToWideStr(
+                row.displayPath),
+            {
+                fixedStart + kStatusW +
+                    static_cast<float>(
+                        row.depth) *
+                        10.0f,
+                y + 3.0f,
+                fixedStart + kStatusW +
+                    kPathW - 4.0f,
+                y + kRowH,
+            },
+            normal);
+        drawText(
+            representative
+                ? Utf8ToWideStr(
+                      representative->blockType)
+                : L"-",
+            {
+                fixedStart +
+                    kStatusW +
+                    kPathW,
+                y + 3.0f,
+                dataStart - 4.0f,
+                y + kRowH,
+            },
+            muted);
+
+        target->PushAxisAlignedClip(
+            {
+                dataStart,
+                y,
+                body.right,
+                y + kRowH,
+            },
+            D2D1_ANTIALIAS_MODE_ALIASED);
+        for (std::size_t paneIndex = 0;
+             paneIndex < row.cells.size();
+             ++paneIndex)
+        {
+            const float x =
+                dataStart +
+                kPaneW *
+                    static_cast<float>(
+                        paneIndex) -
+                m_nodeTransformHorizontalScroll;
+            const NodeTransformCell& cell =
+                row.cells[paneIndex];
+            std::wstring value = L"-";
+            if (cell.node)
+            {
+                const Transform& transform =
+                    cell.node->localTransform;
+                const Quat rotation =
+                    transform.rotation.toQuat();
+                value = std::format(
+                    L"T {:.4f},{:.4f},{:.4f}  "
+                    L"Q {:.4f},{:.4f},{:.4f},{:.4f}  "
+                    L"S {:.5f}",
+                    transform.translation[0],
+                    transform.translation[1],
+                    transform.translation[2],
+                    rotation[0],
+                    rotation[1],
+                    rotation[2],
+                    rotation[3],
+                    transform.scale);
+                if (cell.delta &&
+                    cell.delta->valid)
+                {
+                    value += std::format(
+                        L"   ΔT {:.5f}  ΔR {:.4f}°  ΔS {:.6f}",
+                        cell.delta
+                            ->translationLength,
+                        cell.delta
+                            ->rotationDegrees,
+                        cell.delta->scale);
+                }
+                else if (cell.delta)
+                {
+                    value += L"   Δ invalid";
+                }
+            }
+            else if (cell.node)
+            {
+                value = L"Invalid transform";
+            }
+            D2D1_COLOR_F cellColor = normal;
+            switch (cell.status)
+            {
+            case NodeMatchStatus::Changed:
+                cellColor =
+                    D2D1::ColorF(
+                        1.0f,
+                        0.64f,
+                        0.24f);
+                break;
+            case NodeMatchStatus::Added:
+                cellColor =
+                    D2D1::ColorF(
+                        0.38f,
+                        0.86f,
+                        0.48f);
+                break;
+            case NodeMatchStatus::Removed:
+                cellColor =
+                    D2D1::ColorF(
+                        1.0f,
+                        0.38f,
+                        0.38f);
+                break;
+            case NodeMatchStatus::Reparented:
+            case NodeMatchStatus::Ambiguous:
+                cellColor =
+                    D2D1::ColorF(
+                        0.78f,
+                        0.50f,
+                        1.0f);
+                break;
+            case NodeMatchStatus::Invalid:
+                cellColor =
+                    D2D1::ColorF(
+                        1.0f,
+                        0.28f,
+                        0.45f);
+                break;
+            case NodeMatchStatus::NotPresent:
+                cellColor = muted;
+                break;
+            case NodeMatchStatus::Equal:
+                cellColor = normal;
+                break;
+            }
+            drawText(
+                value,
+                {
+                    x + 6.0f,
+                    y + 3.0f,
+                    x + kPaneW - 6.0f,
+                    y + kRowH,
+                },
+                cellColor);
+        }
+        target->PopAxisAlignedClip();
+    }
+    target->PopAxisAlignedClip();
+
+    if (filteredRows.size() >
+        static_cast<std::size_t>(
+            visibleRows))
+    {
+        const float trackH =
+            body.bottom - body.top;
+        const float thumbH =
+            (std::max)(
+                24.0f,
+                trackH *
+                    static_cast<float>(
+                        visibleRows) /
+                    static_cast<float>(
+                        filteredRows.size()));
+        const float travel =
+            trackH - thumbH;
+        const float ratio =
+            maxFirst > 0
+                ? static_cast<float>(
+                      m_nodeTransformFirstRow) /
+                      static_cast<float>(
+                          maxFirst)
+                : 0.0f;
+        brush->SetColor(
+            D2D1::ColorF(
+                1.0f,
+                1.0f,
+                1.0f,
+                0.22f));
+        target->FillRectangle(
+            {
+                panel.right - 7.0f,
+                body.top + travel * ratio,
+                panel.right - 3.0f,
+                body.top + travel * ratio +
+                    thumbH,
+            },
+            brush.Get());
+    }
+}
+
+bool NifCompareView::HandleNodeTransformDiffInput(
+    const FD2D::InputEvent& event)
+{
+    if (!m_showNodeTransformDiff)
+    {
+        return false;
+    }
+    if (event.type ==
+            FD2D::InputEventType::KeyDown &&
+        event.keyCode == VK_ESCAPE)
+    {
+        m_showNodeTransformDiff = false;
+        Invalidate();
+        return true;
+    }
+    if (event.type ==
+        FD2D::InputEventType::KeyDown)
+    {
+        switch (event.keyCode)
+        {
+        case VK_BACK:
+            if (!m_nodeTransformSearch.empty())
+            {
+                m_nodeTransformSearch.pop_back();
+                m_nodeTransformFirstRow = 0;
+                Invalidate();
+            }
+            return true;
+        case VK_UP:
+            --m_nodeTransformFirstRow;
+            Invalidate();
+            return true;
+        case VK_DOWN:
+            ++m_nodeTransformFirstRow;
+            Invalidate();
+            return true;
+        case VK_PRIOR:
+            m_nodeTransformFirstRow -= 20;
+            Invalidate();
+            return true;
+        case VK_NEXT:
+            m_nodeTransformFirstRow += 20;
+            Invalidate();
+            return true;
+        case VK_HOME:
+            m_nodeTransformFirstRow = 0;
+            Invalidate();
+            return true;
+        case VK_END:
+            m_nodeTransformFirstRow =
+                (std::numeric_limits<int>::max)();
+            Invalidate();
+            return true;
+        default:
+            break;
+        }
+        if ((GetKeyState(VK_CONTROL) &
+             0x8000) != 0 &&
+            event.keyCode == 'F')
+        {
+            m_nodeTransformSearch.clear();
+            m_nodeTransformFirstRow = 0;
+            Invalidate();
+            return true;
+        }
+        if ((GetKeyState(VK_CONTROL) &
+             0x8000) == 0 &&
+            (GetKeyState(VK_MENU) &
+             0x8000) == 0)
+        {
+            wchar_t character = 0;
+            if (TryGetPrintableChar(
+                    event,
+                    character))
+            {
+                m_nodeTransformSearch.push_back(
+                    character);
+                m_nodeTransformFirstRow = 0;
+                Invalidate();
+                return true;
+            }
+        }
+    }
+    if (event.type ==
+            FD2D::InputEventType::MouseWheel &&
+        event.hasPoint &&
+        m_nodeTransformPanelLive &&
+        FD2D::Util::RectContainsPoint(
+            m_nodeTransformPanelRect,
+            event.point))
+    {
+        const float steps =
+            static_cast<float>(
+                event.wheelDelta) /
+            120.0f;
+        if ((GetKeyState(VK_SHIFT) &
+             0x8000) != 0)
+        {
+            m_nodeTransformHorizontalScroll -=
+                steps * 120.0f;
+        }
+        else
+        {
+            m_nodeTransformFirstRow -=
+                static_cast<int>(
+                    steps * 3.0f);
+        }
+        Invalidate();
+        return true;
+    }
+    if (event.hasPoint &&
+        m_nodeTransformPanelLive &&
+        FD2D::Util::RectContainsPoint(
+            m_nodeTransformPanelRect,
+            event.point))
+    {
+        if (event.type ==
+                FD2D::InputEventType::MouseDown &&
+            event.button ==
+                FD2D::MouseButton::Left)
+        {
+            if (FD2D::Util::RectContainsPoint(
+                    m_nodeTransformCloseRect,
+                    event.point))
+            {
+                m_showNodeTransformDiff = false;
+                Invalidate();
+                return true;
+            }
+            if (FD2D::Util::RectContainsPoint(
+                    m_nodeTransformFilterRect,
+                    event.point))
+            {
+                constexpr int kFilterCount = 8;
+                m_nodeTransformFilter =
+                    static_cast<
+                        NodeTransformFilter>(
+                        (static_cast<int>(
+                             m_nodeTransformFilter) +
+                         1) %
+                        kFilterCount);
+                m_nodeTransformFirstRow = 0;
+                Invalidate();
+                return true;
+            }
+            if (FD2D::Util::RectContainsPoint(
+                    m_nodeTransformExportRect,
+                    event.point) &&
+                m_nodeTransformDiffReport &&
+                m_onNodeTransformExportRequested)
+            {
+                m_onNodeTransformExportRequested(
+                    *m_nodeTransformDiffReport);
+                return true;
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 void NifCompareView::DrawTextureInspector(ID2D1RenderTarget* target)
@@ -2113,6 +3482,7 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
     DrawMaterialDiffPanel(target);
     DrawTextureInspector(target);
     DrawSyncBadges(target);
+    DrawNodeTransformDiffPanel(target);
 
     // Collapse/expand tab for the bottom control strip: a small centered
     // "drawer handle" sitting on the strip's top edge. Chevron points down
@@ -2324,6 +3694,10 @@ bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)
     case 'T': // texture inspector (shows while a sub-mesh is selected)
         m_showTextureInspector = !m_showTextureInspector;
         Invalidate();
+        return true;
+
+    case 'L': // full hierarchy bind-pose transform diff table
+        ToggleNodeTransformDiff();
         return true;
 
     // Display toggles go through the control panel so the checkboxes stay
@@ -2551,6 +3925,25 @@ void NifCompareView::SetOnScreenshotRequested(
     m_onScreenshotRequested = std::move(handler);
 }
 
+void NifCompareView::SetOnNodeTransformExportRequested(
+    std::function<void(
+        const NodeTransformDiffReport&)> handler)
+{
+    m_onNodeTransformExportRequested =
+        std::move(handler);
+}
+
+void NifCompareView::ToggleNodeTransformDiff()
+{
+    m_showNodeTransformDiff =
+        !m_showNodeTransformDiff;
+    if (m_showNodeTransformDiff)
+    {
+        m_nodeTransformDiffDirty = true;
+    }
+    Invalidate();
+}
+
 namespace
 {
     // Pre-order over the host tree, visiting every SplitPanel (both the
@@ -2645,6 +4038,7 @@ void NifCompareView::ToggleThumbnailStrip()
 
 void NifCompareView::RebuildHostTree()
 {
+    m_nodeTransformDiffDirty = true;
     // Every caller of this changes the pane COUNT (add / remove / initial
     // build), which changes the split-tree shape. Carrying the old splitter
     // ratios across a shape change only mis-maps them positionally (a 2-pane

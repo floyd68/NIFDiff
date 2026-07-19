@@ -18,6 +18,7 @@
 #include "NifCompareControlPanel.h"
 #include "NifCompareSplitCoordinator.h"
 #include "IpcOpenRequest.h"
+#include "../core/NodeTransformDiff.h"
 #include "../core/ResourceResolver.h"
 
 #include <SplitPanel.h>
@@ -27,6 +28,7 @@
 #include <wrl/client.h>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -209,6 +211,9 @@ public:
     // F12 shortcut target: the app shell owns the Save dialog + the actual
     // write (same flow as the context menu's "Save Pane Screenshot...").
     void SetOnScreenshotRequested(std::function<void(ComparePane&)> handler);
+    void SetOnNodeTransformExportRequested(
+        std::function<void(const NodeTransformDiffReport&)> handler);
+    void ToggleNodeTransformDiff();
 
     // Context-menu actions on a specific pane, invoked by the app shell's
     // menu handler. RequestOpenPane forwards to the SetOnPaneOpenRequested
@@ -313,10 +318,20 @@ private:
     // overlay table shows its BSLightingShaderProperty values - shader
     // type/flags, specular/emissive/alpha/UV scalars, texture slots -
     // side by side with the same-named mesh of every other loaded pane
-    // (index fallback, up to 4 columns), highlighting differing values.
+    // (index fallback, up to 4 columns), highlighting differing material,
+    // local node-transform, texture-source, and collision-material values.
     // Rebuilt from the live materials every frame it is visible, so no
     // refresh plumbing is needed. Toggled with the I key.
     void DrawMaterialDiffPanel(ID2D1RenderTarget* target);
+
+    // Full bind-pose node/bone comparison table. Unlike Material Diff this
+    // includes non-renderable NiNodes and is built from immutable document
+    // snapshots, with hierarchy-aware matching and virtualized row drawing.
+    void RebuildNodeTransformDiffReport();
+    void DrawNodeTransformDiffPanel(
+        ID2D1RenderTarget* target);
+    bool HandleNodeTransformDiffInput(
+        const FD2D::InputEvent& event);
 
     // Texture inspector (T key): for the active pane's selected sub-mesh,
     // a left-side overlay lists every bound texture slot with its
@@ -458,6 +473,8 @@ private:
     std::function<void(const std::wstring&)> m_onActivePathChanged;
     std::function<void(POINT, ComparePane*)> m_onContextMenuRequested;
     std::function<void(ComparePane&)> m_onScreenshotRequested;
+    std::function<void(const NodeTransformDiffReport&)>
+        m_onNodeTransformExportRequested;
 
     bool m_showMaterialPanel = true; // 'I' toggles; shown only while something is selected
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_matPanelText; // lazy, device-independent
@@ -492,6 +509,31 @@ private:
     bool HandleMaterialPanelCopy(const POINT& pt);
     bool HandleMaterialPanelMouseDown(const POINT& pt); // header toggle / grip drag / swallow
     void UpdateMaterialHover(const POINT& pt); // repaints when the hovered cell changes
+
+    bool m_showNodeTransformDiff = false; // 'L' toggles
+    bool m_nodeTransformDiffDirty = true;
+    enum class NodeTransformFilter
+    {
+        Differences,
+        All,
+        Presence,
+        Reparented,
+        Translation,
+        Rotation,
+        Scale,
+        Invalid,
+    };
+    NodeTransformFilter m_nodeTransformFilter =
+        NodeTransformFilter::Differences;
+    std::wstring m_nodeTransformSearch;
+    std::optional<NodeTransformDiffReport> m_nodeTransformDiffReport;
+    int m_nodeTransformFirstRow = 0;
+    float m_nodeTransformHorizontalScroll = 0.0f;
+    bool m_nodeTransformPanelLive = false;
+    D2D1_RECT_F m_nodeTransformPanelRect {};
+    D2D1_RECT_F m_nodeTransformCloseRect {};
+    D2D1_RECT_F m_nodeTransformFilterRect {};
+    D2D1_RECT_F m_nodeTransformExportRect {};
 
     // Texture inspector state (see DrawTextureInspector).
     bool m_showTextureInspector = false; // 'T' toggles
