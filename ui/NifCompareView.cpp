@@ -1987,6 +1987,7 @@ void NifCompareView::DrawNodeTransformDiffPanel(
     m_nodeTransformCloseRect = {};
     m_nodeTransformFilterRect = {};
     m_nodeTransformExportRect = {};
+    m_nodeTransformColumnGrips.clear();
     if (!m_showNodeTransformDiff ||
         target == nullptr)
     {
@@ -2068,10 +2069,27 @@ void NifCompareView::DrawNodeTransformDiffPanel(
     constexpr float kToolsH = 28.0f;
     constexpr float kColumnsH = 24.0f;
     constexpr float kRowH = 22.0f;
-    constexpr float kStatusW = 92.0f;
-    constexpr float kPathW = 330.0f;
-    constexpr float kTypeW = 116.0f;
-    constexpr float kPaneW = 500.0f;
+    constexpr float kDefaultPaneW = 500.0f;
+    const std::size_t paneCount =
+        m_nodeTransformDiffReport
+            ? m_nodeTransformDiffReport->panes.size()
+            : 0;
+    const std::size_t requiredColumnCount = 3 + paneCount;
+    if (m_nodeTransformColumnWidths.size() < requiredColumnCount)
+    {
+        m_nodeTransformColumnWidths.resize(
+            requiredColumnCount,
+            kDefaultPaneW);
+    }
+    else if (m_nodeTransformColumnWidths.size() >
+             requiredColumnCount)
+    {
+        m_nodeTransformColumnWidths.resize(
+            requiredColumnCount);
+    }
+    const float statusW = m_nodeTransformColumnWidths[0];
+    const float pathW = m_nodeTransformColumnWidths[1];
+    const float typeW = m_nodeTransformColumnWidths[2];
 
     const auto drawText =
         [&](const std::wstring& text,
@@ -2087,6 +2105,77 @@ void NifCompareView::DrawNodeTransformDiffPanel(
                 rect,
                 brush.Get(),
                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        };
+    const auto textFits =
+        [&](const std::wstring& text, float width)
+        {
+            if (width <= 0.0f)
+            {
+                return false;
+            }
+            Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+            if (FAILED(
+                    FD2D::Core::DWriteFactory()
+                        ->CreateTextLayout(
+                            text.c_str(),
+                            static_cast<UINT32>(
+                                text.size()),
+                            m_matPanelText.Get(),
+                            width,
+                            kRowH,
+                            &layout)))
+            {
+                return false;
+            }
+            DWRITE_TEXT_METRICS metrics {};
+            return SUCCEEDED(
+                       layout->GetMetrics(&metrics)) &&
+                metrics.widthIncludingTrailingWhitespace <=
+                    width;
+        };
+    const auto statusAbbreviation =
+        [](NodeMatchStatus status)
+        {
+            switch (status)
+            {
+            case NodeMatchStatus::Equal:
+                return L"E";
+            case NodeMatchStatus::Changed:
+                return L"C";
+            case NodeMatchStatus::Added:
+                return L"A";
+            case NodeMatchStatus::Removed:
+                return L"D";
+            case NodeMatchStatus::Reparented:
+                return L"R";
+            case NodeMatchStatus::Ambiguous:
+                return L"?";
+            case NodeMatchStatus::NotPresent:
+                return L"N";
+            case NodeMatchStatus::Invalid:
+                return L"I";
+            }
+            return L"?";
+        };
+    const auto abbreviateType =
+        [](const std::wstring& type)
+        {
+            std::wstring abbreviation;
+            for (wchar_t character : type)
+            {
+                if (std::iswupper(character))
+                {
+                    abbreviation.push_back(character);
+                }
+            }
+            if (abbreviation.empty() &&
+                !type.empty())
+            {
+                abbreviation.push_back(
+                    static_cast<wchar_t>(
+                        std::towupper(type.front())));
+            }
+            return abbreviation;
         };
     const D2D1_COLOR_F normal =
         D2D1::ColorF(
@@ -2404,18 +2493,30 @@ void NifCompareView::DrawNodeTransformDiffPanel(
         panel.left + kPad;
     const float dataStart =
         fixedStart +
-        kStatusW +
-        kPathW +
-        kTypeW;
-    const std::size_t paneCount =
-        m_nodeTransformDiffReport
-            ? m_nodeTransformDiffReport->panes.size()
-            : 0;
+        statusW +
+        pathW +
+        typeW;
     const float dataViewportW =
         panel.right - kPad - dataStart;
-    const float dataContentW =
-        kPaneW *
-        static_cast<float>(paneCount);
+    float dataContentW = 0.0f;
+    for (std::size_t paneIndex = 0;
+         paneIndex < paneCount;
+         ++paneIndex)
+    {
+        dataContentW +=
+            m_nodeTransformColumnWidths[3 + paneIndex];
+    }
+    const auto paneOffset =
+        [this](std::size_t paneIndex)
+        {
+            float offset = 0.0f;
+            for (std::size_t i = 0; i < paneIndex; ++i)
+            {
+                offset +=
+                    m_nodeTransformColumnWidths[3 + i];
+            }
+            return offset;
+        };
     const float maxHorizontal =
         (std::max)(
             0.0f,
@@ -2428,27 +2529,31 @@ void NifCompareView::DrawNodeTransformDiffPanel(
             maxHorizontal);
 
     drawText(
-        L"Status",
+        textFits(L"Status", statusW - 4.0f)
+            ? L"Status"
+            : L"S",
         {
             fixedStart,
             columnsTop + 3.0f,
-            fixedStart + kStatusW,
+            fixedStart + statusW,
             columnsTop + kColumnsH,
         },
         muted);
     drawText(
         L"Hierarchy",
         {
-            fixedStart + kStatusW,
+            fixedStart + statusW,
             columnsTop + 3.0f,
-            fixedStart + kStatusW + kPathW,
+            fixedStart + statusW + pathW,
             columnsTop + kColumnsH,
         },
         muted);
     drawText(
-        L"Type",
+        textFits(L"Type", typeW - 4.0f)
+            ? L"Type"
+            : L"T",
         {
-            fixedStart + kStatusW + kPathW,
+            fixedStart + statusW + pathW,
             columnsTop + 3.0f,
             dataStart,
             columnsTop + kColumnsH,
@@ -2471,10 +2576,11 @@ void NifCompareView::DrawNodeTransformDiffPanel(
         {
             const float x =
                 dataStart +
-                kPaneW *
-                    static_cast<float>(
-                        paneIndex) -
+                paneOffset(paneIndex) -
                 m_nodeTransformHorizontalScroll;
+            const float paneW =
+                m_nodeTransformColumnWidths[
+                    3 + paneIndex];
             std::wstring header =
                 m_nodeTransformDiffReport
                     ->panes[paneIndex]
@@ -2490,13 +2596,64 @@ void NifCompareView::DrawNodeTransformDiffPanel(
                 {
                     x + 6.0f,
                     columnsTop + 3.0f,
-                    x + kPaneW - 6.0f,
+                    x + paneW - 6.0f,
                     columnsTop + kColumnsH,
                 },
                 muted);
         }
     }
     target->PopAxisAlignedClip();
+
+    const auto addColumnGrip =
+        [&](float x, std::size_t column)
+        {
+            if (x < panel.left + kPad ||
+                x > panel.right - kPad)
+            {
+                return;
+            }
+            const D2D1_RECT_F grip
+            {
+                x - 4.0f,
+                columnsTop,
+                x + 4.0f,
+                columnsTop + kColumnsH,
+            };
+            m_nodeTransformColumnGrips.push_back(
+                { grip, column });
+            brush->SetColor(
+                D2D1::ColorF(
+                    1.0f,
+                    1.0f,
+                    1.0f,
+                    0.16f));
+            target->DrawLine(
+                { x, columnsTop + 3.0f },
+                { x, columnsTop + kColumnsH - 3.0f },
+                brush.Get(),
+                1.0f);
+        };
+    addColumnGrip(
+        fixedStart + statusW,
+        0);
+    addColumnGrip(
+        fixedStart + statusW + pathW,
+        1);
+    addColumnGrip(
+        dataStart,
+        2);
+    for (std::size_t paneIndex = 0;
+         paneIndex < paneCount;
+         ++paneIndex)
+    {
+        addColumnGrip(
+            dataStart +
+                paneOffset(paneIndex) +
+                m_nodeTransformColumnWidths[
+                    3 + paneIndex] -
+                m_nodeTransformHorizontalScroll,
+            3 + paneIndex);
+    }
 
     target->PushAxisAlignedClip(
         body,
@@ -2620,13 +2777,19 @@ void NifCompareView::DrawNodeTransformDiffPanel(
             statusColor = muted;
             break;
         }
+        const std::wstring statusText =
+            NodeMatchStatusName(displayStatus);
         drawText(
-            NodeMatchStatusName(
-                displayStatus),
+            textFits(
+                statusText,
+                statusW - 4.0f)
+                ? statusText
+                : statusAbbreviation(
+                      displayStatus),
             {
                 fixedStart,
                 y + 3.0f,
-                fixedStart + kStatusW - 4.0f,
+                fixedStart + statusW - 4.0f,
                 y + kRowH,
             },
             statusColor);
@@ -2648,25 +2811,33 @@ void NifCompareView::DrawNodeTransformDiffPanel(
             Utf8ToWideStr(
                 row.displayPath),
             {
-                fixedStart + kStatusW +
+                fixedStart + statusW +
                     static_cast<float>(
                         row.depth) *
                         10.0f,
                 y + 3.0f,
-                fixedStart + kStatusW +
-                    kPathW - 4.0f,
+                fixedStart + statusW +
+                    pathW - 4.0f,
                 y + kRowH,
             },
             normal);
-        drawText(
+        const std::wstring typeText =
             representative
                 ? Utf8ToWideStr(
                       representative->blockType)
-                : L"-",
+                : L"-";
+        const std::wstring abbreviatedType =
+            abbreviateType(typeText);
+        drawText(
+            textFits(
+                typeText,
+                typeW - 4.0f)
+                ? typeText
+                : abbreviatedType,
             {
                 fixedStart +
-                    kStatusW +
-                    kPathW,
+                    statusW +
+                    pathW,
                 y + 3.0f,
                 dataStart - 4.0f,
                 y + kRowH,
@@ -2687,10 +2858,11 @@ void NifCompareView::DrawNodeTransformDiffPanel(
         {
             const float x =
                 dataStart +
-                kPaneW *
-                    static_cast<float>(
-                        paneIndex) -
+                paneOffset(paneIndex) -
                 m_nodeTransformHorizontalScroll;
+            const float paneW =
+                m_nodeTransformColumnWidths[
+                    3 + paneIndex];
             const NodeTransformCell& cell =
                 row.cells[paneIndex];
             std::wstring value = L"-";
@@ -2783,7 +2955,7 @@ void NifCompareView::DrawNodeTransformDiffPanel(
                 {
                     x + 6.0f,
                     y + 3.0f,
-                    x + kPaneW - 6.0f,
+                    x + paneW - 6.0f,
                     y + kRowH,
                 },
                 cellColor);
@@ -2839,6 +3011,95 @@ bool NifCompareView::HandleNodeTransformDiffInput(
     if (!m_showNodeTransformDiff)
     {
         return false;
+    }
+    if (m_nodeTransformColumnResizing)
+    {
+        if (event.type ==
+                FD2D::InputEventType::MouseMove &&
+            event.hasPoint)
+        {
+            const float delta =
+                static_cast<float>(
+                    event.point.x -
+                    m_nodeTransformResizeStartX);
+            const float minimum =
+                m_nodeTransformResizeColumn == 0 ||
+                        m_nodeTransformResizeColumn == 2
+                    ? 18.0f
+                    : (m_nodeTransformResizeColumn == 1
+                           ? 80.0f
+                           : 180.0f);
+            const float maximum =
+                m_nodeTransformResizeColumn == 0
+                    ? 220.0f
+                    : (m_nodeTransformResizeColumn == 1
+                           ? (std::numeric_limits<float>::max)()
+                           : (m_nodeTransformResizeColumn == 2
+                                  ? 640.0f
+                                  : 900.0f));
+            m_nodeTransformColumnWidths[
+                m_nodeTransformResizeColumn] =
+                (std::clamp)(
+                    m_nodeTransformResizeStartWidth +
+                        delta,
+                    minimum,
+                    maximum);
+            Invalidate();
+            return true;
+        }
+        if (event.type ==
+                FD2D::InputEventType::MouseUp ||
+            event.type ==
+                FD2D::InputEventType::CaptureChanged)
+        {
+            m_nodeTransformColumnResizing = false;
+            if (event.type ==
+                FD2D::InputEventType::MouseUp)
+            {
+                ReleaseCapture();
+            }
+            return true;
+        }
+        if (event.type ==
+            FD2D::InputEventType::SetCursor)
+        {
+            SetCursor(
+                LoadCursor(
+                    nullptr,
+                    IDC_SIZEWE));
+            return true;
+        }
+        return true;
+    }
+    if (event.type ==
+            FD2D::InputEventType::SetCursor &&
+        m_nodeTransformPanelLive)
+    {
+        POINT cursor {};
+        FD2D::Backplate* backplate =
+            BackplateRef();
+        if (backplate != nullptr &&
+            backplate->Window() != nullptr &&
+            GetCursorPos(&cursor) &&
+            ScreenToClient(
+                backplate->Window(),
+                &cursor))
+        {
+            for (const NodeTransformColumnGrip& grip :
+                 m_nodeTransformColumnGrips)
+            {
+                if (FD2D::Util::RectContainsPoint(
+                        grip.rect,
+                        cursor))
+                {
+                    SetCursor(
+                        LoadCursor(
+                            nullptr,
+                            IDC_SIZEWE));
+                    return true;
+                }
+            }
+        }
     }
     if (event.type ==
             FD2D::InputEventType::KeyDown &&
@@ -2954,6 +3215,34 @@ bool NifCompareView::HandleNodeTransformDiffInput(
             event.button ==
                 FD2D::MouseButton::Left)
         {
+            for (const NodeTransformColumnGrip& grip :
+                 m_nodeTransformColumnGrips)
+            {
+                if (!FD2D::Util::RectContainsPoint(
+                        grip.rect,
+                        event.point))
+                {
+                    continue;
+                }
+                m_nodeTransformColumnResizing = true;
+                m_nodeTransformResizeColumn =
+                    grip.column;
+                m_nodeTransformResizeStartX =
+                    event.point.x;
+                m_nodeTransformResizeStartWidth =
+                    m_nodeTransformColumnWidths[
+                        grip.column];
+                if (FD2D::Backplate* backplate =
+                        BackplateRef())
+                {
+                    if (backplate->Window())
+                    {
+                        SetCapture(
+                            backplate->Window());
+                    }
+                }
+                return true;
+            }
             if (FD2D::Util::RectContainsPoint(
                     m_nodeTransformCloseRect,
                     event.point))
@@ -3482,7 +3771,6 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
     DrawMaterialDiffPanel(target);
     DrawTextureInspector(target);
     DrawSyncBadges(target);
-    DrawNodeTransformDiffPanel(target);
 
     // Collapse/expand tab for the bottom control strip: a small centered
     // "drawer handle" sitting on the strip's top edge. Chevron points down
@@ -3546,14 +3834,20 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
     }
 
     if (m_dragOverlayKind == DragOverlayKind::None || m_dragOverlayPane == nullptr)
+    {
+        DrawNodeTransformDiffPanel(target);
         return;
+    }
     // A deferred close during the drag could have destroyed the pane;
     // only draw over one that is still ours.
     bool alive = false;
     for (const auto& p : m_panes)
         alive = alive || p.get() == m_dragOverlayPane;
     if (!alive)
+    {
+        DrawNodeTransformDiffPanel(target);
         return;
+    }
 
     // FICture2's drag-controller overlay: translucent red = the drop
     // replaces this pane, translucent green over the insert zone (the
@@ -3571,6 +3865,10 @@ void NifCompareView::OnRenderOverlay(ID2D1RenderTarget* target)
         if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 1.0f, 0.0f, 0.18f), &brush)))
             target->FillRectangle(rc, brush.Get());
     }
+    // Modal Node Diff must be the final overlay. Pane selection glows, the
+    // control-strip drawer handle, and drag feedback otherwise paint over its
+    // table because they belong to this same overlay pass.
+    DrawNodeTransformDiffPanel(target);
 }
 
 bool NifCompareView::HandleShortcutKey(const FD2D::InputEvent& event)

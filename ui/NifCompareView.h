@@ -534,6 +534,22 @@ private:
     D2D1_RECT_F m_nodeTransformCloseRect {};
     D2D1_RECT_F m_nodeTransformFilterRect {};
     D2D1_RECT_F m_nodeTransformExportRect {};
+    struct NodeTransformColumnGrip
+    {
+        D2D1_RECT_F rect {};
+        std::size_t column = 0;
+    };
+    std::vector<float> m_nodeTransformColumnWidths
+    {
+        92.0f,
+        330.0f,
+        116.0f,
+    };
+    std::vector<NodeTransformColumnGrip> m_nodeTransformColumnGrips;
+    bool m_nodeTransformColumnResizing = false;
+    std::size_t m_nodeTransformResizeColumn = 0;
+    LONG m_nodeTransformResizeStartX = 0;
+    float m_nodeTransformResizeStartWidth = 0.0f;
 
     // Texture inspector state (see DrawTextureInspector).
     bool m_showTextureInspector = false; // 'T' toggles
