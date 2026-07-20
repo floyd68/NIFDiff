@@ -1,6 +1,6 @@
 [center][size=5][b]NIFDiff – Side-by-Side NIF Model Compare for Bethesda Games[/b][/size][/center]
 
-[center][size=6][url=https://github.com/floyd68/NIFDiff/releases/tag/v1.1.163]v1.1.163 Release[/url][/size][/center]
+[center][size=6][url=https://github.com/floyd68/NIFDiff/releases/tag/v1.2.168]v1.2.168 Release[/url][/size][/center]
 
 [b]NIFDiff[/b] opens up to [b]8 NIF meshes at once[/b] and keeps their cameras, lighting and file selection in sync — so you can see [i]exactly[/i] how two versions of a mesh differ. A parallax/PBR mod vs. vanilla, two mods fighting over the same asset, or a before/after of your own edit.
 
@@ -8,6 +8,15 @@ It is a standalone, Qt-free tool: a single [b]2.3 MB executable[/b], cold start 
 
 [center][size=4][b]📺 Demo Video[/b][/size]
 [youtube]Ho_BjrLK8lI[/youtube][/center]
+
+[size=4][b]🆕 v1.2.168 — Node & Bone Diff[/b][/size]
+
+[list]
+[*][b]Node / Bone Transform Diff[/b] (`L`) — compare the full NiNode hierarchy across panes: translation/rotation/scale changes, added/removed/reparented nodes, and ambiguous-match detection, with CSV/JSON export[/*]
+[*][b]Collision material comparison[/b] — Havok `bhkCompressedMeshShape` chunk materials are compared and surfaced right in the Material diff panel[/*]
+[*]Transform diff table columns are now resizable by drag, with compact labels for narrow status/type columns[/*]
+[*]Image panning is no longer clamped to the image bounds — pan freely regardless of zoom or rotation[/*]
+[/list]
 
 [size=4][b]🆕 v1.1.163 — Textures Join the Compare[/b][/size]
 
@@ -89,7 +98,7 @@ Press [b]T[/b] to list the selected mesh's bound textures with resolution, pixel
 Drop a `.dds`/`.png`/`.tga`/`.bmp` onto a pane (or click one in the thumbnail strip) and that pane becomes a full 2D image view — no separate window, no new pane, and the strip keeps browsing right where you left it. The strip steps straight into BSA/BA2/ZIP/7z/RAR archives too — a texture buried in an archive opens exactly like a loose file.
 
 [list]
-[*]Smooth pointer zoom, rotation-aware clamped pan, 90°/180° rotation, fit-to-screen and reset[/*]
+[*]Smooth pointer zoom, unrestricted pan (not clamped to the image bounds), 90°/180° rotation, fit-to-screen and reset[/*]
 [*]Switchable smooth/nearest sampling, and a live info bar (dimensions, format, zoom, rotation) — [b]I[/b] opens the full details, including mip level and source compression[/*]
 [*]Browse a DDS's mip chain directly ([b]Ctrl+[[/b] / [b]Ctrl+][/b], or the context menu) to see how a texture holds up at a smaller size[/*]
 [*]Checkerboard backdrop behind transparency, R/G/B/A channel isolation, and a per-pane Alpha Channel override for the rare texture the automatic transparency-vs-data policy gets wrong[/*]

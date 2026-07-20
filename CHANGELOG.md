@@ -7,6 +7,29 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
+## 1.2.168
+
+### Node & Bone Diff
+- New overlay panel (`L`) comparing the full NiNode hierarchy across panes:
+  translation/rotation/scale changes, added/removed/reparented nodes, and
+  ambiguous-match detection
+- Export the diff to CSV or JSON
+- Havok `bhkCompressedMeshShape` chunk materials are compared and surfaced in
+  the existing Material diff panel
+
+### Diff Table
+- Transform diff columns are resizable by drag, with compact labels kept for
+  narrow status/type columns
+
+### Images
+- Panning is no longer clamped to the image bounds - pan freely regardless of
+  zoom or rotation
+
+### Fixes
+- The Texture Inspector now consistently owns every mouse event over its
+  panel, including double-clicks, instead of some falling through to the
+  viewport underneath
+
 ## 1.1.163
 
 ### Textures

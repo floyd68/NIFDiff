@@ -170,7 +170,7 @@ documents every control in detail.
 | `Enter` / `Backspace` (`Ctrl+Up`) | Enter the selected folder / jump to the parent folder |
 | Type a name (strip focused) | Type-to-select: jump to the matching tile; repeat the key to cycle |
 | `Ctrl+E` / `F12` | Show active pane's file in Explorer / save its screenshot |
-| Image pane: wheel / drag / `F` | Smooth pointer zoom / clamped pan / fit to screen |
+| Image pane: wheel / drag / `F` | Smooth pointer zoom / free pan / fit to screen |
 | Image pane: `[` / `]` / `\`, `Ctrl+[` / `Ctrl+]`, `Alt+Q`, `I` | Rotate left/right/180°, previous/next DDS mip, sampling quality, image information |
 
 > Numpad view keys need NumLock on. Thumbnail-strip navigation acts on the
@@ -388,8 +388,9 @@ documents every control in detail.
   Because the strip is never torn down, picking a texture while browsing a NIF's
   folder (or a `.nif` while browsing textures) **swaps the content in place** and
   browsing continues - the strip's folder, scroll and selection survive the
-  swap. Image content supports **smooth pointer zoom**, rotation-aware
-  **clamped pan**, 90°/180° rotation, fit/reset commands, switchable
+  swap. Image content supports **smooth pointer zoom**, **unrestricted pan**
+  (not clamped to the image bounds - pan freely at any zoom or rotation),
+  90°/180° rotation, fit/reset commands, switchable
   smooth/nearest sampling, and a live dimensions/format/zoom information bar
   (`I` opens the same details, plus mip level and source compression, in a
   dialog). A DDS with a mip chain can be **browsed mip by mip**
@@ -565,7 +566,9 @@ documents every control in detail.
   indices; unique name/type fallbacks identify reparented nodes without
   guessing among ambiguous duplicates. Mouse wheel/arrow/Page keys scroll,
   Shift+wheel scrolls pane columns, typing filters hierarchy paths, Backspace
-  edits the search, and Escape closes the table. `Export...` writes an
+  edits the search, and Escape closes the table. Drag a column edge to resize
+  it, with compact labels kept for the narrow status/type columns. `Export...`
+  writes an
   Excel-friendly UTF-8 CSV or structured JSON report with authored T/Q/S
   values, deltas, tolerances and match status. Click the filter button to cycle
   All, Differences, Added/Removed, Reparented, Translation, Rotation, Scale and
