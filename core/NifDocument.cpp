@@ -333,6 +333,7 @@ void NifDocument::parseBlocks(NifIStream& in)
                              t == "BSDebrisNode" || t == "BSDamageStage" || t == "BSBlastNode");
         const bool isOldShape = (t == "NiTriShape" || t == "NiTriStrips");
         const bool isBSShape = (t == "BSTriShape" || t == "BSSubIndexTriShape" || t == "BSMeshLODTriShape");
+        const bool isDynamicBSShape = (t == "BSDynamicTriShape");
 
         if (isNode)
             parseNiNode(in, i, false);
@@ -345,9 +346,9 @@ void NifDocument::parseBlocks(NifIStream& in)
             parseNiTriShapeData(in, i);
         else if (t == "NiTriStripsData")
             parseNiTriStripsData(in, i);
-        else if (isBSShape)
+        else if (isBSShape || isDynamicBSShape)
         {
-            parseBSTriShape(in, i);
+            parseBSTriShape(in, i, isDynamicBSShape);
             NIFLOG_TRACE("block {}: shape '{}' (inline vertex buffer)", i, t);
         }
         else if (t == "BSLightingShaderProperty")
@@ -408,10 +409,12 @@ void NifDocument::parseBlocks(NifIStream& in)
             // offset comes from the header's Block Size table, not from
             // stream position, so unrecognised types are safely skipped
             // whole. Flag ones that look geometry-related loudly - a shape
-            // subclass missing from the isOldShape/isBSShape checks above
-            // (e.g. BSDynamicTriShape, BSSegmentedTriShape) silently
-            // contributes zero triangles, which is exactly the "some NIFs
-            // render, some show nothing" symptom this logging exists for.
+            // subclass missing from the isOldShape/isBSShape/isDynamicBSShape
+            // checks above (e.g. BSSegmentedTriShape) silently contributes
+            // zero triangles, which is exactly the "some NIFs render, some
+            // show nothing" symptom this logging exists for (BSDynamicTriShape
+            // itself was exactly this bug - see parseBSTriShape's isDynamic
+            // handling - until FaceGeom heads were found to render blank).
             if (looksGeometryRelated(t))
             {
                 NIFLOG_WARN("block {}: unrecognised geometry-like type '{}' (size={}) - "
@@ -667,7 +670,7 @@ void NifDocument::parseNiTriStripsData(NifIStream& in, int blockIndex)
 }
 
 // --- BSTriShape family (Skyrim SE / Fallout 4 inline vertex buffer) --------
-void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex)
+void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex, bool isDynamic)
 {
     AvObjectHeader hdr = readAvObjectHeader(in);
 
@@ -712,6 +715,49 @@ void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex)
             tri = in.triangle();                              // Triangles, line 8254
     }
 
+    // BSDynamicTriShape (nif.xml lines 7250-7253) appends a Vertex Data Size
+    // + Vertices (Vector4[]) tail after every BSTriShape field above. Skyrim
+    // SE uses this subclass for skinned shapes (e.g. FaceGeom heads): the
+    // inline vertex buffer's positions just read as degenerate/zero, and the
+    // real rest-pose positions live in this trailing array instead - the
+    // engine overwrites it with skinned results at runtime, but for a static
+    // viewer the on-disk values ARE the pose to show. Matches NifSkope's
+    // bsshape.cpp (isDynamic skips "Vertex Data" positions entirely and reads
+    // only from "Vertices"), so this replaces rather than merges with
+    // whatever readVertexDataBuffer already put in geo.positions.
+    //
+    // nif.xml gates the Vertices array on "Vertex Data Size > 0", but real
+    // FaceGeom content (e.g. ChildEyes/ChildMouth heads) has been observed
+    // with this field reading exactly 0 while a full, sane Num-Vertices-sized
+    // Vector4 array immediately follows (verified byte-for-byte against the
+    // block's own declared size). Treat the field as an unused placeholder
+    // and always read the array when isDynamic - gating on it silently
+    // leaves every position at (0,0,0), which is worse than the file's
+    // documented condition being merely imprecise.
+    if (isDynamic)
+    {
+        in.u32();                                             // "Vertex Data Size" (unused - see comment above)
+        if (numVertices > 0)
+        {
+            if (geo.positions.size() != numVertices)
+                geo.positions.resize(numVertices);
+            for (std::uint16_t v = 0; v < numVertices; ++v)
+            {
+                // Real FaceGeom content (verified against BooksOfSkyrim.esp's
+                // 000008AE.NIF) has component[0] of this Vector4 pinned to a
+                // tiny +-1 range across an ENTIRE head mesh - clearly not a
+                // spatial coordinate (a head needs ~15-25 units of spread on
+                // every axis for ears/nose/chin) - while components[1..3]
+                // reproduce a plausible head-shaped bounding box. Whatever
+                // component[0] actually is (a leading pad float, a w-first
+                // storage convention, a leftover slider value), the real
+                // position is (Vertices[v][1], [2], [3]), not (x, y, z).
+                Vector4 v4 = in.vector4();                     // "Vertices"
+                geo.positions[v] = Vector3(v4[1], v4[2], v4[3]);
+            }
+        }
+    }
+
     node.inlineGeometry = std::move(geo);
 
     m_blockIndexToNodeIndex[blockIndex] = static_cast<int>(m_nodes.size());
@@ -735,6 +781,7 @@ void NifDocument::readVertexDataBuffer(NifIStream& in, NifGeometry& geo, std::ui
     bool hasTangent = (attribBits & VF_TANGENT) != 0;
     bool hasColor = (attribBits & VF_COLORS) != 0;
     bool hasSkin = (attribBits & VF_SKINNED) != 0;
+    bool hasEyeData = (attribBits & VF_EYEDATA) != 0;
 
     geo.positions.resize(numVertices);
     if (hasUv) geo.uvs.resize(numVertices);
@@ -840,6 +887,13 @@ void NifDocument::readVertexDataBuffer(NifIStream& in, NifGeometry& geo, std::ui
                 vw.boneIndex = { i0, i1, i2, i3 };
             }
         }
+        if (hasEyeData)
+            in.f32();                                          // Eye Data (float) - eye-parallax scalar, last field
+                                                                 // per BSVertexDataSSE; unused by this renderer, but
+                                                                 // MUST be consumed - eye meshes (ChildEyes etc.) set
+                                                                 // this flag and skipping it silently desyncs every
+                                                                 // field read after it (surfaced as nonsense
+                                                                 // partition vertex/triangle counts downstream).
     }
 }
 
@@ -1879,7 +1933,26 @@ void NifDocument::buildHierarchyAndRoots()
             node.name, node.blockIndex, partRefIt->second,
             partGeoIt->second.positions.size(), partGeoIt->second.triangles.size());
 
-        node.inlineGeometry = partGeoIt->second; // copy: multiple shapes could in principle share a skin instance
+        // BSDynamicTriShape's own trailing Vertices tail (parseBSTriShape's
+        // isDynamic branch) can already have supplied real rest-pose
+        // positions here even though triangles are empty (Data Size == 0).
+        // Some vertex formats - eye meshes' VF_EYEDATA descriptor, observed
+        // in FaceGeom ChildEyes shapes - omit positions from the skin
+        // partition's global buffer entirely (no VF_VERTEX bit), so a
+        // wholesale overwrite would silently zero those meshes. Keep our own
+        // positions when we have a matching count; borrow everything else
+        // (triangles, uvs, normals, colors, tangents) from the partition.
+        if (!node.inlineGeometry.positions.empty() &&
+            node.inlineGeometry.positions.size() == partGeoIt->second.positions.size())
+        {
+            std::vector<Vector3> ownPositions = std::move(node.inlineGeometry.positions);
+            node.inlineGeometry = partGeoIt->second; // copy: multiple shapes could in principle share a skin instance
+            node.inlineGeometry.positions = std::move(ownPositions);
+        }
+        else
+        {
+            node.inlineGeometry = partGeoIt->second; // copy: multiple shapes could in principle share a skin instance
+        }
         node.geometryBlockIndex = kNoRef;        // SceneBuilder reads inlineGeometry uniformly once this is kNoRef
         node.skinPartitionRef = partRefIt->second;
 

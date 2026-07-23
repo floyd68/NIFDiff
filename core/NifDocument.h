@@ -492,7 +492,7 @@ private:
     void parseNiTriShapeOrStrips(class NifIStream& in, int blockIndex, bool isStrips);
     void parseNiTriShapeData(class NifIStream& in, int blockIndex);
     void parseNiTriStripsData(class NifIStream& in, int blockIndex);
-    void parseBSTriShape(class NifIStream& in, int blockIndex);
+    void parseBSTriShape(class NifIStream& in, int blockIndex, bool isDynamic = false);
     void parseBSLightingShaderProperty(class NifIStream& in, int blockIndex);
     void parseBSEffectShaderProperty(class NifIStream& in, int blockIndex);
     void parseBSShaderTextureSet(class NifIStream& in, int blockIndex);
