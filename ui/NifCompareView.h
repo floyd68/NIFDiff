@@ -276,6 +276,13 @@ public:
 
     void InvalidateTextureCaches();
 
+    // Re-runs SceneBuilder::build() for every open NIF pane against its
+    // already-loaded document (see NifViewport::RebuildScene()) - for a
+    // resolver-level settings change that affects scene geometry rather than
+    // textures (currently: the default skeleton override), so open panes
+    // refresh without needing the file reopened.
+    void ReloadAllSceneGeometry();
+
     // Resources panel callbacks (Game Data / overrides), forwarded to the
     // control strip.
     void SetOnBrowseGameData(std::function<void()> handler);
@@ -286,6 +293,11 @@ public:
         const std::wstring& text,
         const std::wstring& details = {});
     void SetOverrideCountLabel(std::size_t count);
+
+    // Default skeleton (FaceGen bone resolution) panel callbacks.
+    void SetOnSetDefaultSkeleton(std::function<void()> handler);
+    void SetOnClearDefaultSkeleton(std::function<void()> handler);
+    void SetDefaultSkeletonLabel(const std::wstring& text, const std::wstring& details = {});
 
 private:
     // Reuse a free (empty) pane, else add one; null at kMaxPanes. A pane holds

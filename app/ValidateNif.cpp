@@ -10,6 +10,7 @@
 #include "../core/NifDocument.h"
 #include "../core/SceneBuilder.h"
 #include "../core/AnimController.h"
+#include "../core/ResourceResolver.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -150,7 +151,14 @@ namespace
             }
         }
 
-        auto meshes = SceneBuilder::build(doc);
+        static ResourceResolver s_resolver;
+        static bool s_resolverInit = false;
+        if (!s_resolverInit)
+        {
+            s_resolver.SetGameDataRoots(ResourceResolver::DetectGameDataRoots());
+            s_resolverInit = true;
+        }
+        auto meshes = SceneBuilder::build(doc, false, &s_resolver);
         std::cout << std::format("  render meshes : {}\n", meshes.size());
         std::size_t totalVerts = 0, totalTris = 0;
         for (const auto& m : meshes)

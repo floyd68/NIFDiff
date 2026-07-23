@@ -356,11 +356,17 @@ add_executable(NifValidate
     core/AnimController.cpp
     core/SceneBuilder.h
     core/SceneBuilder.cpp
+    core/ResourceResolver.h
+    core/ResourceResolver.cpp
     core/NifLog.h
 )
 target_include_directories(NifValidate PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_link_libraries(NifValidate PRIVATE
+    Floar
+    advapi32
 )
 target_compile_definitions(NifValidate PRIVATE NOMINMAX)
 set_target_properties(NifValidate PROPERTIES
@@ -444,10 +450,13 @@ add_executable(ResourceResolveTest
     app/ResourceResolveTest.cpp
     core/ResourceResolver.h
     core/ResourceResolver.cpp
+    core/NifDocument.h
+    core/NifDocument.cpp
 )
 target_include_directories(ResourceResolveTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
-    # ResourceResolver.cpp now logs its archive-scan timings via core/NifLog.h
+    # ResourceResolver.cpp now logs its archive-scan timings via core/NifLog.h,
+    # and (since GetSkeletonDocument) links NifDocument.cpp directly.
     ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
 )
 target_link_libraries(ResourceResolveTest PRIVATE Floar advapi32)

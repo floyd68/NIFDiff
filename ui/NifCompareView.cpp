@@ -4812,6 +4812,11 @@ void NifCompareView::InvalidateTextureCaches()
     ForEachNifPane([](NifComparePane& n) { n.InvalidateTextureCache(); });
 }
 
+void NifCompareView::ReloadAllSceneGeometry()
+{
+    ForEachNifPane([](NifComparePane& n) { n.Viewport().RebuildScene(); });
+}
+
 void NifCompareView::SetOnBrowseGameData(std::function<void()> handler) { m_controls->SetOnBrowseGameData(std::move(handler)); }
 void NifCompareView::SetOnDetectGameData(std::function<void()> handler) { m_controls->SetOnDetectGameData(std::move(handler)); }
 void NifCompareView::SetOnAddOverrideFolder(std::function<void()> handler) { m_controls->SetOnAddOverrideFolder(std::move(handler)); }
@@ -4823,5 +4828,12 @@ void NifCompareView::SetGameDataLabel(
     m_controls->SetGameDataLabel(text, details);
 }
 void NifCompareView::SetOverrideCountLabel(std::size_t count) { m_controls->SetOverrideCountLabel(count); }
+
+void NifCompareView::SetOnSetDefaultSkeleton(std::function<void()> handler) { m_controls->SetOnSetDefaultSkeleton(std::move(handler)); }
+void NifCompareView::SetOnClearDefaultSkeleton(std::function<void()> handler) { m_controls->SetOnClearDefaultSkeleton(std::move(handler)); }
+void NifCompareView::SetDefaultSkeletonLabel(const std::wstring& text, const std::wstring& details)
+{
+    m_controls->SetDefaultSkeletonLabel(text, details);
+}
 
 } // namespace nsk

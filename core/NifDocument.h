@@ -391,6 +391,23 @@ struct NifSceneNode
     // this, since NifVertexSkinWeights is keyed by partition block index,
     // not skinInstanceRef.
     std::int32_t skinPartitionRef = kNoRef;
+
+    // True when this shape's own block was BSDynamicTriShape (parseBSTriShape's
+    // isDynamic branch) - Bethesda's marker for "the engine overwrites this
+    // shape's vertex positions at runtime" (FaceGen heads/eyes/mouth/hair are
+    // the practical case). Its NiSkinInstance bones are typically anchor
+    // placeholders with no real scene-graph position in a standalone file (the
+    // matching skeleton.nif supplies that at runtime), so matrix-palette
+    // skinning against THIS file's own bone nodes - correct for an ordinary
+    // BSTriShape - can shove any vertex weighted toward a non-anchor bone by
+    // that bone's uncompensated bind offset (observed: a FaceGen neck seam
+    // skinned partly to "NPC Spine2" rendering it displaced far above the
+    // head). SceneBuilder::applySkinning uses this flag to prefer resolving
+    // such a shape's bones by NAME against a separately loaded reference
+    // skeleton (ResourceResolver::GetSkeletonDocument) instead of this file's
+    // own placeholder nodes, falling back to the in-file resolution only when
+    // no skeleton is available or a bone's name isn't found in it.
+    bool isDynamicShape = false;
 };
 
 // Top-level parsed document: header info + curated block records. See the

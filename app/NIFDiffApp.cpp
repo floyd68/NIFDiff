@@ -690,6 +690,29 @@ namespace
                     (roots.size() == 1 ? L" game" : L" games"),
             details);
         view.SetOverrideCountLabel(resolver.OverrideFolders().size());
+
+        // Default skeleton label follows the active pane's game (same
+        // inference "Set Active..."/"Set Default Skeleton..." use) - there's
+        // no single count/summary that makes sense across games the way
+        // OverrideFolders' does, since the override is per-game.
+        BethesdaGame activeGame = BethesdaGame::Unknown;
+        if (ComparePane* active = view.ActivePane())
+        {
+            if (NifComparePane* nif = active->NifContent())
+                activeGame = nif->Viewport().Game();
+        }
+        if (activeGame == BethesdaGame::Unknown)
+        {
+            view.SetDefaultSkeletonLabel(std::wstring());
+        }
+        else
+        {
+            const std::wstring gameName = BethesdaGameName(activeGame);
+            const std::wstring overridePath = resolver.SkeletonOverride(activeGame);
+            view.SetDefaultSkeletonLabel(
+                gameName + (overridePath.empty() ? L" (auto-detect)" : L": " + overridePath),
+                overridePath);
+        }
     }
 
     const wchar_t* GameDataSettingKey(BethesdaGame game)
@@ -704,6 +727,21 @@ namespace
             return L"Fallout4Data";
         default:
             return L"GameData";
+        }
+    }
+
+    const wchar_t* SkeletonOverrideSettingKey(BethesdaGame game)
+    {
+        switch (game)
+        {
+        case BethesdaGame::SkyrimLE:
+            return L"SkeletonOverrideSkyrimLE";
+        case BethesdaGame::SkyrimSE:
+            return L"SkeletonOverrideSkyrimSE";
+        case BethesdaGame::Fallout4:
+            return L"SkeletonOverrideFallout4";
+        default:
+            return L"SkeletonOverride";
         }
     }
 
@@ -729,6 +767,11 @@ namespace
                 kSectionResources,
                 GameDataSettingKey(game),
                 path);
+            IniStore::SetString(
+                iniPath,
+                kSectionResources,
+                SkeletonOverrideSettingKey(game),
+                resolver.SkeletonOverride(game));
         }
         IniStore::SetString(
             iniPath,
@@ -789,6 +832,16 @@ namespace
         }
         resolver.SetOverrideFolders(IniStore::SplitPipeList(settings.GetString(kSectionResources, L"OverrideFolders")));
         resolver.SetGameDataRoots(std::move(roots)); // triggers ReloadArchives
+
+        for (const BethesdaGame game : {
+                 BethesdaGame::SkyrimLE,
+                 BethesdaGame::SkyrimSE,
+                 BethesdaGame::Fallout4 })
+        {
+            std::wstring skeletonPath = settings.GetString(kSectionResources, SkeletonOverrideSettingKey(game));
+            if (!skeletonPath.empty())
+                resolver.SetSkeletonOverride(game, std::move(skeletonPath));
+        }
     }
 
     bool SessionPathExists(const std::wstring& path)
@@ -1509,6 +1562,60 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             SaveResources(iniPath, *res);
             ApplyResourcesToUi(*view, *res);
             view->InvalidateTextureCaches();
+            bp->Render();
+        });
+
+        compareView->SetOnSetDefaultSkeleton([weakView, weakBackplate, weakResolver, iniPath]()
+        {
+            auto view = weakView.lock();
+            auto bp = weakBackplate.lock();
+            auto res = weakResolver.lock();
+            if (!view || !bp || !res) return;
+            BethesdaGame game = BethesdaGame::Unknown;
+            if (ComparePane* active = view->ActivePane())
+            {
+                if (NifComparePane* nif = active->NifContent())
+                    game = nif->Viewport().Game();
+            }
+            if (game == BethesdaGame::Unknown)
+            {
+                MessageBoxW(
+                    bp->Window(),
+                    L"Open a supported Skyrim LE, Skyrim SE, or Fallout 4 "
+                    L"NIF in the active pane before assigning its default "
+                    L"skeleton override.",
+                    L"NIFDiff - Default Skeleton",
+                    MB_ICONINFORMATION | MB_OK);
+                return;
+            }
+            std::wstring path;
+            if (!ShowOpenNifDialog(bp->Window(), path))
+                return;
+            res->SetSkeletonOverride(game, path);
+            SaveResources(iniPath, *res);
+            ApplyResourcesToUi(*view, *res);
+            view->ReloadAllSceneGeometry();
+            bp->Render();
+        });
+
+        compareView->SetOnClearDefaultSkeleton([weakView, weakBackplate, weakResolver, iniPath]()
+        {
+            auto view = weakView.lock();
+            auto bp = weakBackplate.lock();
+            auto res = weakResolver.lock();
+            if (!view || !bp || !res) return;
+            BethesdaGame game = BethesdaGame::Unknown;
+            if (ComparePane* active = view->ActivePane())
+            {
+                if (NifComparePane* nif = active->NifContent())
+                    game = nif->Viewport().Game();
+            }
+            if (game == BethesdaGame::Unknown)
+                return;
+            res->SetSkeletonOverride(game, L"");
+            SaveResources(iniPath, *res);
+            ApplyResourcesToUi(*view, *res);
+            view->ReloadAllSceneGeometry();
             bp->Render();
         });
 

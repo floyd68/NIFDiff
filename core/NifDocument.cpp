@@ -683,6 +683,7 @@ void NifDocument::parseBSTriShape(NifIStream& in, int blockIndex, bool isDynamic
     node.isHidden = (hdr.flags & 1u) != 0;
     node.isShape = true;
     node.geometryBlockIndex = kNoRef; // inline geometry, not a separate *Data block
+    node.isDynamicShape = isDynamic;
 
     // nif.xml lines 8242-8258.
     in.f32(); in.f32(); in.f32(); in.f32();                 // Bounding Sphere (NiBound), line 8242
@@ -1197,9 +1198,28 @@ void NifDocument::parseNiTransformInterpolator(NifIStream& in, int blockIndex)
 void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
 {
     std::uint32_t numPartitions = in.u32();               // Num Partitions, line 5099
-    std::uint32_t dataSize = in.u32();                     // Data Size, line 5100 (BS_SSE, physically stored)
-    std::uint32_t vertexSize = in.u32();                    // Vertex Size, line 5101 (BS_SSE, physically stored)
-    std::uint64_t vertexDesc = in.read<std::uint64_t>();    // Vertex Desc, line 5102
+
+    // Data Size / Vertex Size / Vertex Desc (lines 5100-5102) are gated
+    // ver="20.2.0.7" userver2="100" in nif.xml - i.e. BS_SSE (bsVersion==100)
+    // ONLY. Skyrim LE-format meshes (bsVersion==83, e.g. many FaceGen/
+    // replacer NIFs shipped for SE without re-exporting - stream version
+    // 20.2.0.7 but never upgraded to the SSE user-version-2) go straight
+    // from Num Partitions into the first SkinPartition struct. Reading these
+    // three fields unconditionally on an LE file desyncs the stream (the
+    // first partition's Num Vertices/Num Triangles/... get misread as a
+    // multi-megabyte "Data Size"), which was observed corrupting every
+    // partition after it - the ultimate cause of skinned shapes (FaceGen
+    // eyes/teeth) rendering stuck at the origin: parseNiSkinPartition's
+    // reconstructed weights vector silently ended up empty.
+    std::uint32_t dataSize = 0;
+    std::uint32_t vertexSize = 0;
+    std::uint64_t vertexDesc = 0;
+    if (m_bsVersion == kBsVerSSE)
+    {
+        dataSize = in.u32();                                // Data Size, line 5100 (BS_SSE only)
+        vertexSize = in.u32();                               // Vertex Size, line 5101 (BS_SSE only)
+        vertexDesc = in.read<std::uint64_t>();               // Vertex Desc, line 5102 (BS_SSE only)
+    }
     std::uint16_t attribBits = static_cast<std::uint16_t>((vertexDesc >> 44) & 0xFFFFull);
 
     NIFLOG_TRACE("parseNiSkinPartition: block {} numPartitions={} dataSize={} vertexSize={} attribBits=0x{:04x}",
@@ -1298,7 +1318,21 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
                 bi = in.u8();
         }
 
-        // BS_SSE-only trailing fields (nif.xml lines 2169-2172): LOD Level,
+        // "Unknown Short" (nif.xml line 1673), vercond="User Version 2 > 34".
+        // Empirically this "User Version 2" is NOT the same field as this
+        // parser's own m_bsVersion/kBsVerSSE (BS Version) for every case: the
+        // field is present for Skyrim LE-format content (bsVersion 83,
+        // confirmed by hex-diffing a real multi-partition legacy shape) but
+        // ABSENT for SE (100) - reading it unconditionally for SE files with
+        // more than one partition regressed a previously-working multi-
+        // partition BS_SSE shape (holes punched in a FaceGen head's face).
+        // Gate on < kBsVerSSE until FO4 content surfaces a concrete test case
+        // one way or the other. Missing this field (when it IS present) only
+        // ever matters for a NiSkinPartition with MORE THAN ONE partition: a
+        // single-partition block still ends in the wrong place, but nothing
+        // reads past it before the next top-level block's own seek.
+        if (m_bsVersion < kBsVerSSE)
+            in.u16();
         // Global VB, a per-partition Vertex Desc (redundant with the block-
         // level one above) and a Triangles Copy. None of these are needed,
         // but - unlike most other "trailing, unneeded" fields elsewhere in
@@ -1356,8 +1390,15 @@ void NifDocument::parseNiSkinPartition(NifIStream& in, int blockIndex)
             for (std::uint16_t lv = 0; lv < pNumVertices; ++lv)
             {
                 std::uint16_t gv = mapIdx(lv);
+                // weights was sized off the BS_SSE global vertex buffer
+                // (empty for a legacy/non-SSE partition with no embedded
+                // buffer - see numVerticesGlobal above), so it doesn't yet
+                // know this shape's real vertex count. Grow it to fit: gv
+                // indexes into the shape's own NiTriShapeData vertex array
+                // via this partition's Vertex Map, so the largest gv seen
+                // across every partition converges on that real count.
                 if (gv >= weights.size())
-                    continue;
+                    weights.resize(static_cast<std::size_t>(gv) + 1);
                 for (std::uint16_t slot = 0; slot < slotsToUse; ++slot)
                 {
                     std::size_t srcIdx = static_cast<std::size_t>(lv) * pNumWeightsPerVertex + slot;
@@ -1895,34 +1936,84 @@ void NifDocument::buildHierarchyAndRoots()
         }
     }
 
-    // Fall back to a skin partition's reconstructed geometry for skinned
-    // shapes whose own vertex buffer/geometry data block came back empty
-    // (Data Size == 0 - see parseBSTriShape/NifSceneNode::skinInstanceRef
-    // and parseNiSkinPartition's scope note). Deferred to here, after every
+    // Wire up per-vertex skin weights for every skinned shape, so
+    // SceneBuilder::applySkinning runs on it. Deferred to here, after every
     // block has been parsed, for the same file-order-independence reason as
-    // the texture/alpha resolution above.
+    // the texture/alpha resolution above. Two distinct shape families reach
+    // this loop:
+    //   - BS_SSE BSTriShape/BSDynamicTriShape: Data Size == 0 (see
+    //     parseBSTriShape), own geometry comes back empty, and the real
+    //     rest-pose vertices/triangles live only in the NiSkinPartition's
+    //     shared global buffer - reconstruct inlineGeometry from it.
+    //   - Legacy NiTriShape + NiSkinData (+ NiSkinPartition), still shipped
+    //     by many Skyrim LE-ported FaceGen/replacer meshes: its NiTriShapeData
+    //     block is ALWAYS fully populated (unlike BSTriShape's convention), so
+    //     ownGeometryEmpty is false and the two families used to be
+    //     conflated - a legacy shape's geometry looked complete, so it never
+    //     got hasSkinWeights=true and rendered rigidly at its raw bind-pose
+    //     node transform (observed: FaceGen eyes/teeth stuck at the origin
+    //     while the head - whose own node happens to already sit at the real
+    //     head position - looked fine by coincidence). This family needs the
+    //     SAME matrix-palette skinning, just using its own already-valid
+    //     geometry as the input instead of reconstructing it from the
+    //     partition.
     for (auto& node : m_nodes)
     {
         if (!node.isShape || node.skinInstanceRef < 0)
             continue;
 
         bool ownGeometryEmpty;
+        std::size_t ownVertexCount = 0;
         if (node.geometryBlockIndex != kNoRef)
         {
             auto geoIt = m_geometries.find(node.geometryBlockIndex);
             ownGeometryEmpty = (geoIt == m_geometries.end() ||
                 geoIt->second.positions.empty() || geoIt->second.triangles.empty());
+            if (geoIt != m_geometries.end())
+                ownVertexCount = geoIt->second.positions.size();
         }
         else
         {
             ownGeometryEmpty = node.inlineGeometry.positions.empty() || node.inlineGeometry.triangles.empty();
+            ownVertexCount = node.inlineGeometry.positions.size();
         }
-        if (!ownGeometryEmpty)
-            continue;
 
         auto partRefIt = m_skinInstanceToPartitionRef.find(node.skinInstanceRef);
         if (partRefIt == m_skinInstanceToPartitionRef.end() || partRefIt->second < 0)
             continue;
+
+        if (!ownGeometryEmpty)
+        {
+            // Legacy path: own geometry (NiTriShapeData, or an already-
+            // populated inline buffer) is the skinning input as-is - just
+            // wire up matching partition weights, if any.
+            auto weightsIt = m_skinPartitionWeights.find(partRefIt->second);
+            if (weightsIt != m_skinPartitionWeights.end() && weightsIt->second.size() <= ownVertexCount)
+            {
+                // The reconstructed weights vector is sized off the largest
+                // global vertex index any partition's Vertex Map actually
+                // references (see the per-partition loop above), which can
+                // legitimately fall short of this shape's own vertex count:
+                // some legacy-exported meshes carry a handful of trailing
+                // vertices no partition covers at all (observed: a hairline
+                // patch with 221 own vertices but only 210 covered by its two
+                // partitions - the last 11 are simply never referenced).
+                // Requiring an exact size match rejected the WHOLE shape for
+                // this, falling back to raw (un-skinned, wildly out-of-place)
+                // positions - inflating the scene bbox/camera framing even
+                // though the shape "looked fine" on screen (the few stray
+                // vertices were small/hidden). Pad with default (all-zero-
+                // weight) entries instead: applySkinning already leaves a
+                // zero-weight vertex at its raw stored position, which is
+                // the correct behavior for a genuinely unweighted vertex.
+                if (weightsIt->second.size() < ownVertexCount)
+                    weightsIt->second.resize(ownVertexCount);
+                node.skinPartitionRef = partRefIt->second;
+                node.hasSkinWeights = true;
+            }
+            continue;
+        }
+
         auto partGeoIt = m_skinPartitionGeometries.find(partRefIt->second);
         if (partGeoIt == m_skinPartitionGeometries.end() ||
             partGeoIt->second.positions.empty() || partGeoIt->second.triangles.empty())

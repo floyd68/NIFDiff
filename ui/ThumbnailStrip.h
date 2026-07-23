@@ -257,8 +257,8 @@ private:
     // Pool thread (STATIC - must not touch a possibly-dead strip): parse +
     // build + framing for one file, filling `out`. The parse goes through the
     // manager's shared NifCache so the doc is reused (pane + siblings parse once).
-    static void BuildParsedThumb(ResourceManager* manager, const std::wstring& path,
-                                 ParsedThumb& out);
+    static void BuildParsedThumb(ResourceManager* manager, const ResourceResolver* resolver,
+                                 const std::wstring& path, ParsedThumb& out);
     // Pool thread: pick the thumbnail camera (slight yaw) and a tight
     // orthographic frustum around the non-hidden geometry with equal margins,
     // filling out.view/proj/eyePos/aspect. `minB`/`maxB` are the world bounds.

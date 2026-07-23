@@ -70,6 +70,12 @@ public:
     // Shared Game Data / override / BSA resolver. Must outlive this viewport.
     void SetResourceResolver(ResourceResolver* resolver);
 
+    // Re-runs SceneBuilder::build() against the current document and swaps in
+    // the result. Public so a resolver-level settings change (e.g. the
+    // default skeleton override) can refresh already-open panes without
+    // reopening the file - see NifComparePane::RebuildScene().
+    void RebuildScene();
+
     // Shared cross-pane texture pool (owns the SRVs; this viewport's
     // TextureCache is only a resolution memo on top). Must outlive this
     // viewport and be set before it is attached to a backplate.
@@ -253,7 +259,6 @@ public:
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
 private:
-    void RebuildScene();
     // Post-build setup shared by RebuildScene and SetPrebuiltScene (async load):
     // async texture prefetch + camera framing from the current m_meshes.
     void FinishSceneLoad();

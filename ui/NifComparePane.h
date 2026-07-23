@@ -123,6 +123,10 @@ private:
     // its own file: the doc is parsed once and held here (pinning its entry).
     std::shared_ptr<const NifDocument> m_doc;
     ResourceManager* m_resourceManager = nullptr;
+    // Own copy (SetResourceResolver also forwards it to m_viewport): needed
+    // here too so SubmitParseJob can resolve the reference skeleton doc on
+    // the UI thread before capturing it into the pool job by value.
+    ResourceResolver* m_resolver = nullptr;
 
     // Async-load state. m_loadGen is this pane's ResourceManager generation;
     // Load bumps it so a superseded load (retarget) or a closed pane drops its

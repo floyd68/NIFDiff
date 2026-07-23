@@ -147,6 +147,13 @@ public:
         const std::wstring& details = {});
     void SetOverrideCountLabel(std::size_t count);
 
+    // Reference skeleton (FaceGen bone resolution - see
+    // ResourceResolver::GetSkeletonDocument). "Set..." picks an explicit
+    // override for the active pane's game; "Clear" reverts to auto-detect.
+    void SetOnSetDefaultSkeleton(std::function<void()> handler);
+    void SetOnClearDefaultSkeleton(std::function<void()> handler);
+    void SetDefaultSkeletonLabel(const std::wstring& text, const std::wstring& details = {});
+
     // Collapse every multi-column group (NAVIGATION, LIGHTING, ...) to a single
     // column when true - driven by NifCompareView from the window width so a
     // narrow layout stacks the columns instead of forcing wide rows.
@@ -210,6 +217,9 @@ private:
     std::shared_ptr<FD2D::Button> m_detectGameDataBtn;
     std::shared_ptr<FD2D::Button> m_addOverrideBtn;
     std::shared_ptr<FD2D::Button> m_clearOverridesBtn;
+    std::shared_ptr<FD2D::Text> m_skeletonLabel;
+    std::shared_ptr<FD2D::Button> m_setSkeletonBtn;
+    std::shared_ptr<FD2D::Button> m_clearSkeletonBtn;
 };
 
 } // namespace nsk

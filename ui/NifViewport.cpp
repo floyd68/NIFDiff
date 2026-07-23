@@ -34,6 +34,33 @@ namespace
     // lose the model beyond any recovery.
     constexpr float kFlyThroughLimit = 3.0f;
 
+    // Accumulates a mesh's world-space bbox into minB/maxB, bounding only
+    // vertices a triangle actually references - not every entry in the
+    // positions array. Some legacy-format shapes carry orphan trailing
+    // vertices no triangle indexes (observed: a NiTriShapeData patch with
+    // 221 stored vertices but only 210 used by its triangles - the other 11
+    // are leftover/unskinned data sitting far from the rest of the mesh).
+    // Walking every stored position would let such invisible junk vertices
+    // blow up the framed bbox (camera zoomed absurdly far out, or "focus on
+    // selection" flying off to the wrong distance) despite the model
+    // rendering fine, since they never actually draw.
+    void AccumulateTriBounds(const RenderMesh& mesh, Vector3& minB, Vector3& maxB, bool& any)
+    {
+        if (!mesh.geometry) return;
+        const auto& positions = mesh.geometry->positions;
+        for (const Triangle& tri : mesh.geometry->triangles)
+        {
+            for (const std::uint16_t idx : { tri.v1(), tri.v2(), tri.v3() })
+            {
+                if (idx >= positions.size()) continue;
+                Vector3 wp = mesh.worldTransform * positions[idx];
+                minB.boundMin(wp);
+                maxB.boundMax(wp);
+                any = true;
+            }
+        }
+    }
+
     // Rotate v about the world +Y axis by `a`, matching Camera::forwardVector's
     // yaw convention (yaw 0 = +Z, increasing yaw turns toward +X).
     Vector3 RotateAboutY(const Vector3& v, float a)
@@ -217,7 +244,7 @@ void NifViewport::RebuildScene()
 
     {
         StartupTrace::Phase p("    SceneBuilder::build");
-        m_meshes = SceneBuilder::build(*m_doc, m_showHiddenNodes);
+        m_meshes = SceneBuilder::build(*m_doc, m_showHiddenNodes, m_resolver);
     }
 
     FinishSceneLoad();
@@ -312,16 +339,7 @@ void NifViewport::FrameCameraToScene()
     Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
     bool any = false;
     for (const RenderMesh& mesh : m_meshes)
-    {
-        if (!mesh.geometry) continue;
-        for (const Vector3& p : mesh.geometry->positions)
-        {
-            Vector3 wp = mesh.worldTransform * p;
-            minB.boundMin(wp);
-            maxB.boundMax(wp);
-            any = true;
-        }
-    }
+        AccumulateTriBounds(mesh, minB, maxB, any);
     if (any)
     {
         // Frame the model's world-space bbox: orbit target at its center,
@@ -1114,16 +1132,7 @@ void NifViewport::FocusOnSelection()
     {
         Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
         bool any = false;
-        if (sel->geometry)
-        {
-            for (const Vector3& p : sel->geometry->positions)
-            {
-                Vector3 wp = sel->worldTransform * p;
-                minB.boundMin(wp);
-                maxB.boundMax(wp);
-                any = true;
-            }
-        }
+        AccumulateTriBounds(*sel, minB, maxB, any);
         if (any)
         {
             center = (minB + maxB) * 0.5f;
@@ -1150,13 +1159,7 @@ Vector3 NifViewport::SelectionCenterOrTarget() const
     {
         Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
         bool any = false;
-        for (const Vector3& p : sel->geometry->positions)
-        {
-            Vector3 wp = sel->worldTransform * p;
-            minB.boundMin(wp);
-            maxB.boundMax(wp);
-            any = true;
-        }
+        AccumulateTriBounds(*sel, minB, maxB, any);
         if (any)
             return (minB + maxB) * 0.5f;
     }
@@ -1169,13 +1172,7 @@ float NifViewport::NavFocusRadius() const
     {
         Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
         bool any = false;
-        for (const Vector3& p : sel->geometry->positions)
-        {
-            Vector3 wp = sel->worldTransform * p;
-            minB.boundMin(wp);
-            maxB.boundMax(wp);
-            any = true;
-        }
+        AccumulateTriBounds(*sel, minB, maxB, any);
         if (any)
             return (std::max)((maxB - minB).length() * 0.5f, 1e-3f);
     }

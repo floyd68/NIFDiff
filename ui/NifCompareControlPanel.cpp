@@ -404,6 +404,29 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     resRow->AddChild(m_clearOverridesBtn);
 
     resources->AddChild(resRow);
+
+    // Reference skeleton for FaceGen bone resolution (see
+    // ResourceResolver::GetSkeletonDocument): auto-detected per game unless
+    // overridden here.
+    m_skeletonLabel = std::make_shared<FD2D::Text>(L"SkeletonLabel");
+    m_skeletonLabel->SetText(L"Skeleton: (auto-detect)");
+    m_skeletonLabel->SetFont(L"Segoe UI", 12.5f);
+    m_skeletonLabel->SetFixedWidth(330.0f);
+    m_skeletonLabel->SetEllipsisTrimmingEnabled(true);
+    m_skeletonLabel->SetCopyTextOnRightClick(true);
+    resources->AddChild(m_skeletonLabel);
+
+    auto skelRow = makeRow(name + L"_SkelRow", 8.0f);
+
+    m_setSkeletonBtn = std::make_shared<FD2D::Button>(L"SetDefaultSkeleton");
+    m_setSkeletonBtn->SetLabel(L"Set Default Skeleton...");
+    skelRow->AddChild(m_setSkeletonBtn);
+
+    m_clearSkeletonBtn = std::make_shared<FD2D::Button>(L"ClearDefaultSkeleton");
+    m_clearSkeletonBtn->SetLabel(L"Clear");
+    skelRow->AddChild(m_clearSkeletonBtn);
+
+    resources->AddChild(skelRow);
 }
 
 void NifCompareControlPanel::SetCompact(bool compact)
@@ -593,6 +616,27 @@ void NifCompareControlPanel::SetGameDataLabel(
 void NifCompareControlPanel::SetOverrideCountLabel(std::size_t count)
 {
     m_overrideLabel->SetText(L"Overrides: " + std::to_wstring(count));
+}
+
+void NifCompareControlPanel::SetOnSetDefaultSkeleton(std::function<void()> handler) { m_setSkeletonBtn->OnClick(std::move(handler)); }
+void NifCompareControlPanel::SetOnClearDefaultSkeleton(std::function<void()> handler) { m_clearSkeletonBtn->OnClick(std::move(handler)); }
+
+void NifCompareControlPanel::SetDefaultSkeletonLabel(const std::wstring& text, const std::wstring& details)
+{
+    if (text.empty())
+    {
+        m_skeletonLabel->SetText(L"Skeleton: (auto-detect)");
+        m_skeletonLabel->SetTooltipText(L"");
+        m_skeletonLabel->SetCopyText(L"");
+        return;
+    }
+    constexpr UINT kMaxPathChars = 40;
+    wchar_t compact[512] {};
+    const bool compacted = text.size() > kMaxPathChars - 1
+        && PathCompactPathExW(compact, text.c_str(), kMaxPathChars, 0) && compact[0] != L'\0';
+    m_skeletonLabel->SetText(L"Skeleton: " + std::wstring(compacted ? compact : text.c_str()));
+    m_skeletonLabel->SetTooltipText(!details.empty() ? details : (compacted ? text : std::wstring()));
+    m_skeletonLabel->SetCopyText(!details.empty() ? details : text);
 }
 
 } // namespace nsk

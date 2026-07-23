@@ -16,10 +16,13 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace nsk
 {
+
+class NifDocument;
 
 enum class BethesdaGame : std::uint8_t
 {
@@ -150,6 +153,23 @@ public:
     static std::vector<std::wstring> DetectGameDataFolders();
     static std::vector<GameDataRoot> DetectGameDataRoots();
 
+    // Reference skeleton (skeleton.nif) for name-based bone resolution on
+    // FaceGen-style shapes whose own in-file bone nodes carry no real
+    // position (see SceneBuilder.cpp's applySkinning). An empty path means
+    // "auto-detect": resolve the game's standard
+    // "meshes/actors/character/character assets/skeleton.nif" via the same
+    // Find/Locate machinery textures already use. Setting (or clearing) an
+    // override drops that game's cached parse so the next GetSkeletonDocument
+    // call picks it up.
+    void SetSkeletonOverride(BethesdaGame game, std::wstring path);
+    std::wstring SkeletonOverride(BethesdaGame game) const;
+
+    // Loads and caches (per game, for the resolver's lifetime) the reference
+    // skeleton NifDocument - override path if set, else auto-detected.
+    // Returns nullptr if neither resolves or the file fails to parse; callers
+    // fall back to their current in-file bone resolution in that case.
+    [[nodiscard]] std::shared_ptr<const NifDocument> GetSkeletonDocument(BethesdaGame game) const;
+
 private:
     static std::string NormalizeRelative(std::string path);
     static std::string ApplyTexturesFixup(const std::string& path);
@@ -195,6 +215,14 @@ private:
     // writes to is torn down. ~ResourceResolver also waits explicitly.
     mutable std::mutex m_scanMutex;                 // guards the m_pendingScan handle
     mutable std::shared_future<void> m_pendingScan; // valid while a scan is queued/running
+
+    std::unordered_map<BethesdaGame, std::wstring> m_skeletonOverrides;
+    // Lazily populated by GetSkeletonDocument; mutable since it's a cache
+    // behind a logically-const accessor. A cleared/absent entry means "not
+    // loaded yet", not "confirmed missing" - a failed load also caches
+    // nullptr so a bad path/game isn't retried on every call.
+    mutable std::unordered_map<BethesdaGame, std::shared_ptr<const NifDocument>> m_skeletonCache;
+    mutable std::mutex m_skeletonMutex;
 };
 
 } // namespace nsk

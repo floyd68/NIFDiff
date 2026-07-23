@@ -1,5 +1,6 @@
 #include "ResourceResolver.h"
 
+#include "NifDocument.h"
 #include "NifLog.h"
 #include "StartupTrace.h"
 
@@ -845,6 +846,77 @@ std::vector<GameDataRoot> ResourceResolver::DetectGameDataRoots()
         }
     }
     return out;
+}
+
+void ResourceResolver::SetSkeletonOverride(BethesdaGame game, std::wstring path)
+{
+    std::lock_guard<std::mutex> lock(m_skeletonMutex);
+    if (path.empty())
+        m_skeletonOverrides.erase(game);
+    else
+        m_skeletonOverrides[game] = std::move(path);
+    m_skeletonCache.erase(game); // force GetSkeletonDocument to reload next call
+}
+
+std::wstring ResourceResolver::SkeletonOverride(BethesdaGame game) const
+{
+    std::lock_guard<std::mutex> lock(m_skeletonMutex);
+    auto it = m_skeletonOverrides.find(game);
+    return (it != m_skeletonOverrides.end()) ? it->second : std::wstring();
+}
+
+std::shared_ptr<const NifDocument> ResourceResolver::GetSkeletonDocument(BethesdaGame game) const
+{
+    {
+        std::lock_guard<std::mutex> lock(m_skeletonMutex);
+        if (auto it = m_skeletonCache.find(game); it != m_skeletonCache.end())
+            return it->second;
+    }
+
+    const std::wstring overridePath = SkeletonOverride(game);
+
+    auto doc = std::make_shared<NifDocument>();
+    bool loaded = false;
+    // A miss while the background archive scan is still running isn't
+    // definitive (the skeleton may live in an as-yet-unscanned BSA) - don't
+    // cache that so a later call retries instead of being stuck at "missing"
+    // for the resolver's whole lifetime.
+    bool definitive = true;
+    std::string loadError;
+
+    if (!overridePath.empty())
+    {
+        loaded = doc->loadFromFile(overridePath, &loadError);
+        if (!loaded)
+            NIFLOG_WARN("GetSkeletonDocument: override '{}' for {} failed to load ({})",
+                ToUtf8ForLog(overridePath), ToUtf8ForLog(BethesdaGameName(game)), loadError);
+    }
+    else
+    {
+        static constexpr char kSkeletonRelPath[] = "meshes/actors/character/character assets/skeleton.nif";
+        const ResourceBytes bytes = Find(kSkeletonRelPath, {}, game);
+        if (bytes.ok())
+        {
+            loaded = bytes.diskPath.empty()
+                ? doc->loadFromMemory(bytes.data, &loadError)
+                : doc->loadFromFile(bytes.diskPath, &loadError);
+            if (!loaded)
+                NIFLOG_WARN("GetSkeletonDocument: auto-detected skeleton for {} failed to parse ({})",
+                    ToUtf8ForLog(BethesdaGameName(game)), loadError);
+        }
+        else
+        {
+            definitive = IsArchiveScanReady();
+        }
+    }
+
+    std::shared_ptr<const NifDocument> result = loaded ? std::shared_ptr<const NifDocument>(std::move(doc)) : nullptr;
+    if (loaded || definitive)
+    {
+        std::lock_guard<std::mutex> lock(m_skeletonMutex);
+        m_skeletonCache[game] = result;
+    }
+    return result;
 }
 
 } // namespace nsk

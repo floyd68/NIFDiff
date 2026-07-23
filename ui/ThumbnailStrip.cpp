@@ -116,6 +116,29 @@ struct ThumbnailStrip::ImageThumbRequest
 
 namespace
 {
+    // Visits each vertex of `mesh` that a triangle actually references (world-
+    // transformed), calling `fn(worldPos)` for each - not every entry in the
+    // positions array. Some legacy-format shapes carry orphan trailing
+    // vertices no triangle indexes, left at raw/unskinned coordinates far
+    // from the rest of the mesh (see NifViewport.cpp's AccumulateTriBounds
+    // for the full story); walking every stored position lets such invisible
+    // junk vertices blow up thumbnail framing the same way it blew up the
+    // main viewport's camera.
+    template <typename Fn>
+    void ForEachTriVertex(const RenderMesh& mesh, Fn&& fn)
+    {
+        if (!mesh.geometry) return;
+        const auto& positions = mesh.geometry->positions;
+        for (const Triangle& tri : mesh.geometry->triangles)
+        {
+            for (const std::uint16_t idx : { tri.v1(), tri.v2(), tri.v3() })
+            {
+                if (idx < positions.size())
+                    fn(mesh.worldTransform * positions[idx]);
+            }
+        }
+    }
+
     constexpr float kPad = 8.0f;
     constexpr float kLabelH = 20.0f;
     constexpr float kGripThickness = 8.0f;  // drag-to-resize band on the inner edge
@@ -715,14 +738,15 @@ void ThumbnailStrip::EnqueuePending()
 
         std::shared_ptr<AsyncState> state = m_asyncState;
         const ResourceManager::Token token { state.get(), gen };
+        ResourceResolver* const resolver = m_resolver; // stable, app-owned - safe to capture like mgr
         mgr->Submit(ResourceManager::Priority::Thumbnail, token,
-            [mgr, state, gen, index, path, token]()
+            [mgr, resolver, state, gen, index, path, token]()
             {
                 // Pool thread: self-contained parse (no strip dereference).
                 auto parsed = std::make_shared<ParsedThumb>();
                 parsed->generation = gen;
                 parsed->index = index;
-                BuildParsedThumb(mgr, path, *parsed);
+                BuildParsedThumb(mgr, resolver, path, *parsed);
                 // UI apply, delivered only while this strip's gen is current.
                 mgr->PostCompletion(
                     token,
@@ -937,8 +961,8 @@ FD2D::Size ThumbnailStrip::Measure(FD2D::Size available)
     return m_desired;
 }
 
-void ThumbnailStrip::BuildParsedThumb(ResourceManager* manager, const std::wstring& path,
-                                     ParsedThumb& out)
+void ThumbnailStrip::BuildParsedThumb(ResourceManager* manager, const ResourceResolver* resolver,
+                                     const std::wstring& path, ParsedThumb& out)
 {
     // Pool thread: parse + build are free of shared state. The shared_ptr doc
     // must outlive the meshes, which borrow its geometry. STATIC on purpose -
@@ -953,17 +977,15 @@ void ThumbnailStrip::BuildParsedThumb(ResourceManager* manager, const std::wstri
     }
     // SceneBuilder excludes hidden meshes by default, so the bounds below
     // already ignore them.
-    std::vector<RenderMesh> meshes = SceneBuilder::build(*doc);
+    std::vector<RenderMesh> meshes = SceneBuilder::build(*doc, /*includeHidden=*/false, resolver);
     Vector3 minB(1e9f, 1e9f, 1e9f), maxB(-1e9f, -1e9f, -1e9f);
     bool any = false;
     for (const RenderMesh& mesh : meshes)
     {
-        if (!mesh.geometry) continue;
-        for (const Vector3& p : mesh.geometry->positions)
+        ForEachTriVertex(mesh, [&](const Vector3& wp)
         {
-            Vector3 wp = mesh.worldTransform * p;
             minB.boundMin(wp); maxB.boundMax(wp); any = true;
-        }
+        });
     }
     if (meshes.empty() || !any)
     {
@@ -1042,14 +1064,13 @@ void ThumbnailStrip::ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
     float vmaxX = -1e9f, vmaxY = -1e9f, vmaxZ = -1e9f;
     for (const RenderMesh& mesh : meshes)
     {
-        if (!mesh.geometry) continue;
-        for (const Vector3& p : mesh.geometry->positions)
+        ForEachTriVertex(mesh, [&](const Vector3& wp)
         {
-            const Vector3 vp = view * (mesh.worldTransform * p);
+            const Vector3 vp = view * wp;
             vminX = (std::min)(vminX, vp[0]); vmaxX = (std::max)(vmaxX, vp[0]);
             vminY = (std::min)(vminY, vp[1]); vmaxY = (std::max)(vmaxY, vp[1]);
             vminZ = (std::min)(vminZ, vp[2]); vmaxZ = (std::max)(vmaxZ, vp[2]);
-        }
+        });
     }
 
     const float cx = (vminX + vmaxX) * 0.5f, cy = (vminY + vmaxY) * 0.5f;

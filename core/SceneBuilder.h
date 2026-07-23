@@ -32,6 +32,8 @@
 namespace nsk
 {
 
+class ResourceResolver;
+
 // Default material used for shapes with no resolved BSLightingShaderProperty/
 // NiMaterialProperty (e.g. collision proxies, or a block type this parser
 // does not understand) so the renderer always has something to bind.
@@ -71,7 +73,15 @@ public:
     // bounds placeholders) in the scene - the engine never draws them, so
     // they are culled by default; the UI's "Hidden" display toggle opts
     // back in, NifSkope's Show Hidden equivalent.
-    [[nodiscard]] static std::vector<RenderMesh> build(const NifDocument& doc, bool includeHidden = false);
+    //
+    // resolver, if given, is used to look up a reference skeleton NifDocument
+    // (ResourceResolver::GetSkeletonDocument) for FaceGen-style shapes whose
+    // own in-file skin bones carry no real position - see applySkinning() in
+    // the .cpp. Left null, those shapes fall back to their in-file bone
+    // resolution as before (unaffected for ordinary skinned content, which
+    // never consults the skeleton doc regardless).
+    [[nodiscard]] static std::vector<RenderMesh> build(const NifDocument& doc, bool includeHidden = false,
+        const ResourceResolver* resolver = nullptr);
 
     // The fixed Z-up -> Y-up rotation baked into every mesh's worldTransform
     // (see axisCorrectionZupToYup in the .cpp). Exposed so the animation

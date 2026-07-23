@@ -143,7 +143,7 @@ bool NifComparePane::Load(const std::wstring& path, std::string* error)
         auto fresh = std::make_shared<NifDocument>();
         if (!LoadNifDocument(*fresh, path, error) || !fresh->isValid())
             return false;
-        AcceptLoaded(path, fresh, SceneBuilder::build(*fresh, m_viewport->ShowHiddenNodes()));
+        AcceptLoaded(path, fresh, SceneBuilder::build(*fresh, m_viewport->ShowHiddenNodes(), m_resolver));
         return true;
     }
 
@@ -176,11 +176,12 @@ void NifComparePane::SubmitParseJob(const std::wstring& path)
     m_loadGen = m_resourceManager->BumpGeneration(this);
     m_loadSubmitted = true;
     ResourceManager* const mgr = m_resourceManager;
+    ResourceResolver* const resolver = m_resolver; // stable, app-owned - safe to capture like mgr
     NifComparePane* const self = this;
     const std::uint64_t gen = m_loadGen;
     const bool includeHidden = m_viewport->ShowHiddenNodes();
     mgr->Submit(ResourceManager::Priority::ActivePane, { self, gen },
-        [mgr, self, gen, path, includeHidden]()
+        [mgr, resolver, self, gen, path, includeHidden]()
         {
             // Pool thread: parse (shared cache, IoGate-gated) + build, both free
             // of shared state. `self` is only forwarded to the UI completion,
@@ -189,7 +190,7 @@ void NifComparePane::SubmitParseJob(const std::wstring& path)
                 path, nullptr, ResourceManager::Priority::ActivePane, /*throttle=*/true);
             std::vector<RenderMesh> meshes;
             if (doc)
-                meshes = SceneBuilder::build(*doc, includeHidden);
+                meshes = SceneBuilder::build(*doc, includeHidden, resolver);
             mgr->PostCompletion({ self, gen },
                 [self, path, doc, meshes = std::move(meshes)]() mutable
                 { self->AcceptLoaded(path, std::move(doc), std::move(meshes)); });
@@ -285,6 +286,7 @@ NifComparePane::~NifComparePane()
 
 void NifComparePane::SetResourceResolver(ResourceResolver* resolver)
 {
+    m_resolver = resolver;
     m_viewport->SetResourceResolver(resolver);
 }
 

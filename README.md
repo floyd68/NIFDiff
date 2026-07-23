@@ -50,6 +50,13 @@ documents every control in detail.
   scoped to that game, so identical paths in different games cannot collide.
   Add **override folders** there for loose texture mods that should win over
   Game Data.
+- **Skeleton** (RESOURCES group): skinned shapes - FaceGen heads/eyes/mouth/
+  hair in particular - resolve their bones by name against a real reference
+  `skeleton.nif`, auto-detected per game from the registered Game Data root
+  (`meshes/actors/character/character assets/skeleton.nif`). **Set Default
+  Skeleton…** overrides that lookup with an explicit file (e.g. to compare
+  against `skeleton_female.nif`, or point at a custom rig); **Clear** reverts
+  to auto-detect. Changing it immediately reloads every open pane's geometry.
 - **Load a file** into a pane: drag a `.nif` from Explorer onto it, use the
   pane's Open button / right-click → Open, or `Ctrl+O`. Dropping onto the left
   ~75% of a pane *replaces* it; the right ~25% *inserts* a new pane. A pane
@@ -429,8 +436,15 @@ documents every control in detail.
 ### Bethesda resource pipeline
 
 - Loads Skyrim LE/SE and Fallout 4 NIFs for static bind-pose comparison
-  (no skinning/morphs/particles/controllers - see `SceneBuilder.h`'s
-  scope note).
+  (no bone *animation*/morphs/particles/controllers - see `SceneBuilder.h`'s
+  scope note). Skinned shapes (`BSTriShape`/`BSDynamicTriShape` and legacy
+  `NiTriShape`+`NiSkinData`+`NiSkinPartition`) get real static matrix-palette
+  skinning: each bone is resolved by name against a reference `skeleton.nif`
+  (auto-detected or manually set - see the Skeleton control above) rather
+  than the NIF's own bone nodes, which for FaceGen content are placeholders
+  with no real position (the actual skeletal pose lives only in that
+  separate file). Falls back to the NIF's own bone transforms when no
+  skeleton is available or a bone's name isn't found in it.
 - Textures resolve in engine order: override folders -> the NIF's own
   directory -> the NIF's **derived Data root** -> matching game's loose Data
   files -> matching game's BSA/BA2 archives (via Floar). Skyrim LE, Skyrim SE,
@@ -636,9 +650,10 @@ the long-standing Qt-based NIF editor:
   Skyrim LE/SE/FO4 block types - see the scope note this needs at the top
   of `NifDocument.h`).
 - `core/SceneBuilder.h/.cpp` is a much-reduced stand-in for NifSkope's
-  `src/gl/glscene.h`/`glnode.h` scenegraph (world-transform flattening
-  only; no skinning/morphs/particles/controllers needed for a static
-  bind-pose comparison).
+  `src/gl/glscene.h`/`glnode.h` scenegraph (world-transform flattening plus
+  static bind-pose matrix-palette skinning, matching NifSkope's
+  `BSShape::transformShapes()`; no morphs/particles/controllers needed for
+  a static comparison).
 - `render/RenderDevice.h/.cpp` (the single app-wide render core: shaders,
   state objects, IBL, fallback textures) with per-view `render/RenderTarget`
   framebuffers and `render/RenderMeshCache` geometry caches, plus

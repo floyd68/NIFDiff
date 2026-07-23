@@ -1,5 +1,7 @@
 #include "SceneBuilder.h"
 #include "NifLog.h"
+#include "ResourceResolver.h"
+#include <algorithm>
 #include <vector>
 
 namespace nsk
@@ -107,9 +109,33 @@ namespace
     // NifSkope's output, verified against a live NifSkope 2.0 Dev 7 render
     // of the same file with Do Skinning toggled both ways.
     //
+    // FaceGen-style shapes (BSDynamicTriShape - see NifSceneNode::isDynamicShape)
+    // skin to 1-2 "anchor" bones (e.g. "NPC Head [Head]", sometimes also
+    // "NPC Spine2 [Spn2]" for the neck seam) whose NiNode blocks exist in the
+    // facegen file itself but carry no real position - the actual skeletal
+    // pose lives in a separate skeleton.nif the game loads at runtime. A bone
+    // whose bind offset is non-trivial (e.g. Spine2's, used to map the mesh
+    // into its local frame) combined with that placeholder's identity
+    // transform shoves any vertex weighted toward it far from the rest of
+    // the mesh (observed: a neck seam skinned partly to Spine2 rendering
+    // displaced above the head). Resolving the SAME-NAMED bone in a real
+    // reference skeleton instead gives its true bind transform. Returns
+    // kNoRef if skeletonDoc is null or has no matching name - callers keep
+    // today's in-file resolution in that case.
+    int findBoneInSkeleton(const NifDocument* skeletonDoc, const std::string& boneName)
+    {
+        if (!skeletonDoc || boneName.empty())
+            return kNoRef;
+        const std::vector<NifSceneNode>& nodes = skeletonDoc->nodes();
+        auto it = std::find_if(nodes.begin(), nodes.end(),
+            [&boneName](const NifSceneNode& n) { return n.name == boneName; });
+        return (it != nodes.end()) ? static_cast<int>(it - nodes.begin()) : kNoRef;
+    }
+
     // Returns nullptr if the skin data this needs isn't fully resolvable, so
     // the caller falls back to the ordinary rigid path.
-    std::shared_ptr<NifGeometry> applySkinning(const NifDocument& doc, const NifSceneNode& node, const NifGeometry& geo)
+    std::shared_ptr<NifGeometry> applySkinning(const NifDocument& doc, const NifSceneNode& node,
+        const NifGeometry& geo, const NifDocument* skeletonDoc)
     {
         const auto& weightsMap = doc.skinPartitionWeights();
         auto weightsIt = weightsMap.find(node.skinPartitionRef);
@@ -133,8 +159,28 @@ namespace
         {
             int boneNodeIdx = doc.nodeIndexForBlock(boneBlocks[b]);
             Transform boneTrans; // identity if unresolved - matches NifSkope skipping unfound bones' contributions in effect
-            if (boneNodeIdx != kNoRef)
+
+            // Prefer the reference skeleton's real bone transform (matched by
+            // name) over this file's own bone node - see findBoneInSkeleton's
+            // comment. Not just a FaceGen quirk: the same "bone node exists
+            // but carries no real position" pattern turns up in ordinary
+            // skinned content too (observed: a Skyrim-LE-format (bsVersion 83)
+            // FaceGen conversion whose NPC Head/NPC Spine2 bones were both
+            // identity, stretching hair between their differing bind
+            // offsets). Falls back to the in-file resolution below when
+            // there's no skeleton doc or no same-named bone in it (e.g. a
+            // non-standard/custom bone) - verified this doesn't regress
+            // ordinary skinned armor (its own bone chain already matches the
+            // skeleton by construction, so resolving through either source
+            // lands on the same transform).
+            int skeletonBoneIdx = boneNodeIdx != kNoRef
+                ? findBoneInSkeleton(skeletonDoc, doc.nodes()[static_cast<std::size_t>(boneNodeIdx)].name)
+                : kNoRef;
+            if (skeletonBoneIdx != kNoRef)
+                boneTrans = localTransExcludingRoot(skeletonDoc->nodes(), skeletonBoneIdx);
+            else if (boneNodeIdx != kNoRef)
                 boneTrans = localTransExcludingRoot(doc.nodes(), boneNodeIdx);
+
             perBoneTransform[b] = boneTrans * skinData.boneOffsets[b];
         }
 
@@ -185,7 +231,8 @@ Matrix4 SceneBuilder::axisCorrection()
     return axisCorrectionZupToYup();
 }
 
-std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool includeHidden)
+std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool includeHidden,
+    const ResourceResolver* resolver)
 {
     std::vector<RenderMesh> out;
     const std::vector<NifSceneNode>& nodes = doc.nodes();
@@ -196,6 +243,12 @@ std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool include
     std::vector<std::int8_t> state(nodes.size(), 0);
     for (std::size_t i = 0; i < nodes.size(); ++i)
         computeWorldTransform(nodes, static_cast<int>(i), worldCache, state);
+
+    // Resolved once per build (not per-shape): GetSkeletonDocument caches the
+    // parsed skeleton, so this is cheap after the first call for this game.
+    std::shared_ptr<const NifDocument> skeletonDoc = resolver
+        ? resolver->GetSkeletonDocument(resolver->GameForNifPath(doc.filePath(), doc.bsVersion()))
+        : nullptr;
 
     const auto& geometries = doc.geometries();
     const auto& materials = doc.materials();
@@ -264,7 +317,7 @@ std::vector<RenderMesh> SceneBuilder::build(const NifDocument& doc, bool include
         mesh.geometry = geo;
 
         if (node.hasSkinWeights)
-            mesh.ownedGeometry = applySkinning(doc, node, *geo);
+            mesh.ownedGeometry = applySkinning(doc, node, *geo, skeletonDoc.get());
 
         if (mesh.ownedGeometry)
         {
