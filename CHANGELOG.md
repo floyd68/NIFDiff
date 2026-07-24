@@ -7,6 +7,12 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
+## 1.3.171
+
+### FaceGen
+- Support for FaceGen face geometry (heads/eyes/mouth/hair) - previously
+  unsupported, now compares and renders correctly
+
 ## 1.2.168
 
 ### Node & Bone Diff

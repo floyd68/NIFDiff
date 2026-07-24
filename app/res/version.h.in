@@ -12,4 +12,4 @@
 #pragma once
 
 #define NIFDIFF_VERSION_MAJOR 1
-#define NIFDIFF_VERSION_MINOR 2
+#define NIFDIFF_VERSION_MINOR 3
