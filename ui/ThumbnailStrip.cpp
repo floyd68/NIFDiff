@@ -367,6 +367,19 @@ void ThumbnailStrip::ShowForFile(const std::wstring& nifPath)
         if (m_currentFile != nifPath)
         {
             m_currentFile = nifPath;
+            // Move the keyboard-selection ring along with it - otherwise a
+            // stale ring from an earlier click/arrow-key in THIS strip stays
+            // stuck on the old tile when another pane's pick is mirrored in
+            // here via Sync Files (this strip never got its own click/step).
+            m_selected = -1;
+            for (std::size_t i = 0; i < m_entries.size(); ++i)
+            {
+                if (m_entries[i].kind == EntryKind::File && m_entries[i].path == nifPath)
+                {
+                    m_selected = static_cast<int>(i);
+                    break;
+                }
+            }
             CenterCurrentFile(); // keep the selection centered in the strip
             Invalidate();
         }
