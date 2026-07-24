@@ -129,6 +129,13 @@ public:
     void SetComplexMaterialToggleEnabled(bool enabled);
     void SetPBRToggleEnabled(bool enabled);
 
+    // Some FaceGen hair ships with a save/conversion defect - Alpha = 0 on a
+    // HairTint material - that renders it 100% invisible; on (default) shows
+    // it as if Alpha were 1 instead. Always enabled, unlike the three toggles
+    // above (no "does loaded content have this" gray-out - see RenderSettings
+    // ::ignoreZeroHairAlpha).
+    void SetOnIgnoreHairAlphaEnabledChanged(std::function<void(bool)> handler);
+
     // Render-channel toggles (CHANNELS group): switch one shading input
     // off at a time to isolate why two panes differ. Always enabled.
     void SetOnTexturesEnabledChanged(std::function<void(bool)> handler);
@@ -205,6 +212,7 @@ private:
     std::shared_ptr<FD2D::CheckBox> m_parallaxChk;
     std::shared_ptr<FD2D::CheckBox> m_complexMaterialChk;
     std::shared_ptr<FD2D::CheckBox> m_pbrChk;
+    std::shared_ptr<FD2D::CheckBox> m_ignoreHairAlphaChk;
     std::shared_ptr<FD2D::CheckBox> m_texturesChk;
     std::shared_ptr<FD2D::CheckBox> m_vertexColorsChk;
     std::shared_ptr<FD2D::CheckBox> m_specularChk;

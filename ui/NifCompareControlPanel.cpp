@@ -313,6 +313,14 @@ NifCompareControlPanel::NifCompareControlPanel(const std::wstring& name)
     m_pbrChk->SetChecked(true);
     m_pbrChk->SetEnabled(false);
     matCol->AddChild(m_pbrChk);
+
+    // Unlike the three toggles above, always enabled - no "does loaded
+    // content have this" gray-out (matches CHANNELS' convention below; see
+    // RenderSettings::ignoreZeroHairAlpha for why this one defaults on).
+    m_ignoreHairAlphaChk = std::make_shared<FD2D::CheckBox>(L"IgnoreHairAlpha");
+    m_ignoreHairAlphaChk->SetLabel(L"Fix Hair Alpha");
+    m_ignoreHairAlphaChk->SetChecked(true);
+    matCol->AddChild(m_ignoreHairAlphaChk);
     matRow->AddChild(matCol);
 
     // POM height budget: HeightScale in CS terms (0.1*scale UV depth).
@@ -565,6 +573,7 @@ float NifCompareControlPanel::ParallaxHeightValue() const { return m_parallaxSli
 void NifCompareControlPanel::SetOnParallaxEnabledChanged(std::function<void(bool)> handler) { m_parallaxChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnComplexMaterialEnabledChanged(std::function<void(bool)> handler) { m_complexMaterialChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnPBREnabledChanged(std::function<void(bool)> handler) { m_pbrChk->OnCheckedChanged(std::move(handler)); }
+void NifCompareControlPanel::SetOnIgnoreHairAlphaEnabledChanged(std::function<void(bool)> handler) { m_ignoreHairAlphaChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnTexturesEnabledChanged(std::function<void(bool)> handler) { m_texturesChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnVertexColorsEnabledChanged(std::function<void(bool)> handler) { m_vertexColorsChk->OnCheckedChanged(std::move(handler)); }
 void NifCompareControlPanel::SetOnSpecularEnabledChanged(std::function<void(bool)> handler) { m_specularChk->OnCheckedChanged(std::move(handler)); }

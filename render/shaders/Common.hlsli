@@ -45,6 +45,7 @@
 //                                        67108864 UI toggle: treat complex materials as vanilla env masks
 //                                        134217728 UI channel: ignore vertex colors (rgb whitened in VS, alpha kept)
 //                                        268435456 UI channel: lighting off - raw textured surface
+//                                        536870912 UI channel: ignore this material's (bad-data) zero Alpha field
 cbuffer PerFrame : register(b0)
 {
     row_major float4x4 gViewProj;

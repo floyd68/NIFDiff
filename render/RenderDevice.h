@@ -64,6 +64,14 @@ struct RenderSettings
     bool enableSpecular = true;     // off: legacy Blinn-Phong AND PBR GGX specular dropped
     bool enableGlow = true;         // off: emissive/glow contributions dropped
     bool enableLighting = true;     // off: raw textured surface (unlit)
+    // On by default: some FaceGen hair (e.g. batch LE->SE "optimized" mods)
+    // ships BSLightingShaderProperty::Alpha = 0 on its HairTint-shaded hair
+    // shapes - always a save/conversion defect (real content never authors a
+    // shape that's guaranteed 100% invisible), never a real Skin/EnvMap/etc.
+    // material choice. When on, a material whose shaderType is HairTint AND
+    // whose Alpha is exactly 0 renders as if Alpha were 1 instead of clipping/
+    // blending to nothing; off shows the file's stored value as-is.
+    bool ignoreZeroHairAlpha = true;
     // The archive scan is still running, so a diffuse that names a texture may
     // simply not be resolvable YET (BSA lookups are skipped until the scan
     // lands). Render those as plain/white instead of the loud magenta

@@ -96,6 +96,7 @@ namespace
     constexpr std::uint32_t kLitDisableCM         = 67108864; // UI toggle: treat complex materials as vanilla env masks
     constexpr std::uint32_t kLitNoVertexColor     = 134217728; // UI channel: whiten vertex color rgb (VS), keep alpha
     constexpr std::uint32_t kLitUnlit             = 268435456; // UI channel: lighting off - raw textured surface
+    constexpr std::uint32_t kLitIgnoreZeroHairAlpha = 536870912; // UI channel: ignore this material's (bad-data) zero Alpha field
 
     void UploadDynamicCB(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, const void* data, std::size_t size)
     {
@@ -1477,6 +1478,15 @@ void RenderDevice::RenderScene(RenderTarget& target, RenderMeshCache& cache,
                 flags |= kLitAlphaTest;
                 cbObj.alphaTest = mat.alphaTestThreshold;
             }
+            // See RenderSettings::ignoreZeroHairAlpha: a HairTint (shaderType
+            // 6) material with Alpha == 0 is always a save/conversion defect
+            // (observed from a batch LE->SE "optimized" mod - every one of
+            // ~130 affected shapes across a real mod collection was hair-
+            // named, none were skin/eyes/brows), never an authored choice -
+            // an Alpha of exactly 0 makes the shape 100% invisible regardless
+            // of texture, which nobody ships on purpose.
+            if (settings.ignoreZeroHairAlpha && mat.shaderType == 6 /* ST_HairTint */ && mat.alpha == 0.0f)
+                flags |= kLitIgnoreZeroHairAlpha;
             // CM parallax runs only when the _m's alpha actually varies:
             // tools emit flat-alpha complex materials for textures with no
             // height source, and POM over a constant height is a uniform

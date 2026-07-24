@@ -423,7 +423,8 @@ float4 PSMain(PSInput input) : SV_TARGET
         {
             colorP = Tonemap(colorP) / Tonemap(float3(1, 1, 1));
         }
-        float alphaP = input.color.a * base.a * gGlowColor.a;
+        float materialAlphaP = (gFlags & 536870912) ? 1.0f : gGlowColor.a; // ignore a bad-data zero hair Alpha
+        float alphaP = input.color.a * base.a * materialAlphaP;
         if (gFlags & 4194304)
             clip(alphaP - gAlphaTest);
         return float4(colorP, alphaP);
@@ -676,7 +677,8 @@ float4 PSMain(PSInput input) : SV_TARGET
         color = Tonemap(color) / Tonemap(float3(1, 1, 1));
     }
 
-    float alpha = input.color.a * baseMap.a * gGlowColor.a;
+    float materialAlpha = (gFlags & 536870912) ? 1.0f : gGlowColor.a; // ignore a bad-data zero hair Alpha
+    float alpha = input.color.a * baseMap.a * materialAlpha;
     if (gFlags & 4194304)                       // NiAlphaProperty alpha test (GL_ALPHA_TEST equivalent)
         clip(alpha - gAlphaTest);
     return float4(color, alpha);

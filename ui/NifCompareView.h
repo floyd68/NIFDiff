@@ -628,6 +628,7 @@ private:
     bool m_enableSpecular = true;
     bool m_enableGlow = true;
     bool m_enableLighting = true;
+    bool m_ignoreZeroHairAlpha = true; // see RenderSettings::ignoreZeroHairAlpha
 };
 
 } // namespace nsk

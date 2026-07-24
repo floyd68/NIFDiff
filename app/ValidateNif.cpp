@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <format>
 #include <iostream>
 #include <string>
@@ -205,6 +206,80 @@ namespace
     }
 }
 
+// --scan-alpha0 <root> [root2 ...] - recursively parses every .nif under each
+// root (in-process, so no per-file spawn cost) and reports any shape whose
+// BSLightingShaderProperty::Alpha is exactly 0.0 - a value that (combined
+// with active alpha-test/blend, as it always is on real content) renders the
+// shape 100% invisible regardless of its texture. Investigates how common
+// this is across a real mod collection, e.g. as a side effect of a batch
+// LE->SE conversion tool ("Optimized with SSE NIF Optimizer" was found
+// embedded in one such file). Quiet by design: only prints hits + a summary,
+// not a full per-file dump like the normal path above.
+int ScanForZeroAlpha(int argc, wchar_t** argv, int firstRoot)
+{
+    static ResourceResolver s_resolver;
+    s_resolver.SetGameDataRoots(ResourceResolver::DetectGameDataRoots());
+
+    std::size_t filesScanned = 0, filesFailed = 0, filesHit = 0, shapesHit = 0;
+    for (int a = firstRoot; a < argc; ++a)
+    {
+        std::error_code ec;
+        std::filesystem::recursive_directory_iterator it(argv[a], std::filesystem::directory_options::skip_permission_denied, ec);
+        const std::filesystem::recursive_directory_iterator end;
+        for (; it != end; it.increment(ec))
+        {
+            if (ec)
+            {
+                ec.clear();
+                continue;
+            }
+            const std::filesystem::directory_entry& entry = *it;
+            if (!entry.is_regular_file(ec))
+                continue;
+            std::wstring ext = entry.path().extension().wstring();
+            for (wchar_t& c : ext)
+                c = static_cast<wchar_t>(towlower(c));
+            if (ext != L".nif")
+                continue;
+
+            ++filesScanned;
+            if (filesScanned % 500 == 0)
+                std::cerr << std::format("... {} files scanned\n", filesScanned);
+
+            NifDocument doc;
+            std::string error;
+            const std::wstring path = entry.path().wstring();
+            if (!doc.loadFromFile(path, &error))
+            {
+                ++filesFailed;
+                continue;
+            }
+            auto meshes = SceneBuilder::build(doc, false, &s_resolver);
+            bool hitThisFile = false;
+            for (const auto& m : meshes)
+            {
+                if (m.material.alpha != 0.0f)
+                    continue;
+                if (!hitThisFile)
+                {
+                    std::cout << std::format("== {} ==\n", toUtf8(path));
+                    hitThisFile = true;
+                }
+                std::cout << std::format("    [{}] alpha=0.000 alphaBlend={} alphaTest={} shaderType={}\n",
+                    m.nodeName, m.material.hasAlphaBlend, m.material.hasAlphaTest, m.material.shaderType);
+                ++shapesHit;
+            }
+            if (hitThisFile)
+                ++filesHit;
+        }
+    }
+
+    std::cout << std::format(
+        "\nScanned {} .nif file(s) ({} failed to load): {} file(s) with {} zero-alpha shape(s) total.\n",
+        filesScanned, filesFailed, filesHit, shapesHit);
+    return 0;
+}
+
 // Wide entry point: the previous narrow main() widened argv bytes 1:1
 // (std::wstring(narrow.begin(), narrow.end())), which silently corrupts any
 // non-ASCII path (e.g. Korean mod folder names). wmain receives the real
@@ -216,7 +291,18 @@ int wmain(int argc, wchar_t** argv)
     if (argc < 2)
     {
         std::cout << "Usage: ValidateNif <file1.nif> [file2.nif ...]\n";
+        std::cout << "       ValidateNif --scan-alpha0 <root folder> [root2 ...]\n";
         return 1;
+    }
+
+    if (std::wstring(argv[1]) == L"--scan-alpha0")
+    {
+        if (argc < 3)
+        {
+            std::cout << "Usage: ValidateNif --scan-alpha0 <root folder> [root2 ...]\n";
+            return 1;
+        }
+        return ScanForZeroAlpha(argc, argv, 2);
     }
 
     int failures = 0;

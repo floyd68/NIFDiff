@@ -531,6 +531,15 @@ documents every control in detail.
   pane carries material it would affect. OFF renders the closest legacy
   interpretation instead: no POM/displacement, complex materials as
   plain env-mapped surfaces, True PBR through the vanilla lit path.
+- **Fix Hair Alpha** (bottom strip, MATERIALS group; **on by default**):
+  some FaceGen hair - observed from a batch LE→SE "optimized" mod -
+  ships `BSLightingShaderProperty::Alpha = 0` on its HairTint-shaded
+  hair shapes, which always renders 100% invisible regardless of
+  texture (a save/conversion defect, never an authored choice - no
+  other shader type or shape kind was ever found with this pattern
+  across a real mod collection). When on, a HairTint material whose
+  Alpha is exactly 0 renders as if Alpha were 1 instead; turn off to
+  see the file's stored value as-is.
 - **User-editable shaders**: the HLSL sources ship next to the exe in
   `shaders\` (`Lit.hlsl` - the uber-shader covering every material path -,
   `Unlit.hlsl`, `Highlight.hlsl`, and `Common.hlsli` - the shared contract:

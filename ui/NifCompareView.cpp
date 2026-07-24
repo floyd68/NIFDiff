@@ -245,6 +245,11 @@ NifCompareView::NifCompareView(const std::wstring& name)
         m_enableLighting = on;
         ForEachViewport([on](NifViewport& vp) { vp.SetEnableLighting(on); });
     });
+    m_controls->SetOnIgnoreHairAlphaEnabledChanged([this](bool on)
+    {
+        m_ignoreZeroHairAlpha = on;
+        ForEachViewport([on](NifViewport& vp) { vp.SetIgnoreZeroHairAlpha(on); });
+    });
 }
 
 void NifCompareView::CreateInitialPanes()
@@ -313,6 +318,7 @@ void NifCompareView::WireContent(PaneContent* c)
         vp.SetEnableSpecular(m_enableSpecular);
         vp.SetEnableGlow(m_enableGlow);
         vp.SetEnableLighting(m_enableLighting);
+        vp.SetIgnoreZeroHairAlpha(m_ignoreZeroHairAlpha);
 
         NifComparePane* raw = nif;
         vp.SetOnCameraChanged([this, raw](const Camera& cam)

@@ -167,6 +167,8 @@ public:
     void SetEnableSpecular(bool on)     { m_settings.enableSpecular = on; Invalidate(); }
     void SetEnableGlow(bool on)         { m_settings.enableGlow = on; Invalidate(); }
     void SetEnableLighting(bool on)     { m_settings.enableLighting = on; Invalidate(); }
+    // See RenderSettings::ignoreZeroHairAlpha.
+    void SetIgnoreZeroHairAlpha(bool on) { m_settings.ignoreZeroHairAlpha = on; Invalidate(); }
     // NifSkope's "Show Hidden": opt NiAVObject-hidden subtrees (furniture
     // marker rigs, editor markers, bounds placeholders) back into the
     // scene. Rebuilds the mesh list, so the current selection is cleared.
