@@ -35,6 +35,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace FD2D { class AsyncRedrawToken; }
@@ -190,10 +191,18 @@ private:
         bool rendered = false;  // 3D pass produced a texture (File only)
         bool pending = false;   // queued/in flight; prevents duplicate scheduling
         bool failed = false;    // parse/build failed - show a placeholder
-        // Rendered while the background archive scan was still running, so
-        // BSA-backed textures were "not resolved yet" and baked absent. The
-        // post-scan pass in OnRenderD3D re-renders these once the scan lands.
+        // Baked while something it needed wasn't ready yet - the archive scan
+        // still running, and/or (textures now load async, see
+        // RenderParsedThumb) one of its own textures still mid-decode - so it
+        // went out untextured/incomplete. The healing sweep in OnRenderD3D
+        // re-renders these once the scan lands / the texture pops in.
         bool renderedWhilePending = false;
+        // Already sitting in m_retakeQueue - guards the healing sweep from
+        // pushing the same entry again while its retake is still in flight.
+        bool retakeQueued = false;
+        // True while renderedWhilePending (or never baked at all): the strip
+        // draws a small loading spinner over this card.
+        bool IsLoading() const { return !failed && (!rendered || renderedWhilePending); }
         float aspect = 1.0f;    // rendered thumbnail w/h (drives the card width)
         Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;   // persistent copy of the render
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;   // D2D view of tex (built lazily in the D2D pass)
@@ -250,6 +259,11 @@ private:
         ArchiveKind archiveKind) const;
     // Photo glyph drawn on an image (texture) placeholder tile.
     void DrawImageIcon(ID2D1RenderTarget* target, const D2D1_RECT_F& rc) const;
+    // Small rotating-tick spinner (same look as FD2D::Spinner) overlaid on a
+    // card that is still loading - queued/building (Entry::rendered false)
+    // or baked but flagged for a retake (a texture or the archive scan was
+    // still pending at bake time - see Entry::IsLoading).
+    void DrawLoadingSpinner(ID2D1RenderTarget* target, const D2D1_RECT_F& rc) const;
 
     // Submits every not-yet-rendered .nif entry to the shared ResourceManager
     // pool (no-op when disabled). Called after a re-list and on re-enable.
@@ -355,6 +369,26 @@ private:
     std::uint64_t m_gen = 0;
     std::deque<ParsedThumb> m_ready;
     std::shared_ptr<AsyncState> m_asyncState;
+
+    // Retake queue: entries baked with something not ready yet (archive scan
+    // still running, and/or a texture still mid-decode - see
+    // Entry::renderedWhilePending) need a redo. OnRenderD3D's healing sweep
+    // queues newly-pending entries (woken by ResourceResolver's redraw-token
+    // event for the scan, and by each texture completion's own redraw for
+    // textures) and drains a few at a time, so the redo re-renders
+    // sequentially instead of dumping the whole folder's worth of retakes on
+    // the pool at once.
+    std::deque<std::size_t> m_retakeQueue;
+    // Built scene for an entry sitting in m_retakeQueue, keyed by its index -
+    // lets the drain in OnRenderD3D re-render straight from the already-
+    // parsed/built meshes instead of resubmitting a full parse+build job:
+    // SceneBuilder::build never depended on which textures are ready, so
+    // redoing it just to pick up a newly-landed async texture (or the
+    // archive scan landing - see Entry::renderedWhilePending) would be pure
+    // waste. Erased once drained (or settled without needing a retake);
+    // cleared wholesale on NavigateTo along with everything else keyed by
+    // entry index.
+    std::unordered_map<std::size_t, ParsedThumb> m_retakeCache;
 
     std::function<void(const std::wstring&)> m_onActivated;
     std::function<void(const std::wstring&)> m_onListingCompleted;

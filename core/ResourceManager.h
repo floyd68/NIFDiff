@@ -130,6 +130,16 @@ public:
         ResourceManager& m_mgr;
     };
 
+    // Non-RAII pair for a caller that must hand the acquire/release halves
+    // to something else as independent callbacks (ResourceResolver::SetIoGate,
+    // so the archive scan's own file opens share this same bound - see its
+    // comment for why that's callback-based rather than a direct dependency
+    // on this class). Just the counting semaphore's P/V ops: safe to call
+    // from any thread, and release doesn't need to "match" a specific
+    // acquire beyond being called once per acquire.
+    void AcquireIoSlot(Priority prio) { IoAcquire(prio); }
+    void ReleaseIoSlot() { IoRelease(); }
+
 private:
     struct Job
     {

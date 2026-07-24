@@ -12,6 +12,7 @@
 #include <ArchiveReader.h>
 
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -119,6 +120,36 @@ public:
     // until it lands. Loose-file lookups never wait.
     void ReloadArchives();
 
+    // Called (from the scan's background thread) once ReloadArchives' scan
+    // lands, so a UI thread that is idle (waiting on IsArchiveScanReady
+    // rather than repainting every frame) gets woken exactly when there is
+    // something to do, instead of everyone polling on a timer. Callback-based
+    // (not a direct FD2D::AsyncRedrawToken type) so this header/translation
+    // unit stays free of the FD2D dependency - console tools (NifValidate,
+    // ResourceResolveTest) compile ResourceResolver.cpp without linking FD2D
+    // at all. Optional - a caller that doesn't set one just keeps finding out
+    // via its own next regular repaint. Must be safe to call from any thread.
+    void SetOnScanCompleted(std::function<void()> callback) { m_onScanCompleted = std::move(callback); }
+
+    // Shares the app-wide IoGate (ResourceManager::IoPermit, default 4
+    // concurrent disk reads) with the scan's own archive opens, so a modded
+    // Data folder's 100+ archives don't add an UNBOUNDED-by-disk-budget
+    // concurrency on top of whatever NIF parses / texture decodes are
+    // already running during startup (see ScanArchives) - one shared budget
+    // for every disk-touching background operation in the app, not two
+    // independently-sized ones that can stack. `acquire` blocks (on whatever
+    // thread calls it) until a permit is granted; `release` frees it - a
+    // plain counting semaphore, so splitting the RAII ResourceManager::IoPermit
+    // into two independent callbacks is safe (no acquire/release pairing
+    // state to preserve). Callback-based for the same FD2D/ResourceManager-
+    // decoupling reason as SetOnScanCompleted. Optional; unset means the
+    // scan's opens stay gated only by its own worker-thread count.
+    void SetIoGate(std::function<void()> acquire, std::function<void()> release)
+    {
+        m_ioAcquire = std::move(acquire);
+        m_ioRelease = std::move(release);
+    }
+
     // Blocks until the scan launched by the last ReloadArchives finished.
     void WaitForArchiveScan() const;
 
@@ -208,6 +239,15 @@ private:
     };
     std::vector<LoadedArchive> m_archives;
     mutable std::mutex m_archiveMutex;
+
+    // Set once from the UI thread at startup, then only ever read (from
+    // ScanArchives' worker thread) - same convention as ResourceManager::
+    // m_redraw, no separate lock. m_onScanCompleted is read once per scan;
+    // m_ioAcquire/m_ioRelease are read fresh per archive candidate (see
+    // ScanArchives - the scan can start before these are wired at all).
+    std::function<void()> m_onScanCompleted;
+    std::function<void()> m_ioAcquire;
+    std::function<void()> m_ioRelease;
 
     // Declared after m_archives on purpose: members are destroyed in
     // reverse order, so the future (whose destruction joins a still-running

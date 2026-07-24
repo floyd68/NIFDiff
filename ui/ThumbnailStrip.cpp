@@ -19,6 +19,7 @@
 #include "ImageCore/DecodedImage.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cwctype>
 #include <filesystem>
 
@@ -151,6 +152,7 @@ namespace
     constexpr float kHeaderH = 26.0f;      // count header (vertical mode only)
     constexpr UINT kThumbPx = 168;         // offscreen render HEIGHT (width follows aspect)
     constexpr int kPerFrame = 2;           // thumbnails generated per frame
+    constexpr int kRetakePerFrame = 2;     // post-scan retakes re-submitted per frame (see m_retakeQueue)
     constexpr float kYawRad = 0.1745f;     // ~10 deg yaw (3/4 view) so thumbnails aren't dead-on
     constexpr float kThumbMarginFrac = 0.06f; // equal margin, fraction of the larger extent
     constexpr float kMinAspect = 0.45f;    // clamp card w/h so cards stay reasonable
@@ -439,6 +441,8 @@ bool ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
     m_hoverCard = -1;
     m_selected = -1; // the listing changed; drop the keyboard selection cursor
     m_typeQuery.clear(); // and any in-progress type-to-select query
+    m_retakeQueue.clear(); // indices into the old m_entries are no longer valid
+    m_retakeCache.clear();
     m_folder = folder;
     m_currentFile = selectPath;
     m_thumbCache.Clear();
@@ -1118,11 +1122,18 @@ void ThumbnailStrip::ComputeThumbFraming(const std::vector<RenderMesh>& meshes,
 
 void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
 {
+    // Not yet baked once (as opposed to a retake of an already-shown card):
+    // its textures are very likely being seen (and thus async-prefetched) for
+    // the first time here, so a still-null SRV almost certainly means "queued
+    // for decode", not "genuinely missing" - see s.texturesPending below.
+    const bool firstBake = !e.rendered;
+    const std::size_t entryIndex = pt.index; // read before pt is possibly moved-from below
     e.pending = false;
     e.rendered = true;
     if (pt.failed || !pt.doc || pt.meshes.empty())
     {
         e.failed = true;
+        m_retakeCache.erase(entryIndex);
         return;
     }
     // Non-square target matching the worker's tight framing (fixed height,
@@ -1133,13 +1144,17 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     if (!m_thumbTarget.Resize(m_device, w, h, 1))
     {
         e.failed = true;
+        m_retakeCache.erase(entryIndex);
         return;
     }
     m_thumbCache.Clear();
 
     std::filesystem::path nifPath(e.path);
     TextureCache textures(m_textureRepository);
-    textures.SetSynchronous(true); // one-shot render: decode pending placeholders now
+    // Async, like a live viewport (TextureRepository::PrefetchAsync): decode
+    // happens on the shared pool instead of blocking this UI-thread frame.
+    // A texture not yet pooled renders untextured for this bake; SawPendingTexture
+    // below tells us to come back once it lands (see m_retakeQueue).
     textures.SetNifDirectory(nifPath.has_parent_path() ? nifPath.parent_path().wstring() : std::wstring());
     textures.SetGame(
         m_resolver
@@ -1149,6 +1164,23 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
             : BethesdaGameFromBsVersion(
                 pt.doc->bsVersion()));
 
+    {
+        std::vector<std::string> paths;
+        paths.reserve(pt.meshes.size() * 4);
+        for (const RenderMesh& mesh : pt.meshes)
+        {
+            const NifMaterial& m = mesh.material;
+            for (const std::string* tex : { &m.diffuseTexture, &m.normalTexture, &m.glowTexture,
+                                            &m.heightTexture, &m.cubeTexture, &m.envMaskTexture,
+                                            &m.innerTexture, &m.backlightTexture, &m.greyscaleTexture })
+            {
+                if (!tex->empty())
+                    paths.push_back(*tex);
+            }
+        }
+        textures.PrefetchAsync(paths);
+    }
+
     RenderSettings s;
     s.view = pt.view;       // rolled view + tight ortho, computed on the worker
     s.proj = pt.proj;
@@ -1157,15 +1189,22 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     s.showGrid = false;
     s.showAxes = false;
     s.clearColor = Color4 { 0.11f, 0.11f, 0.13f, 1.0f };
-    // Archive scan still running: an unresolved BSA-backed diffuse is "not
-    // ready yet", not missing - suppress the magenta missing-texture marker
-    // (same rule as the live viewport) and flag the entry so the post-scan
-    // pass in OnRenderD3D retakes it with the real textures.
+    // Archive scan still running OR this is the first time this card is baked
+    // (so its textures were almost certainly just now queued, not resolved) -
+    // either way an unresolved texture is "not ready yet", not missing:
+    // suppress the magenta missing-texture marker (same rule as the live
+    // viewport). SawPendingTexture (checked after RenderScene) is the real
+    // signal for whether a retake is needed.
     const bool scanPending = m_resolver && !m_resolver->IsArchiveScanReady();
-    s.texturesPending = scanPending;
-    e.renderedWhilePending = scanPending;
+    s.texturesPending = scanPending || firstBake;
+    textures.ResetPendingSeen();
 
     m_renderDevice->RenderScene(m_thumbTarget, m_thumbCache, pt.meshes, s, &textures);
+    // Queue a retake once the scan lands and/or the still-decoding textures
+    // above land - reuses the same drip-fed queue OnRenderD3D drains a few
+    // entries per frame from, so this doesn't dump a burst of re-renders the
+    // moment a batch of textures finishes.
+    e.renderedWhilePending = scanPending || textures.SawPendingTexture();
 
     // Copy the render into a persistent per-thumbnail texture (the reusable
     // target is about to be overwritten by the next thumbnail).
@@ -1189,6 +1228,14 @@ void ThumbnailStrip::RenderParsedThumb(Entry& e, ParsedThumb& pt)
     {
         e.failed = true;
     }
+
+    // Still needs a redo (see above): keep the built scene so the drain in
+    // OnRenderD3D can call straight back in here without a pool round trip.
+    // Settled (or failed): drop any cached copy from an earlier bake.
+    if (e.renderedWhilePending && !e.failed)
+        m_retakeCache[entryIndex] = std::move(pt);
+    else
+        m_retakeCache.erase(entryIndex);
 }
 
 void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
@@ -1231,23 +1278,59 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
     if (m_renderDevice && m_renderDevice->IsInitialized() && m_device &&
         m_context && m_textureRepository)
     {
-        // Post-scan healing: thumbnails rendered while the archive scan was
-        // still running went out without their BSA-backed textures. Once the
-        // scan lands, drop them back to un-rendered (the old texture stays on
-        // screen until its retake arrives) and resubmit - the parse is a
-        // NifCache hit, so the retake is cheap.
-        if (m_resolver && m_resolver->IsArchiveScanReady())
+        // Healing sweep: an entry gets renderedWhilePending when it was baked
+        // with something not ready yet - the archive scan still running, or
+        // (now that thumbnail texture loads are async, see RenderParsedThumb)
+        // one of its own textures still mid-decode. Both resolve over time on
+        // their own (the scan lands once; each texture's decode completion
+        // fires its own redraw event) rather than as a single edge, so this
+        // scans for newly-pending entries every time we paint - cheap (two
+        // bool reads per entry) and guarded by retakeQueued so an entry
+        // already waiting in the queue isn't pushed again while its retake is
+        // still in flight through the pool.
+        for (std::size_t i = 0; i < m_entries.size(); ++i)
         {
-            bool stale = false;
-            for (Entry& e : m_entries)
-                if (e.renderedWhilePending)
+            Entry& en = m_entries[i];
+            if (en.rendered && en.renderedWhilePending && !en.retakeQueued)
+            {
+                en.retakeQueued = true;
+                m_retakeQueue.push_back(i);
+            }
+        }
+        // Drain a few retakes per frame, straight from the cached built scene
+        // (see m_retakeCache / RenderParsedThumb) - no pool round trip, just
+        // the same re-render this card would have gotten anyway once its
+        // texture(s) landed, spread across frames instead of firing the
+        // moment a whole batch finishes.
+        if (!m_retakeQueue.empty())
+        {
+            int retaken = 0;
+            while (retaken < kRetakePerFrame && !m_retakeQueue.empty())
+            {
+                const std::size_t idx = m_retakeQueue.front();
+                m_retakeQueue.pop_front();
+                if (idx < m_entries.size())
                 {
-                    e.renderedWhilePending = false;
-                    e.rendered = false;
-                    stale = true;
+                    Entry& e = m_entries[idx];
+                    e.retakeQueued = false; // re-queued above if still pending after this retake
+                    if (auto it = m_retakeCache.find(idx); it != m_retakeCache.end())
+                    {
+                        ParsedThumb pt = std::move(it->second);
+                        m_retakeCache.erase(it);
+                        RenderParsedThumb(e, pt);
+                    }
+                    else
+                    {
+                        // No cached scene (shouldn't normally happen - only a
+                        // completed bake flags renderedWhilePending) - fall
+                        // back to a full rebuild rather than getting stuck.
+                        e.renderedWhilePending = false;
+                        e.rendered = false;
+                        EnqueuePending();
+                    }
                 }
-            if (stale)
-                EnqueuePending();
+                ++retaken;
+            }
         }
         int done = 0;
         while (done < kPerFrame && !m_ready.empty())
@@ -1268,7 +1351,7 @@ void ThumbnailStrip::OnRenderD3D(ID3D11DeviceContext* context)
             else CenterCurrentFile();
         }
     }
-    if (!m_ready.empty())
+    if (!m_ready.empty() || !m_retakeQueue.empty())
         Invalidate(); // keep draining next frame
 
     FD2D::Wnd::OnRenderD3D(context);
@@ -1641,6 +1724,47 @@ void ThumbnailStrip::DrawImageIcon(ID2D1RenderTarget* target, const D2D1_RECT_F&
     target->DrawLine({ cx - s * 0.15f, cy - s * 0.15f }, { cx + s, cy + s }, brush.Get(), 2.0f);
 }
 
+void ThumbnailStrip::DrawLoadingSpinner(ID2D1RenderTarget* target, const D2D1_RECT_F& rc) const
+{
+    // Same rotating-tick look as FD2D::Spinner (Spinner.cpp), reimplemented
+    // as a plain draw here rather than a child Wnd: the strip can have
+    // hundreds of loading cards at once, one per entry, drawn inline in the
+    // same pass as the rest of the card instead of hundreds of child windows.
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &brush)))
+        return;
+    const float w = rc.right - rc.left, h = rc.bottom - rc.top;
+    const float cx = (rc.left + rc.right) * 0.5f, cy = (rc.top + rc.bottom) * 0.5f;
+    const float outerRadius = std::clamp((std::min)(w, h) * 0.14f, 6.0f, 14.0f);
+    const float innerRadius = outerRadius * 0.5f;
+
+    constexpr float kPeriodMs = 900.0f;
+    constexpr int kTicks = 10;
+    const unsigned long long t = FD2D::Util::NowMs();
+    const float phase = static_cast<float>(t % static_cast<unsigned long long>(kPeriodMs)) / kPeriodMs;
+    const float baseAngle = phase * 6.28318530718f;
+
+    // Dim backing so the spinner reads over a partly-drawn thumbnail too.
+    if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f), &brush)))
+    {
+        const D2D1_ELLIPSE backing { { cx, cy }, outerRadius + 3.0f, outerRadius + 3.0f };
+        target->FillEllipse(backing, brush.Get());
+    }
+    if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &brush)))
+        return;
+    for (int i = 0; i < kTicks; ++i)
+    {
+        const float a = baseAngle + (static_cast<float>(i) * (6.28318530718f / static_cast<float>(kTicks)));
+        const float s = std::sinf(a), c = std::cosf(a);
+        const float alpha = 0.15f + (0.85f * (static_cast<float>(i) / static_cast<float>(kTicks - 1)));
+        brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+        target->DrawLine(
+            { cx + c * innerRadius, cy + s * innerRadius },
+            { cx + c * outerRadius, cy + s * outerRadius },
+            brush.Get(), 1.75f);
+    }
+}
+
 void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 {
     if (!target || !ShouldShow())
@@ -1725,6 +1849,7 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
 
     // Cards vary in size, so accumulate the offset along the scroll axis.
     float cursor = LeadGutter() - m_scroll;
+    bool anyLoading = false; // keeps the spinner(s) animating (see below) while true
     for (std::size_t i = 0; i < m_entries.size(); ++i)
     {
         Entry& e = m_entries[i];
@@ -1787,6 +1912,11 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
                 if (e.isImage)
                     DrawImageIcon(target, thumbRect);
             }
+            if (e.IsLoading())
+            {
+                DrawLoadingSpinner(target, thumbRect);
+                anyLoading = true;
+            }
             // Accent border on the active pane's current file.
             if (!m_currentFile.empty() && e.path == m_currentFile &&
                 SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.36f, 0.62f, 0.96f), &brush)))
@@ -1816,6 +1946,13 @@ void ThumbnailStrip::OnRender(ID2D1RenderTarget* target)
                 lbl, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
+
+    // Keep the spinner(s) ticking at 60fps while anything is loading, same
+    // opt-in animation-tick mechanism FD2D::Spinner uses - no cost once every
+    // card has settled (rendered and no retake pending).
+    if (anyLoading)
+        if (FD2D::Backplate* bp = BackplateRef())
+            bp->RequestAnimationFrame();
 
     D2D1_RECT_F scrollTrack {};
     D2D1_RECT_F scrollThumb {};

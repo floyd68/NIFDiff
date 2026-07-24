@@ -1203,6 +1203,14 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // The repo (declared above) outlives the manager, so its completions never
     // reference a torn-down repo.
     textureRepository->SetResourceManager(resourceManager.get());
+    // Wired as early as possible (still after the scan itself launches - the
+    // resolver's ReloadArchives ran during ConfigureResolverFromSettings
+    // above, before this pool existed - but every candidate the scan reaches
+    // from here on shares the app's one disk-read budget instead of an
+    // independent hw/2-wide burst of archive opens; see SetIoGate).
+    resolver->SetIoGate(
+        [rm = resourceManager.get()] { rm->AcquireIoSlot(ResourceManager::Priority::Thumbnail); },
+        [rm = resourceManager.get()] { rm->ReleaseIoSlot(); });
 
     RECT savedRect {};
     int savedShowCmd = SW_SHOWNORMAL;
@@ -1256,6 +1264,13 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         compareView->SetRenderDevice(renderDevice.get());
         compareView->SetResourceManager(resourceManager.get());
         resourceManager->SetRedrawToken(backplate->GetAsyncRedrawToken());
+        // Callback-based (not a direct FD2D::AsyncRedrawToken type on the
+        // resolver) so core/ResourceResolver stays FD2D-free for the console
+        // tools that compile it directly (NifValidate, ResourceResolveTest);
+        // the token itself, and the only place that calls RequestAsyncRedraw,
+        // stay in this FD2D-linked translation unit.
+        resolver->SetOnScanCompleted(
+            [token = backplate->GetAsyncRedrawToken()] { token->RequestAsyncRedraw(); });
         compareView->SetIpcOpenQueue(ipcQueue);
         ApplyResourcesToUi(*compareView, *resolver);
 

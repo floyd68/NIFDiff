@@ -7,11 +7,11 @@
 #include <ArchiveTypes.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
-#include <execution>
 #include <filesystem>
 #include <fstream>
-#include <numeric>
+#include <thread>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -410,6 +410,14 @@ void ResourceResolver::ScanArchives(
     // (own ifstream per operation), so distinct archives can open on
     // distinct threads; the keep-order of m_archives stays the sorted
     // candidate order because results are joined by index afterwards.
+    //
+    // Bounded to half the system's hardware concurrency (a plain
+    // std::execution::par for_each is free to grab up to ALL of it): this
+    // runs for seconds on a large modded Data folder, and it was found to
+    // starve both the UI thread and the ResourceManager pool's own
+    // (already-bounded) thumbnail workers for that whole time otherwise -
+    // this leaves half the machine free for the rest of the app to stay
+    // responsive while the scan runs in the background.
     struct ScanResult
     {
         std::unique_ptr<Floar::IArchiveReader> archive;
@@ -421,13 +429,39 @@ void ResourceResolver::ScanArchives(
     std::vector<ScanResult> scans(candidates.size());
     {
         StartupTrace::Phase p("  Archive scan: parallel open+probe");
-        std::vector<std::size_t> indices(candidates.size());
-        std::iota(indices.begin(), indices.end(), std::size_t { 0 });
-        std::for_each(std::execution::par, indices.begin(), indices.end(),
-            [&](std::size_t i)
+        const unsigned hw = std::thread::hardware_concurrency();
+        const std::size_t maxWorkers = std::max<std::size_t>(1, (hw > 0 ? hw : 2) / 2);
+        const std::size_t numWorkers = std::min(maxWorkers, std::max<std::size_t>(1, candidates.size()));
+        NIFLOG_INFO("[STARTUP]   Archive scan: {} candidates, {} parallel worker(s) (hw={})",
+            candidates.size(), numWorkers, hw);
+
+        std::atomic<std::size_t> nextIndex { 0 };
+        auto worker = [&]
+        {
+            using TraceClock = StartupTrace::Clock;
+            for (;;)
             {
-                using TraceClock = StartupTrace::Clock;
+                const std::size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
+                if (i >= candidates.size())
+                    return;
                 ScanResult& r = scans[i];
+                // Share the app-wide disk-read budget with NIF parses/texture
+                // decodes (see SetIoGate) instead of adding an independent
+                // hw/2-wide burst of file opens on top of it - acquire/release
+                // read fresh per candidate (not cached once for the whole
+                // scan): the scan launches before the gate even exists (see
+                // NIFDiffApp), so SetIoGate only lands a bit into the scan -
+                // candidates processed after that point should still pick it
+                // up instead of the whole run missing it.
+                std::function<void()> ioAcquire = m_ioAcquire;
+                std::function<void()> ioRelease = m_ioRelease;
+                if (!ioAcquire || !ioRelease) // only use the gate when both halves are wired
+                {
+                    ioAcquire = nullptr;
+                    ioRelease = nullptr;
+                }
+                if (ioAcquire)
+                    ioAcquire();
                 const auto tOpen = TraceClock::now();
                 r.archive =
                     Floar::ArchiveReaderFactory::Open(
@@ -435,12 +469,29 @@ void ResourceResolver::ScanArchives(
                 const auto tList = TraceClock::now();
                 r.openMs = std::chrono::duration<double, std::milli>(tList - tOpen).count();
                 if (!r.archive)
-                    return;
+                {
+                    if (ioRelease)
+                        ioRelease();
+                    continue;
+                }
                 const std::vector<Floar::ArchiveEntry> entries = r.archive->ListEntries();
+                if (ioRelease)
+                    ioRelease(); // TOC is read; ArchiveHasTexturesOrMaterials below is in-memory
                 r.entryCount = entries.size();
                 r.keep = ArchiveHasTexturesOrMaterials(entries);
                 r.scanMs = std::chrono::duration<double, std::milli>(TraceClock::now() - tList).count();
-            });
+            }
+        };
+
+        // numWorkers-1 helper threads plus this (the scan's own async) thread
+        // pulling from the same work queue - never more than numWorkers total.
+        std::vector<std::thread> helpers;
+        helpers.reserve(numWorkers - 1);
+        for (std::size_t w = 1; w < numWorkers; ++w)
+            helpers.emplace_back(worker);
+        worker();
+        for (std::thread& t : helpers)
+            t.join();
     }
 
     std::vector<LoadedArchive> loaded;
@@ -479,6 +530,12 @@ void ResourceResolver::ScanArchives(
         std::lock_guard<std::mutex> lock(m_archiveMutex);
         m_archives = std::move(loaded);
     }
+    // Tell anyone waiting on IsArchiveScanReady (e.g. ThumbnailStrip's
+    // post-scan retake) there is something to check now, instead of leaving
+    // them to find out on their own next unrelated repaint. Safe from this
+    // worker thread - the wired callback just signals an event.
+    if (m_onScanCompleted)
+        m_onScanCompleted();
 }
 
 std::string ResourceResolver::NormalizeRelative(std::string path)

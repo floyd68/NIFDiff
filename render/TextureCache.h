@@ -117,6 +117,14 @@ public:
 
     void Clear() { m_memo.clear(); }
 
+    // True if any lookup since the last ResetPendingSeen() returned an
+    // async-prefetch placeholder still decoding (resolved, but srv null).
+    // A one-shot renderer (thumbnails) that skips SetSynchronous can use this
+    // to tell "genuinely missing" from "textured, just not ready yet" and to
+    // know whether it needs to come back for a retake once the decode lands.
+    bool SawPendingTexture() const { return m_sawPending; }
+    void ResetPendingSeen() { m_sawPending = false; }
+
 private:
     TextureRepository::Entry* Lookup(const std::string& relativePath)
     {
@@ -129,7 +137,11 @@ private:
             // same stable Entry* (srv now filled); only re-run GetOrLoad while
             // it is still pending and this cache wants it decoded now.
             if (!(m_synchronous && it->second && it->second->pending))
+            {
+                if (it->second && it->second->pending)
+                    m_sawPending = true;
                 return it->second; // may be nullptr: memoized "does not resolve"
+            }
         }
         TextureRepository::Entry* e =
             m_repository->GetOrLoad(
@@ -137,6 +149,8 @@ private:
                 m_nifDirectory,
                 m_game,
                 m_synchronous);
+        if (e != nullptr && e->pending)
+            m_sawPending = true;
         m_memo[relativePath] = e;
         return e;
     }
@@ -145,6 +159,7 @@ private:
     std::wstring m_nifDirectory;
     BethesdaGame m_game { BethesdaGame::Unknown };
     bool m_synchronous = false;
+    bool m_sawPending = false;
     // Entry pointers stay valid until TextureRepository::Clear (node-based
     // map); the view-level invalidation clears repository and memos together.
     std::unordered_map<std::string, TextureRepository::Entry*> m_memo;
