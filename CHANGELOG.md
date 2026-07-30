@@ -7,6 +7,17 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
+## 1.3.175
+
+### Fixes
+- FaceGen hair that rendered completely invisible in some mods (a bad
+  texture-alpha value baked into the file) now shows correctly by default -
+  a new "Fix Hair Alpha" toggle lets you see the file's raw value instead
+- Fixed a stale thumbnail highlight left behind in other panes after Sync
+  Files moved a picked file into them
+- Faster, more responsive startup and thumbnail loading, especially in
+  large modded folders with many FaceGen files
+
 ## 1.3.171
 
 ### FaceGen
