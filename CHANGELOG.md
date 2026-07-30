@@ -7,7 +7,7 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
-## 1.3.175
+## 1.4.176
 
 ### Fixes
 - FaceGen hair that rendered completely invisible in some mods (a bad
