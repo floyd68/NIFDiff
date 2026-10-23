@@ -298,10 +298,19 @@ void ResourceResolver::ReloadArchives()
     std::shared_future<void> scan;
     if (m_autoLoadArchives && !m_gameDataRoots.empty())
     {
+        m_scanCancelled.store(false);
+        // The hooks are copied here, on the caller's thread, so the worker
+        // never reads members that this thread may reassign.
+        ScanHooks hooks { m_ioAcquire, m_ioRelease, m_onScanCompleted };
+        if (!hooks.ioAcquire || !hooks.ioRelease) // only use the gate when both halves are wired
+        {
+            hooks.ioAcquire = nullptr;
+            hooks.ioRelease = nullptr;
+        }
         scan = std::async(std::launch::async,
-            [this, roots = m_gameDataRoots]
+            [this, roots = m_gameDataRoots, hooks = std::move(hooks)]() mutable
             {
-                ScanArchives(std::move(roots));
+                ScanArchives(std::move(roots), std::move(hooks));
             }).share();
     }
 
@@ -345,7 +354,8 @@ std::size_t ResourceResolver::ArchiveCount() const
 }
 
 void ResourceResolver::ScanArchives(
-    std::vector<GameDataRoot> roots)
+    std::vector<GameDataRoot> roots,
+    ScanHooks hooks)
 {
     StartupTrace::Phase total("Archive scan (worker thread)");
 
@@ -441,25 +451,17 @@ void ResourceResolver::ScanArchives(
             using TraceClock = StartupTrace::Clock;
             for (;;)
             {
+                if (m_scanCancelled.load(std::memory_order_relaxed))
+                    return;
                 const std::size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
                 if (i >= candidates.size())
                     return;
                 ScanResult& r = scans[i];
                 // Share the app-wide disk-read budget with NIF parses/texture
                 // decodes (see SetIoGate) instead of adding an independent
-                // hw/2-wide burst of file opens on top of it - acquire/release
-                // read fresh per candidate (not cached once for the whole
-                // scan): the scan launches before the gate even exists (see
-                // NIFDiffApp), so SetIoGate only lands a bit into the scan -
-                // candidates processed after that point should still pick it
-                // up instead of the whole run missing it.
-                std::function<void()> ioAcquire = m_ioAcquire;
-                std::function<void()> ioRelease = m_ioRelease;
-                if (!ioAcquire || !ioRelease) // only use the gate when both halves are wired
-                {
-                    ioAcquire = nullptr;
-                    ioRelease = nullptr;
-                }
+                // hw/2-wide burst of file opens on top of it.
+                const std::function<void()>& ioAcquire = hooks.ioAcquire;
+                const std::function<void()>& ioRelease = hooks.ioRelease;
                 if (ioAcquire)
                     ioAcquire();
                 const auto tOpen = TraceClock::now();
@@ -492,6 +494,12 @@ void ResourceResolver::ScanArchives(
         worker();
         for (std::thread& t : helpers)
             t.join();
+    }
+
+    if (m_scanCancelled.load())
+    {
+        NIFLOG_INFO("[STARTUP]   Archive scan: cancelled");
+        return; // publish nothing; the readers opened so far close here
     }
 
     std::vector<LoadedArchive> loaded;
@@ -534,8 +542,8 @@ void ResourceResolver::ScanArchives(
     // post-scan retake) there is something to check now, instead of leaving
     // them to find out on their own next unrelated repaint. Safe from this
     // worker thread - the wired callback just signals an event.
-    if (m_onScanCompleted)
-        m_onScanCompleted();
+    if (hooks.onCompleted)
+        hooks.onCompleted();
 }
 
 std::string ResourceResolver::NormalizeRelative(std::string path)

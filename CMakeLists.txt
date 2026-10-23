@@ -236,6 +236,7 @@ add_executable(NIFDiff WIN32
     core/ResourceResolver.cpp
     core/ResourceManager.h
     core/ResourceManager.cpp
+    core/LateBoundSignal.h
     render/RenderDevice.h
     render/RenderDevice.cpp
     render/ShaderIncludeResolver.h
@@ -465,6 +466,30 @@ set_target_properties(ResourceResolveTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
 add_test(NAME ResourceResolveTest COMMAND ResourceResolveTest)
+
+# ---------------------------------------------------------------------------
+# ScanWiringTest - archive-scan hooks captured at launch, CancelArchiveScan,
+# and the LateBoundSignal used for the startup scan's completion
+# ---------------------------------------------------------------------------
+add_executable(ScanWiringTest
+    app/ScanWiringTest.cpp
+    app/TestSupport.h
+    core/LateBoundSignal.h
+    core/ResourceResolver.h
+    core/ResourceResolver.cpp
+    core/NifDocument.h
+    core/NifDocument.cpp
+)
+target_include_directories(ScanWiringTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_link_libraries(ScanWiringTest PRIVATE Floar advapi32)
+target_compile_definitions(ScanWiringTest PRIVATE NOMINMAX)
+if(MSVC)
+    target_compile_options(ScanWiringTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME ScanWiringTest COMMAND ScanWiringTest)
 
 # ---------------------------------------------------------------------------
 # ImageViewTest - P1 validation harness for the texture view/compare port:
