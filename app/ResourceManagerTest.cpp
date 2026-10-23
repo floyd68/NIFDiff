@@ -15,7 +15,9 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <iostream>
 #include <new>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -380,16 +382,33 @@ int wmain(int argc, wchar_t** argv)
     if (argc > 1 && std::wstring(argv[1]) == L"--logger-unavailable")
     {
         // Point TEMP/TMP at a fresh folder whose "NIFDiff" entry is a FILE, so
-        // the logger cannot create its directory or open its log file.
-        const std::filesystem::path root =
-            std::filesystem::temp_directory_path() / L"nifdiff_rm_logger_test";
-        std::error_code ec;
-        std::filesystem::remove_all(root, ec);
-        std::filesystem::create_directories(root);
+        // the logger cannot create its directory or open its log file. The
+        // folder is unique to this invocation and created exclusively
+        // (create_directory fails if it already exists), so overlapping runs -
+        // Debug and Release, or two checkouts - never share or delete each
+        // other's fixture; only the folder created here is removed.
+        const std::filesystem::path base = std::filesystem::temp_directory_path();
+        std::random_device rng;
+        std::filesystem::path root;
+        for (int attempt = 0; attempt < 100 && root.empty(); ++attempt)
+        {
+            const std::uint64_t id = (static_cast<std::uint64_t>(rng()) << 32) ^ rng();
+            const std::filesystem::path candidate =
+                base / (L"nifdiff_rm_logger_test_" + std::to_wstring(id));
+            std::error_code createEc;
+            if (std::filesystem::create_directory(candidate, createEc))
+                root = candidate;
+        }
+        if (root.empty())
+        {
+            std::cout << "FAIL: could not create a unique fixture directory\n";
+            return 1;
+        }
         std::ofstream(root / L"NIFDiff") << "blocks the log directory";
         _wputenv_s(L"TEMP", root.c_str());
         _wputenv_s(L"TMP", root.c_str());
         const int exitCode = RunLoggerUnavailable();
+        std::error_code ec;
         std::filesystem::remove_all(root, ec);
         return exitCode;
     }
