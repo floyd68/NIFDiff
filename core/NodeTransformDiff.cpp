@@ -641,7 +641,8 @@ std::wstring FormatNodeTransformCellText(
     const NodeTransformCell& cell)
 {
     std::wstring value = L"-";
-    if (cell.node)
+    if (cell.node &&
+        cell.node->transformValid)
     {
         const Transform& transform =
             cell.node->localTransform;
