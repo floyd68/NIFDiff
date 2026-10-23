@@ -40,7 +40,9 @@ jobs:
         config: [Debug, Release]
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        # Pinned to a commit (not a movable tag) because this job handles a
+        # secret; bump the SHA and the version comment together.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: false
           persist-credentials: false
