@@ -505,6 +505,7 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(TexturePipelineTest
     app/TexturePipelineTest.cpp
+    app/TestSupport.h
     render/TexturePipelineState.h
     render/TexturePipelineState.cpp
 )
@@ -516,6 +517,22 @@ if(MSVC)
     target_compile_options(TexturePipelineTest PRIVATE /permissive- /utf-8 /W3)
 endif()
 add_test(NAME TexturePipelineTest COMMAND TexturePipelineTest)
+
+# ---------------------------------------------------------------------------
+# TestSupportTest - CHECK/REQUIRE (app/TestSupport.h) stay active in Release:
+# single evaluation, failure counting, REQUIRE early exit, and (as a WILL_FAIL
+# case) a deliberate failure reaching the process exit code
+# ---------------------------------------------------------------------------
+add_executable(TestSupportTest
+    app/TestSupportTest.cpp
+    app/TestSupport.h
+)
+if(MSVC)
+    target_compile_options(TestSupportTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME TestSupportTest COMMAND TestSupportTest)
+add_test(NAME TestSupportDeliberateFailure COMMAND TestSupportTest --deliberate-failure)
+set_tests_properties(TestSupportDeliberateFailure PROPERTIES WILL_FAIL TRUE)
 
 # ---------------------------------------------------------------------------
 # ImageMipDecodeTest - DDS mip metadata, selection, range, and cache identity
@@ -551,6 +568,7 @@ add_test(NAME ImageMipDecodeTest COMMAND ImageMipDecodeTest)
 # ---------------------------------------------------------------------------
 add_executable(RenderSurfaceCaptureTest
     app/RenderSurfaceCaptureTest.cpp
+    app/TestSupport.h
 )
 target_include_directories(RenderSurfaceCaptureTest PRIVATE
     ${NIFDIFF_THIRD_PARTY_ROOT}/FD2D
