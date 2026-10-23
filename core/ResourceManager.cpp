@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cwctype>
+#include <exception>
+#include <optional>
 #include <system_error>
 #include <vector>
 
@@ -111,11 +113,13 @@ void ResourceManager::Cancel(const void* requester)
     m_generation.erase(requester);
 }
 
-void ResourceManager::Submit(Priority prio, Token token, std::function<void()> work)
+void ResourceManager::Submit(Priority prio, Token token, std::function<void()> work,
+                             FailureHandler onFailure)
 {
     {
         std::lock_guard<std::mutex> lk(m_jobMutex);
-        m_jobs[static_cast<std::size_t>(prio)].push_back({ token, std::move(work) });
+        m_jobs[static_cast<std::size_t>(prio)].push_back(
+            { token, std::move(work), std::move(onFailure) });
     }
     m_jobCv.notify_one();
 }
@@ -184,6 +188,18 @@ void ResourceManager::SetIoPermits(int permits)
     if (m_ioPermits < 0)
         m_ioPermits = 0;
     m_ioCv.notify_all();
+}
+
+int ResourceManager::IoPermitsInUse() const
+{
+    std::lock_guard<std::mutex> lk(m_ioMutex);
+    return m_ioActive;
+}
+
+int ResourceManager::IoPermitsFree() const
+{
+    std::lock_guard<std::mutex> lk(m_ioMutex);
+    return m_ioPermits;
 }
 
 int ResourceManager::IoAcquire(Priority prio)
@@ -259,30 +275,61 @@ std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
             std::shared_future<NifPtr> fut = promise.get_future().share();
             m_nifInFlight.emplace(key, fut);
 
+            // If anything below throws, the in-flight entry must still go away
+            // and the joiners must still be released (with nullptr) - exactly
+            // once. Declared after `lk`, so it runs first during unwinding and
+            // must not re-lock a mutex this thread may already hold.
+            struct InFlightGuard
+            {
+                std::unique_lock<std::mutex>& lock;
+                std::unordered_map<std::wstring, std::shared_future<NifPtr>>& inFlight;
+                const std::wstring& key;
+                std::promise<NifPtr>& promise;
+                bool completed = false;
+                ~InFlightGuard()
+                {
+                    if (completed)
+                        return;
+                    if (!lock.owns_lock())
+                        lock.lock();
+                    inFlight.erase(key);
+                    promise.set_value(nullptr);
+                }
+            } inFlight { lk, m_nifInFlight, key, promise };
+
             // Parse OUTSIDE the lock so concurrent requests for OTHER files (or
             // joiners of this one) aren't blocked by our disk read + parse.
             // Background reads pass through the IoGate (bounded disk
             // concurrency); the synchronous UI path (throttle=false) does not,
             // so it never waits behind background loads.
             lk.unlock();
-            const int io = throttle ? IoAcquire(prio) : 0; // held permits incl. self
-            const auto t0 = StartupTrace::Clock::now();
-            auto mutableDoc = std::make_shared<NifDocument>();
-            const bool ok = LoadNifDocument(*mutableDoc, path, error) && mutableDoc->isValid();
-            NifPtr doc = ok ? NifPtr(std::move(mutableDoc)) : nullptr;
-            const double ms = std::chrono::duration<double, std::milli>(
-                StartupTrace::Clock::now() - t0).count();
-            if (throttle)
-                IoRelease();
+            NifPtr doc;
+            double ms = 0.0;
+            int io = 0; // held permits incl. self
+            {
+                std::optional<IoPermit> permit;
+                if (throttle)
+                {
+                    permit.emplace(*this, prio);
+                    io = IoPermitsInUse();
+                }
+                const auto t0 = StartupTrace::Clock::now();
+                auto mutableDoc = std::make_shared<NifDocument>();
+                const bool ok = (m_nifLoader ? m_nifLoader(*mutableDoc, path, error)
+                                             : LoadNifDocument(*mutableDoc, path, error))
+                                && mutableDoc->isValid();
+                doc = ok ? NifPtr(std::move(mutableDoc)) : nullptr;
+                ms = std::chrono::duration<double, std::milli>(
+                    StartupTrace::Clock::now() - t0).count();
+            } // permit released here, also when the parse throws
             lk.lock();
 
             m_nifInFlight.erase(key);
-            if (doc)
+            if (doc && !PublishNifToCache(key, doc, stamp))
             {
-                m_nifLru.push_front(key);
-                m_nifCache[key] = NifEntry { doc, stamp, m_nifLru.begin() };
-                EvictNif();
+                NIFLOG_WARN("[NIFCACHE] not cached (publication failed) {}", name);
             }
+            inFlight.completed = true;
             promise.set_value(doc); // release any joiners
             NIFLOG_INFO("[NIFCACHE] parse P{} {} ({:.1f} ms, io={}){}",
                         static_cast<int>(prio), name, ms, io, doc ? "" : " FAILED");
@@ -293,10 +340,38 @@ std::shared_ptr<const NifDocument> ResourceManager::GetOrParseNif(
     // Wait for the in-flight parse (its owner isn't blocked, so this returns
     // once the parse finishes; failure yields nullptr).
     NIFLOG_INFO("[NIFCACHE] join  {}", name);
+    if (m_nifJoinHook)
+        m_nifJoinHook();
     NifPtr doc = join.get();
     if (!doc && error)
         *error = "NIF parse failed";
     return doc;
+}
+
+bool ResourceManager::PublishNifToCache(const std::wstring& key, const NifPtr& doc,
+                                        std::filesystem::file_time_type stamp)
+{
+    // Caller holds m_nifMutex. Caching is an optimization: if it cannot
+    // allocate, leave the cache and LRU exactly as they were and let the caller
+    // hand the parsed document out uncached - nothing may throw while the
+    // lock is held (see the in-flight guard in GetOrParseNif).
+    bool lruAdded = false;
+    try
+    {
+        if (m_nifPublishHook)
+            m_nifPublishHook();
+        m_nifLru.push_front(key);
+        lruAdded = true;
+        m_nifCache[key] = NifEntry { doc, stamp, m_nifLru.begin() };
+    }
+    catch (...)
+    {
+        if (lruAdded)
+            m_nifLru.pop_front();
+        return false;
+    }
+    EvictNif(); // erase-only; does not allocate
+    return true;
 }
 
 void ResourceManager::EvictNif()
@@ -324,6 +399,12 @@ void ResourceManager::EvictNif()
     }
 }
 
+std::size_t ResourceManager::NifCacheSize() const
+{
+    std::lock_guard<std::mutex> lk(m_nifMutex);
+    return m_nifCache.size();
+}
+
 void ResourceManager::ClearNifCache()
 {
     std::lock_guard<std::mutex> lk(m_nifMutex);
@@ -346,7 +427,53 @@ void ResourceManager::WorkerLoop()
         }
         if (!job.work || !IsCurrent(job.token))
             continue; // cancelled before it ran
-        job.work();    // self-contained; hands results back via PostCompletion
+        RunJob(job);
+    }
+}
+
+void ResourceManager::RunJob(Job& job)
+{
+    std::string what;
+    try
+    {
+        job.work(); // self-contained; hands results back via PostCompletion
+        return;
+    }
+    catch (const std::exception& e)
+    {
+        try { what = e.what(); } catch (...) {}
+    }
+    catch (...)
+    {
+        try { what = "non-standard exception"; } catch (...) {}
+    }
+
+    // The job failed. Delivering the failure result and logging it are
+    // independent best-effort steps - a logger that cannot open its file must
+    // not cost the requester its failure result - and nothing here may let an
+    // exception escape the worker thread.
+    bool delivered = !job.onFailure;
+    try
+    {
+        if (job.onFailure)
+        {
+            PostCompletion(job.token,
+                [onFailure = std::move(job.onFailure), what]() { onFailure(what); });
+            delivered = true;
+        }
+    }
+    catch (...)
+    {
+        // e.g. bad_alloc: the failure result cannot be delivered.
+    }
+    try
+    {
+        NIFLOG_ERROR("[RESMGR] job failed: {}{}", what,
+                     delivered ? "" : " (failure result could not be delivered)");
+    }
+    catch (...)
+    {
+        // Logging is diagnostics only.
     }
 }
 

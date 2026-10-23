@@ -12,6 +12,9 @@ the app, not which files moved.
 ### Fixes
 - Node & Bone Diff: nodes with an invalid (non-finite) transform now show
   "Invalid transform" instead of NaN/inf numbers
+- A file that makes the background loader fail outright (for example a
+  corrupt NIF) now shows as failed in its pane or thumbnail instead of
+  closing the app or leaving it loading forever
 
 ## 1.4.176
 

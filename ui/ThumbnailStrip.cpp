@@ -463,6 +463,7 @@ bool ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
             std::shared_ptr<AsyncState> state = m_asyncState;
             const ResourceManager::Token token { state.get(), m_gen };
             const std::uint64_t generation = m_gen;
+            std::wstring failedFolder = folder;
             mgr->Submit(
                 ResourceManager::Priority::OtherPane,
                 token,
@@ -484,6 +485,19 @@ bool ThumbnailStrip::NavigateTo(std::wstring folder, std::wstring selectPath)
                                     true);
                             }
                         });
+                },
+                [state, generation,
+                 failedFolder = std::move(failedFolder)](const std::string&)
+                {
+                    // Listing threw: show the folder as empty rather than
+                    // leaving the strip in its listing state.
+                    if (ThumbnailStrip* owner = state->owner)
+                    {
+                        auto listing = std::make_shared<DirectoryListing>();
+                        listing->generation = generation;
+                        listing->folder = failedFolder;
+                        owner->ApplyDirectoryListing(std::move(listing), true);
+                    }
                 });
 
             if (FD2D::Backplate* bp = BackplateRef())
@@ -774,6 +788,19 @@ void ThumbnailStrip::EnqueuePending()
                             owner->AcceptParsed(parsed);
                         }
                     });
+            },
+            [state, gen, index](const std::string&)
+            {
+                // Parse/build threw: deliver a failed thumbnail so the card
+                // stops showing its loading state.
+                auto parsed = std::make_shared<ParsedThumb>();
+                parsed->generation = gen;
+                parsed->index = index;
+                parsed->failed = true;
+                if (ThumbnailStrip* owner = state->owner)
+                {
+                    owner->AcceptParsed(parsed);
+                }
             });
     }
 }

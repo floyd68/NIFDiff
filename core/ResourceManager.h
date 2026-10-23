@@ -77,8 +77,24 @@ public:
     bool IsCurrent(Token token) const;
     void Cancel(const void* requester); // forget it; all its tokens go stale
 
+    // Called on the UI thread (through the completion queue) when a job's work
+    // threw instead of finishing; `what` describes the exception.
+    using FailureHandler = std::function<void(const std::string& what)>;
+
     // Enqueue worker-side work; skipped at pickup if the token is already stale.
-    void Submit(Priority prio, Token token, std::function<void()> work);
+    //
+    // Failure contract: if `work` throws, the worker catches it, logs it, and
+    // posts `onFailure(what)` as a completion for `token` - so it runs on the UI
+    // thread, and only while the token is still current (a cancelled or
+    // superseded request gets nothing, exactly like a normal completion). A
+    // submitter whose requester shows a Loading state passes an onFailure that
+    // delivers its regular "failed" result, so that state always ends. Without
+    // an onFailure the failure is only logged. After an out-of-memory failure
+    // the handling is best-effort: if posting the failure throws as well, that
+    // is logged (if possible) and swallowed - the worker never terminates the
+    // process.
+    void Submit(Priority prio, Token token, std::function<void()> work,
+                FailureHandler onFailure = {});
 
     // Called from worker `work` to hand a UI callback back; it runs in
     // DrainCompletions iff `token` is still current.
@@ -104,6 +120,11 @@ public:
     // (pool-thread) callers throttle so they don't thrash the disk; a
     // synchronous UI-thread load passes throttle=false so it is never made to
     // wait behind background reads.
+    //
+    // If the parse throws, the I/O permit is returned, the in-flight entry is
+    // removed, joiners receive nullptr (their promise is completed exactly
+    // once), and the exception propagates to this caller - inside a pool job
+    // that is the job's failure path (see Submit).
     std::shared_ptr<const NifDocument> GetOrParseNif(const std::wstring& path,
                                                      std::string* error = nullptr,
                                                      Priority prio = Priority::Thumbnail,
@@ -140,11 +161,29 @@ public:
     void AcquireIoSlot(Priority prio) { IoAcquire(prio); }
     void ReleaseIoSlot() { IoRelease(); }
 
+    // Test seam: replaces LoadNifDocument inside GetOrParseNif (e.g. a loader
+    // that throws). Set before any parse is requested.
+    using NifLoader = std::function<bool(NifDocument&, const std::wstring&, std::string*)>;
+    void SetNifLoaderForTesting(NifLoader loader) { m_nifLoader = std::move(loader); }
+    // Test seam: runs (under the cache lock) right before a parsed document is
+    // added to the cache - e.g. a hook that throws bad_alloc.
+    void SetNifCachePublishHookForTesting(std::function<void()> hook) { m_nifPublishHook = std::move(hook); }
+    // Test seam: runs (outside the lock) when a request has joined another
+    // thread's in-flight parse, right before it waits for the result.
+    void SetNifJoinHookForTesting(std::function<void()> hook) { m_nifJoinHook = std::move(hook); }
+    // Diagnostics: number of cached documents.
+    std::size_t NifCacheSize() const;
+
+    // Diagnostics: disk permits currently held / free.
+    int IoPermitsInUse() const;
+    int IoPermitsFree() const;
+
 private:
     struct Job
     {
         Token token;
         std::function<void()> work;
+        FailureHandler onFailure;
     };
     struct Completion
     {
@@ -153,6 +192,7 @@ private:
     };
 
     void WorkerLoop();
+    void RunJob(Job& job);          // runs work; routes an exception to onFailure
     bool HasJob() const;            // caller holds m_jobMutex
     Job PopHighestPriority();       // caller holds m_jobMutex, a job exists
 
@@ -175,6 +215,10 @@ private:
     using NifPtr = std::shared_ptr<const NifDocument>;
     static std::wstring NormalizeNifKey(const std::wstring& path);
     void EvictNif(); // caller holds m_nifMutex; trims the LRU (pinned docs kept)
+    // Caller holds m_nifMutex. Adds doc to the cache + LRU; on an allocation
+    // failure leaves both unchanged and returns false (never throws).
+    bool PublishNifToCache(const std::wstring& key, const NifPtr& doc,
+                           std::filesystem::file_time_type stamp);
 
     // Priority-aware disk-permit gate. A freed permit is granted to the
     // highest-priority (lowest enum) waiter, so a pane load out-prioritizes a
@@ -197,6 +241,9 @@ private:
     // Files currently being parsed: joiners wait on the shared_future instead
     // of starting a duplicate parse.
     std::unordered_map<std::wstring, std::shared_future<NifPtr>> m_nifInFlight;
+    NifLoader m_nifLoader; // empty = LoadNifDocument
+    std::function<void()> m_nifPublishHook; // test seam, empty in the app
+    std::function<void()> m_nifJoinHook;    // test seam, empty in the app
 
     // --- IoGate internals ----------------------------------------------------
     mutable std::mutex m_ioMutex;
