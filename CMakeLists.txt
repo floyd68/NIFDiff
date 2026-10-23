@@ -492,6 +492,44 @@ endif()
 add_test(NAME ScanWiringTest COMMAND ScanWiringTest)
 
 # ---------------------------------------------------------------------------
+# ResourceManagerTest - worker failure contract (throwing jobs reach onFailure
+# only while their token is current) and GetOrParseNif's exception cleanup
+# ---------------------------------------------------------------------------
+add_executable(ResourceManagerTest
+    app/ResourceManagerTest.cpp
+    app/TestSupport.h
+    core/ResourceManager.h
+    core/ResourceManager.cpp
+    core/NifDocument.h
+    core/NifDocument.cpp
+)
+target_include_directories(ResourceManagerTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${NIFDIFF_THIRD_PARTY_ROOT}/FD2D
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_link_libraries(ResourceManagerTest PRIVATE
+    FD2D
+    Floar
+    d2d1
+    dwrite
+    d3d11
+    dxgi
+    d3dcompiler
+    ole32
+)
+target_compile_definitions(ResourceManagerTest PRIVATE
+    FD2D_STATIC
+    UNICODE
+    _UNICODE
+    NOMINMAX
+)
+if(MSVC)
+    target_compile_options(ResourceManagerTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME ResourceManagerTest COMMAND ResourceManagerTest)
+
+# ---------------------------------------------------------------------------
 # ImageViewTest - P1 validation harness for the texture view/compare port:
 # a standalone window that decodes an image via ImageCore and displays it
 # through FD2D::Image (proves the ported decode + display stack fits inside

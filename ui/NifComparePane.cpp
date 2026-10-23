@@ -194,7 +194,9 @@ void NifComparePane::SubmitParseJob(const std::wstring& path)
             mgr->PostCompletion({ self, gen },
                 [self, path, doc, meshes = std::move(meshes)]() mutable
                 { self->AcceptLoaded(path, std::move(doc), std::move(meshes)); });
-        });
+        },
+        // Parse/build threw: end Loading as Failed, the same as a failed parse.
+        [self, path](const std::string&) { self->AcceptLoaded(path, nullptr, {}); });
 }
 
 void NifComparePane::StartPendingLoad()

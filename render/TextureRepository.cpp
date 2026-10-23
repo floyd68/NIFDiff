@@ -307,6 +307,13 @@ void TextureRepository::PrefetchAsync(const std::vector<std::string>& relativePa
                     DecodeEntry(job->device.Get(), job->decoded, bytes);
                 }
                 mgr->PostCompletion(token, [self, job]() { self->PublishPrefetched(job); });
+            },
+            [self, job](const std::string&)
+            {
+                // Read/decode threw: publish an empty result so the pooled
+                // placeholder stops being pending (it renders as missing).
+                job->decoded = Entry {};
+                self->PublishPrefetched(job);
             });
         ++submitted;
     }
