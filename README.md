@@ -773,6 +773,17 @@ cmake --build build --config Debug
 `GenerateVS2026.ps1` runs the submodule update for you if `third_party/FD2D`
 or `third_party/Floar` look uninitialized.
 
+### Continuous integration
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) builds Debug and Release
+and runs the full `ctest` suite on every pull request and on `master` (checks
+`build (Debug)` / `build (Release)`). `third_party/Floar` is a private
+submodule, fetched with a read-only deploy key stored as the repository secret
+`FLOAR_DEPLOY_KEY`; nothing is cached or uploaded. GitHub does not give secrets
+to fork or Dependabot pull requests, so their run fails at the credential check
+instead of reporting a misleading green build - a maintainer validates such a
+change by pushing it to a branch of this repository.
+
 ## Versioning and releases
 
 Versions are `MAJOR.MINOR.REVISION` (e.g. `1.0.116`): `MAJOR`/`MINOR` are
