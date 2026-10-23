@@ -3,7 +3,8 @@
 #include <ShaderResourcePresenter.h>
 #include <Wnd.h>
 
-#include <cassert>
+#include "TestSupport.h"
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -96,7 +97,9 @@ public:
         draw.contentWidth = 2;
         draw.contentHeight = 2;
         draw.sourceAlphaUsage = 1;
-        assert(SUCCEEDED(FD2D::DrawShaderResource(
+        // CHECK, not REQUIRE: this runs inside Backplate::Render, so it must
+        // not throw; a failed draw still shows up in the pixel checks below.
+        CHECK(SUCCEEDED(FD2D::DrawShaderResource(
             context,
             *backplate,
             m_srv.Get(),
@@ -117,72 +120,79 @@ int main()
             COINIT_APARTMENTTHREADED);
 
     auto& app = FD2D::Application::Instance();
-    FD2D::InitContext context {};
-    context.instance = GetModuleHandleW(nullptr);
-    assert(SUCCEEDED(app.Initialize(context)));
+    std::shared_ptr<FD2D::Backplate> backplate;
+    const int exitCode = nsk::test::Run([&]
+    {
+        FD2D::InitContext context {};
+        context.instance = GetModuleHandleW(nullptr);
+        REQUIRE(SUCCEEDED(app.Initialize(context)));
 
-    FD2D::WindowOptions options {};
-    options.instance = context.instance;
-    options.title = L"RenderSurfaceCaptureTest";
-    options.width = 96;
-    options.height = 64;
-    auto backplate =
-        app.CreateWindowedBackplate(
-            L"capture",
-            options);
-    assert(backplate);
+        FD2D::WindowOptions options {};
+        options.instance = context.instance;
+        options.title = L"RenderSurfaceCaptureTest";
+        options.width = 96;
+        options.height = 64;
+        backplate =
+            app.CreateWindowedBackplate(
+                L"capture",
+                options);
+        REQUIRE(backplate);
 
-    backplate->SetClearColor(
-        D2D1::ColorF(
-            0.20f,
-            0.40f,
-            0.80f,
-            1.0f));
-    backplate->AddWnd(
-        std::make_shared<UnboundPresenterTest>());
-    backplate->Render();
+        backplate->SetClearColor(
+            D2D1::ColorF(
+                0.20f,
+                0.40f,
+                0.80f,
+                1.0f));
+        backplate->AddWnd(
+            std::make_shared<UnboundPresenterTest>());
+        backplate->Render();
 
-    std::vector<std::uint8_t> pixels;
-    UINT width = 0;
-    UINT height = 0;
-    UINT stride = 0;
-    assert(SUCCEEDED(backplate->ReadComposedPixels(
-        D2D1::RectF(4.0f, 4.0f, 20.0f, 20.0f),
-        pixels,
-        width,
-        height,
-        stride)));
-    assert(width == 16);
-    assert(height == 16);
-    assert(stride == width * 4);
-    assert(pixels.size() ==
-        static_cast<std::size_t>(stride) * height);
+        std::vector<std::uint8_t> pixels;
+        UINT width = 0;
+        UINT height = 0;
+        UINT stride = 0;
+        REQUIRE(SUCCEEDED(backplate->ReadComposedPixels(
+            D2D1::RectF(4.0f, 4.0f, 20.0f, 20.0f),
+            pixels,
+            width,
+            height,
+            stride)));
+        // The pixel indexing below relies on these dimensions.
+        REQUIRE(width == 16);
+        REQUIRE(height == 16);
+        REQUIRE(stride == width * 4);
+        REQUIRE(pixels.size() ==
+            static_cast<std::size_t>(stride) * height);
 
-    const std::size_t center =
-        static_cast<std::size_t>(height / 2) * stride +
-        static_cast<std::size_t>(width / 2) * 4;
-    assert(pixels[center + 0] >= 200 &&
-        pixels[center + 0] <= 210);
-    assert(pixels[center + 1] >= 98 &&
-        pixels[center + 1] <= 106);
-    assert(pixels[center + 2] >= 47 &&
-        pixels[center + 2] <= 55);
-    assert(pixels[center + 3] == 255);
+        const std::size_t center =
+            static_cast<std::size_t>(height / 2) * stride +
+            static_cast<std::size_t>(width / 2) * 4;
+        CHECK(pixels[center + 0] >= 200 &&
+            pixels[center + 0] <= 210);
+        CHECK(pixels[center + 1] >= 98 &&
+            pixels[center + 1] <= 106);
+        CHECK(pixels[center + 2] >= 47 &&
+            pixels[center + 2] <= 55);
+        CHECK(pixels[center + 3] == 255);
 
-    pixels.clear();
-    assert(SUCCEEDED(backplate->ReadComposedPixels(
-        D2D1::RectF(40.0f, 24.0f, 56.0f, 40.0f),
-        pixels,
-        width,
-        height,
-        stride)));
-    const std::size_t presenterCenter =
-        static_cast<std::size_t>(height / 2) * stride +
-        static_cast<std::size_t>(width / 2) * 4;
-    assert(pixels[presenterCenter + 0] <= 4);
-    assert(pixels[presenterCenter + 1] <= 4);
-    assert(pixels[presenterCenter + 2] >= 250);
-    assert(pixels[presenterCenter + 3] == 255);
+        pixels.clear();
+        REQUIRE(SUCCEEDED(backplate->ReadComposedPixels(
+            D2D1::RectF(40.0f, 24.0f, 56.0f, 40.0f),
+            pixels,
+            width,
+            height,
+            stride)));
+        REQUIRE(pixels.size() ==
+            static_cast<std::size_t>(stride) * height);
+        const std::size_t presenterCenter =
+            static_cast<std::size_t>(height / 2) * stride +
+            static_cast<std::size_t>(width / 2) * 4;
+        CHECK(pixels[presenterCenter + 0] <= 4);
+        CHECK(pixels[presenterCenter + 1] <= 4);
+        CHECK(pixels[presenterCenter + 2] >= 250);
+        CHECK(pixels[presenterCenter + 3] == 255);
+    });
 
     backplate.reset();
     app.Shutdown();
@@ -190,5 +200,5 @@ int main()
     {
         CoUninitialize();
     }
-    return 0;
+    return exitCode;
 }
