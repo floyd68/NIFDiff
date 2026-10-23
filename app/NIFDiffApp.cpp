@@ -12,6 +12,7 @@
 #include "../ui/NifCompareView.h"
 #include "../ui/ImagePane.h" // ImagePane + ImageCore::AlphaUsage (alpha-usage override menu)
 #include "../ui/ThumbnailStrip.h"
+#include "../core/LateBoundSignal.h"
 #include "../core/NifLog.h"
 #include "../core/ResourceManager.h"
 #include "../core/ResourceResolver.h"
@@ -1032,6 +1033,47 @@ namespace
         LocalFree(argv);
         return out;
     }
+
+    // Stops the background producers in an order that does not depend on how
+    // the locals of RunNIFDiffApp happen to be declared: the archive scan's
+    // workers call into the ResourceManager (IoGate) and the pool's workers
+    // reference the texture repository, so both must be stopped before any
+    // of those objects is destroyed. Run() is called explicitly on the normal
+    // path (after the message loop, while panes are still alive); the
+    // destructor covers early returns and exceptions. New work cannot arrive
+    // by then: scans and pool jobs are only started from the UI, which has
+    // stopped (or never started).
+    class BackgroundShutdown
+    {
+    public:
+        BackgroundShutdown(ResourceResolver& resolver, ResourceManager& manager, LateBoundSignal& scanCompleted)
+            : m_resolver(resolver), m_manager(manager), m_scanCompleted(scanCompleted)
+        {
+        }
+        BackgroundShutdown(const BackgroundShutdown&) = delete;
+        BackgroundShutdown& operator=(const BackgroundShutdown&) = delete;
+        ~BackgroundShutdown() { Run(); }
+
+        void Run()
+        {
+            if (m_done)
+                return;
+            m_done = true;
+            m_resolver.CancelArchiveScan();
+            m_resolver.WaitForArchiveScan();
+            m_manager.Shutdown();
+            // No worker is left that could read these.
+            m_resolver.SetIoGate({}, {});
+            m_resolver.SetOnScanCompleted({});
+            m_scanCompleted.Reset();
+        }
+
+    private:
+        ResourceResolver& m_resolver;
+        ResourceManager& m_manager;
+        LateBoundSignal& m_scanCompleted;
+        bool m_done = false;
+    };
 }
 
 int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
@@ -1174,7 +1216,26 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         settings = IniStore::Load(iniPath);
     }
 
+    // Shared async load pool (design: docs/resource-manager-design.md, phase 1;
+    // currently drives thumbnail parsing). Declared first so it is destroyed
+    // last: the archive scan (IoGate) and the texture repository both call
+    // into it. Stopping it is BackgroundShutdown's job, not destruction order.
+    auto resourceManager = std::make_shared<ResourceManager>();
+    resourceManager->Start();
+
     auto resolver = std::make_shared<ResourceResolver>();
+    // Every scan hook is wired BEFORE ConfigureResolverFromSettings launches
+    // the startup scan (each scan captures its hooks at launch), so all of its
+    // archive opens share the app's one disk-read budget. The completion
+    // receiver (the backplate's redraw token) does not exist yet - the scan
+    // deliberately overlaps window/D3D creation - so it goes through a
+    // LateBoundSignal that is bound once the backplate exists and remembers a
+    // scan that finished before that.
+    auto scanCompleted = std::make_shared<LateBoundSignal>();
+    resolver->SetIoGate(
+        [rm = resourceManager.get()] { rm->AcquireIoSlot(ResourceManager::Priority::Thumbnail); },
+        [rm = resourceManager.get()] { rm->ReleaseIoSlot(); });
+    resolver->SetOnScanCompleted([scanCompleted] { scanCompleted->Fire(); });
     {
         // The BSA/BA2 scan this kicks off runs on a background thread and
         // overlaps window/D3D init; see ResourceResolver::ReloadArchives.
@@ -1186,6 +1247,8 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // it holds) and before the backplate scope, so it outlives the view and
     // viewports that keep pointers into it.
     auto textureRepository = std::make_shared<TextureRepository>(resolver.get());
+    // Route texture decode+upload through the shared pool (async prefetch).
+    textureRepository->SetResourceManager(resourceManager.get());
 
     // Single shared render core (shaders/states/IBL): built once when the
     // first viewport attaches, reused by every pane - and later by item 12's
@@ -1193,24 +1256,9 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
     // lifetime rationale as the texture pool above.
     auto renderDevice = std::make_shared<RenderDevice>();
 
-    // Shared async load pool (design: docs/resource-manager-design.md, phase 1;
-    // currently drives thumbnail parsing). Declared before the backplate scope
-    // so it outlives the panes/strips that submit to it (their destructors call
-    // ResourceManager::Cancel).
-    auto resourceManager = std::make_shared<ResourceManager>();
-    resourceManager->Start();
-    // Route texture decode+upload through the shared pool (async prefetch).
-    // The repo (declared above) outlives the manager, so its completions never
-    // reference a torn-down repo.
-    textureRepository->SetResourceManager(resourceManager.get());
-    // Wired as early as possible (still after the scan itself launches - the
-    // resolver's ReloadArchives ran during ConfigureResolverFromSettings
-    // above, before this pool existed - but every candidate the scan reaches
-    // from here on shares the app's one disk-read budget instead of an
-    // independent hw/2-wide burst of archive opens; see SetIoGate).
-    resolver->SetIoGate(
-        [rm = resourceManager.get()] { rm->AcquireIoSlot(ResourceManager::Priority::Thumbnail); },
-        [rm = resourceManager.get()] { rm->ReleaseIoSlot(); });
+    // Declared after everything it stops, so on an early return / exception
+    // it runs before any of them is destroyed.
+    BackgroundShutdown backgroundShutdown(*resolver, *resourceManager, *scanCompleted);
 
     RECT savedRect {};
     int savedShowCmd = SW_SHOWNORMAL;
@@ -1269,7 +1317,7 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
         // tools that compile it directly (NifValidate, ResourceResolveTest);
         // the token itself, and the only place that calls RequestAsyncRedraw,
         // stay in this FD2D-linked translation unit.
-        resolver->SetOnScanCompleted(
+        scanCompleted->Bind(
             [token = backplate->GetAsyncRedrawToken()] { token->RequestAsyncRedraw(); });
         compareView->SetIpcOpenQueue(ipcQueue);
         ApplyResourcesToUi(*compareView, *resolver);
@@ -1766,9 +1814,9 @@ int RunNIFDiffApp(HINSTANCE hInstance, LPWSTR /*cmdLine*/, int nCmdShow)
             StartupTrace::Mark("Entering message loop");
             result = app.RunMessageLoop();
         }
-        // Stop the pool while the panes/strips are still alive, so no worker
-        // posts a completion into a half-torn-down UI.
-        resourceManager->Shutdown();
+        // Stop the scan and the pool while the panes/strips are still alive,
+        // so no worker posts a completion into a half-torn-down UI.
+        backgroundShutdown.Run();
     }
 
     // Stop ImageCore's decode workers before FD2D/COM teardown (any in-flight

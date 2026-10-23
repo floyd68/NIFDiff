@@ -11,6 +11,7 @@
 
 #include <ArchiveReader.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <future>
@@ -129,6 +130,12 @@ public:
     // ResourceResolveTest) compile ResourceResolver.cpp without linking FD2D
     // at all. Optional - a caller that doesn't set one just keeps finding out
     // via its own next regular repaint. Must be safe to call from any thread.
+    // Not called for a cancelled scan (CancelArchiveScan).
+    //
+    // Scan hooks (this and SetIoGate) are captured by value when
+    // ReloadArchives launches a scan; the worker never reads these members.
+    // Set them before the ReloadArchives they should apply to, on the thread
+    // that calls ReloadArchives - a later change only affects later scans.
     void SetOnScanCompleted(std::function<void()> callback) { m_onScanCompleted = std::move(callback); }
 
     // Shares the app-wide IoGate (ResourceManager::IoPermit, default 4
@@ -143,7 +150,8 @@ public:
     // into two independent callbacks is safe (no acquire/release pairing
     // state to preserve). Callback-based for the same FD2D/ResourceManager-
     // decoupling reason as SetOnScanCompleted. Optional; unset means the
-    // scan's opens stay gated only by its own worker-thread count.
+    // scan's opens stay gated only by its own worker-thread count. Captured
+    // per scan like SetOnScanCompleted (see there).
     void SetIoGate(std::function<void()> acquire, std::function<void()> release)
     {
         m_ioAcquire = std::move(acquire);
@@ -152,6 +160,13 @@ public:
 
     // Blocks until the scan launched by the last ReloadArchives finished.
     void WaitForArchiveScan() const;
+
+    // Asks a running scan to stop opening further archives (shutdown: don't
+    // keep a closing app waiting on a multi-second Debug scan). Archives
+    // already being opened finish; the scan then publishes nothing and skips
+    // the completion hook. Returns immediately - pair with
+    // WaitForArchiveScan. The next ReloadArchives starts a normal scan.
+    void CancelArchiveScan() { m_scanCancelled.store(true); }
 
     // Non-blocking: true when no scan is pending or the pending one is done.
     // Lets startup keep the window responsive (pump messages) until the scan
@@ -219,10 +234,18 @@ private:
                                       const std::wstring& nifDirectory,
                                       BethesdaGame game) const;
 
+    // The hooks one scan runs with, copied when ReloadArchives launches it.
+    struct ScanHooks
+    {
+        std::function<void()> ioAcquire;
+        std::function<void()> ioRelease;
+        std::function<void()> onCompleted;
+    };
+
     // Worker body of ReloadArchives: enumerates gameData (by-value copy so
     // the member stays untouched off-thread) and fills m_archives. Nobody
     // reads m_archives until WaitForArchiveScan has joined this.
-    void ScanArchives(std::vector<GameDataRoot> roots);
+    void ScanArchives(std::vector<GameDataRoot> roots, ScanHooks hooks);
 
     std::wstring m_legacyGameData;
     std::vector<GameDataRoot> m_gameDataRoots;
@@ -240,14 +263,14 @@ private:
     std::vector<LoadedArchive> m_archives;
     mutable std::mutex m_archiveMutex;
 
-    // Set once from the UI thread at startup, then only ever read (from
-    // ScanArchives' worker thread) - same convention as ResourceManager::
-    // m_redraw, no separate lock. m_onScanCompleted is read once per scan;
-    // m_ioAcquire/m_ioRelease are read fresh per archive candidate (see
-    // ScanArchives - the scan can start before these are wired at all).
+    // Read and written only on the thread that calls ReloadArchives (which
+    // copies them into the scan's ScanHooks), so no lock is needed.
     std::function<void()> m_onScanCompleted;
     std::function<void()> m_ioAcquire;
     std::function<void()> m_ioRelease;
+    // Set by CancelArchiveScan, cleared by ReloadArchives; read by the scan
+    // workers between archives.
+    std::atomic<bool> m_scanCancelled { false };
 
     // Declared after m_archives on purpose: members are destroyed in
     // reverse order, so the future (whose destruction joins a still-running
