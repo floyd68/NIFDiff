@@ -2918,45 +2918,8 @@ void NifCompareView::DrawNodeTransformDiffPanel(
                     3 + paneIndex];
             const NodeTransformCell& cell =
                 row.cells[paneIndex];
-            std::wstring value = L"-";
-            if (cell.node)
-            {
-                const Transform& transform =
-                    cell.node->localTransform;
-                const Quat rotation =
-                    transform.rotation.toQuat();
-                value = std::format(
-                    L"T {:.4f},{:.4f},{:.4f}  "
-                    L"Q {:.4f},{:.4f},{:.4f},{:.4f}  "
-                    L"S {:.5f}",
-                    transform.translation[0],
-                    transform.translation[1],
-                    transform.translation[2],
-                    rotation[0],
-                    rotation[1],
-                    rotation[2],
-                    rotation[3],
-                    transform.scale);
-                if (cell.delta &&
-                    cell.delta->valid)
-                {
-                    value += std::format(
-                        L"   ΔT {:.5f}  ΔR {:.4f}°  ΔS {:.6f}",
-                        cell.delta
-                            ->translationLength,
-                        cell.delta
-                            ->rotationDegrees,
-                        cell.delta->scale);
-                }
-                else if (cell.delta)
-                {
-                    value += L"   Δ invalid";
-                }
-            }
-            else if (cell.node)
-            {
-                value = L"Invalid transform";
-            }
+            const std::wstring value =
+                FormatNodeTransformCellText(cell);
             D2D1_COLOR_F cellColor = normal;
             switch (cell.status)
             {

@@ -252,6 +252,43 @@ int main()
                  .hierarchyKey.empty(),
         "UTF-8 snapshot and hierarchy cycle guard");
 
+    // Diff table cell text (FormatNodeTransformCellText).
+    {
+        nsk::NodeTransformCell absent;
+        ok &= Expect(
+            nsk::FormatNodeTransformCellText(absent) == L"-",
+            "cell text: absent node");
+
+        nsk::NodeTransformCell present;
+        present.node =
+            MakeNode("root", "", "root", "Root", 1.5f);
+        const std::wstring presentText =
+            nsk::FormatNodeTransformCellText(present);
+        ok &= Expect(
+            presentText.starts_with(L"T 1.5000,0.0000,0.0000") &&
+                presentText.find(L"Δ") == std::wstring::npos,
+            "cell text: valid transform without delta");
+
+        present.delta = nsk::NodeTransformDelta {};
+        present.delta->valid = false;
+        ok &= Expect(
+            nsk::FormatNodeTransformCellText(present)
+                .ends_with(L"   Δ invalid"),
+            "cell text: valid transform with invalid delta");
+
+        nsk::NodeTransformCell invalid;
+        invalid.node =
+            MakeNode("root", "", "root", "Root");
+        invalid.node->localTransform.translation[0] =
+            (std::numeric_limits<float>::quiet_NaN)();
+        invalid.node->transformValid = false;
+        invalid.status = nsk::NodeMatchStatus::Invalid;
+        ok &= Expect(
+            nsk::FormatNodeTransformCellText(invalid) ==
+                L"Invalid transform",
+            "cell text: invalid transform");
+    }
+
     if (!ok)
     {
         return 1;

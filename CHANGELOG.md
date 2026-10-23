@@ -7,6 +7,12 @@ the matching `v<version>` tag. See [RELEASING.md](RELEASING.md).
 Entries are written for **users**, not for the git history: what changed in
 the app, not which files moved.
 
+## Unreleased
+
+### Fixes
+- Node & Bone Diff: nodes with an invalid (non-finite) transform now show
+  "Invalid transform" instead of NaN/inf numbers
+
 ## 1.4.176
 
 ### Fixes

@@ -123,4 +123,11 @@ NodeTransformDiffReport BuildNodeTransformDiffReport(
 const wchar_t* NodeMatchStatusName(
     NodeMatchStatus status);
 
+// Text of one pane's cell in the transform diff table: the local transform
+// (translation, quaternion, scale), followed by the delta to the baseline
+// when there is one; "Invalid transform" when the node's transform is not
+// finite; "-" when the node is absent from that pane.
+std::wstring FormatNodeTransformCellText(
+    const NodeTransformCell& cell);
+
 } // namespace nsk
