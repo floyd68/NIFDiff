@@ -528,6 +528,8 @@ if(MSVC)
     target_compile_options(ResourceManagerTest PRIVATE /permissive- /utf-8 /W3)
 endif()
 add_test(NAME ResourceManagerTest COMMAND ResourceManagerTest)
+# Separate process: breaks the logger (TEMP\NIFDiff is a file) for the run.
+add_test(NAME ResourceManagerLoggerUnavailableTest COMMAND ResourceManagerTest --logger-unavailable)
 
 # ---------------------------------------------------------------------------
 # ImageViewTest - P1 validation harness for the texture view/compare port:

@@ -165,6 +165,14 @@ public:
     // that throws). Set before any parse is requested.
     using NifLoader = std::function<bool(NifDocument&, const std::wstring&, std::string*)>;
     void SetNifLoaderForTesting(NifLoader loader) { m_nifLoader = std::move(loader); }
+    // Test seam: runs (under the cache lock) right before a parsed document is
+    // added to the cache - e.g. a hook that throws bad_alloc.
+    void SetNifCachePublishHookForTesting(std::function<void()> hook) { m_nifPublishHook = std::move(hook); }
+    // Test seam: runs (outside the lock) when a request has joined another
+    // thread's in-flight parse, right before it waits for the result.
+    void SetNifJoinHookForTesting(std::function<void()> hook) { m_nifJoinHook = std::move(hook); }
+    // Diagnostics: number of cached documents.
+    std::size_t NifCacheSize() const;
 
     // Diagnostics: disk permits currently held / free.
     int IoPermitsInUse() const;
@@ -207,6 +215,10 @@ private:
     using NifPtr = std::shared_ptr<const NifDocument>;
     static std::wstring NormalizeNifKey(const std::wstring& path);
     void EvictNif(); // caller holds m_nifMutex; trims the LRU (pinned docs kept)
+    // Caller holds m_nifMutex. Adds doc to the cache + LRU; on an allocation
+    // failure leaves both unchanged and returns false (never throws).
+    bool PublishNifToCache(const std::wstring& key, const NifPtr& doc,
+                           std::filesystem::file_time_type stamp);
 
     // Priority-aware disk-permit gate. A freed permit is granted to the
     // highest-priority (lowest enum) waiter, so a pane load out-prioritizes a
@@ -230,6 +242,8 @@ private:
     // of starting a duplicate parse.
     std::unordered_map<std::wstring, std::shared_future<NifPtr>> m_nifInFlight;
     NifLoader m_nifLoader; // empty = LoadNifDocument
+    std::function<void()> m_nifPublishHook; // test seam, empty in the app
+    std::function<void()> m_nifJoinHook;    // test seam, empty in the app
 
     // --- IoGate internals ----------------------------------------------------
     mutable std::mutex m_ioMutex;
