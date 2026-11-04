@@ -10,6 +10,8 @@ the app, not which files moved.
 ## Unreleased
 
 ### Fixes
+- Reloading a NIF document no longer retains the previous file's hierarchy,
+  materials or animation data; a failed reload leaves the document cleared
 - Node & Bone Diff: nodes with an invalid (non-finite) transform now show
   "Invalid transform" instead of NaN/inf numbers
 - A file that makes the background loader fail outright (for example a

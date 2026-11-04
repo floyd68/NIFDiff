@@ -419,6 +419,22 @@ if(MSVC)
 endif()
 add_test(NAME NodeTransformDiffTest COMMAND NodeTransformDiffTest)
 
+# NifDocumentReloadTest - parsed state and source identity on reuse/failure.
+add_executable(NifDocumentReloadTest
+    app/NifDocumentReloadTest.cpp
+    app/TestSupport.h
+    core/NifDocument.cpp
+)
+target_include_directories(NifDocumentReloadTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${NIFDIFF_THIRD_PARTY_ROOT}/external/spdlog/include
+)
+target_compile_definitions(NifDocumentReloadTest PRIVATE NOMINMAX)
+if(MSVC)
+    target_compile_options(NifDocumentReloadTest PRIVATE /permissive- /utf-8 /W3)
+endif()
+add_test(NAME NifDocumentReloadTest COMMAND NifDocumentReloadTest)
+
 # ---------------------------------------------------------------------------
 # NodeTransformExportTest - CSV/JSON escaping and schema smoke test
 # ---------------------------------------------------------------------------

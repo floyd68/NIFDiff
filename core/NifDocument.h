@@ -417,12 +417,16 @@ struct NifSceneNode
 class NifDocument
 {
 public:
+    // Replaces any previous document. A false result leaves all parsed state
+    // and filePath() cleared, isValid() false and lastError()/errorOut set.
+    // Successful loads clear the previous diagnostic (including errorOut).
     [[nodiscard]] bool loadFromFile(const std::wstring& path, std::string* errorOut = nullptr);
     // data may point anywhere (e.g. a BSA extraction buffer); the bytes are
     // copied into this document, so the span only needs to live for the call.
     // sourcePath (optional) records where the bytes came from - pass the VFS
     // display path (e.g. "...\foo.ba2\meshes\x.nif") for an archive extraction
     // so filePath() still names the source; empty leaves filePath() unset.
+    // The same replacement/failure contract as loadFromFile applies.
     [[nodiscard]] bool loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut = nullptr,
                                       const std::wstring& sourcePath = {});
 
@@ -491,6 +495,10 @@ public:
     const std::string& lastError() const { return m_lastError; }
 
 private:
+    // Does not touch m_fileBytes: loadFromFile passes a span over that buffer.
+    void ResetParsedState();
+    bool FailLoad(const char* message, std::string* errorOut);
+
     struct RawBlockInfo
     {
         std::string typeName;
