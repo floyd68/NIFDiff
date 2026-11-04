@@ -149,35 +149,35 @@ const std::string& NifDocument::blockTypeName(int index) const
 
 bool NifDocument::loadFromFile(const std::wstring& path, std::string* errorOut)
 {
-    NIFLOG_INFO("NifDocument::loadFromFile: '{}'", toNarrowUtf8(path));
+    // path may be this document's filePath(), so preserve it before resetting.
+    const std::wstring sourcePath = path;
+    ResetParsedState();
+    m_fileBytes.clear();
+    if (errorOut) errorOut->clear();
+    NIFLOG_INFO("NifDocument::loadFromFile: '{}'", toNarrowUtf8(sourcePath));
 
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    std::ifstream f(sourcePath, std::ios::binary | std::ios::ate);
     if (!f.is_open())
-    {
-        m_lastError = "Could not open file";
-        if (errorOut) *errorOut = m_lastError;
-        NIFLOG_WARN("NifDocument::loadFromFile: FAILED - could not open file");
-        return false;
-    }
+        return FailLoad("Could not open file", errorOut);
     std::streamsize sz = f.tellg();
+    if (sz < 0)
+        return FailLoad("Could not determine file size", errorOut);
     f.seekg(0, std::ios::beg);
+    if (!f)
+        return FailLoad("Could not seek file", errorOut);
     m_fileBytes.resize(static_cast<std::size_t>(sz));
     if (sz > 0 && !f.read(reinterpret_cast<char*>(m_fileBytes.data()), sz))
-    {
-        m_lastError = "Read failure";
-        if (errorOut) *errorOut = m_lastError;
-        return false;
-    }
-    const bool ok = loadFromMemory(m_fileBytes, errorOut);
-    if (ok)
-        m_filePath = path;
-    return ok;
+        return FailLoad("Read failure", errorOut);
+    return loadFromMemory(m_fileBytes, errorOut, sourcePath);
 }
 
-bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut,
-                                 const std::wstring& sourcePath)
+void NifDocument::ResetParsedState()
 {
     m_valid = false;
+    m_versionString.clear();
+    m_version = 0;
+    m_userVersion = 0;
+    m_bsVersion = 0;
     m_nodes.clear();
     m_blocks.clear();
     m_strings.clear();
@@ -191,8 +191,45 @@ bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string
     m_compressedShapeDataRefs.clear();
     m_roots.clear();
     m_blockIndexToNodeIndex.clear();
+    m_pendingChildren.clear();
+    m_pendingMaterialTextureSetRef.clear();
+    m_pendingAlphaFlags.clear();
     m_skinInstanceToPartitionRef.clear();
     m_skinPartitionGeometries.clear();
+    m_skinPartitionWeights.clear();
+    m_skinInstanceToDataRef.clear();
+    m_skinInstanceBones.clear();
+    m_skinData.clear();
+    m_transformData.clear();
+    m_transformInterpolators.clear();
+    m_timeControllers.clear();
+    m_controllerSequences.clear();
+    m_floatInterpolators.clear();
+    m_boolInterpolators.clear();
+    m_floatData.clear();
+    m_boolData.clear();
+    m_blockTree.reset();
+    m_lastError.clear();
+    m_filePath.clear();
+}
+
+bool NifDocument::FailLoad(const char* message, std::string* errorOut)
+{
+    // Header parsing may already have filled part of the new document.
+    ResetParsedState();
+    m_fileBytes.clear();
+    m_lastError = message;
+    if (errorOut) *errorOut = m_lastError;
+    NIFLOG_WARN("NifDocument::load: FAILED - {}", m_lastError);
+    return false;
+}
+
+bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string* errorOut,
+                                 const std::wstring& sourcePath)
+{
+    const std::wstring loadedPath = sourcePath; // sourcePath may alias m_filePath
+    ResetParsedState();
+    if (errorOut) errorOut->clear();
 
     if (data.data() != m_fileBytes.data())
     {
@@ -202,17 +239,11 @@ bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string
 
     NifIStream in(data);
 
-    // Note: m_filePath is only set by loadFromFile() *after* this call
-    // returns true, so it is not yet valid to log here.
+    // Publish source identity only once parsing succeeds.
     NIFLOG_INFO("NifDocument::load: {} bytes", data.size());
 
     if (!parseHeader(in))
-    {
-        m_lastError = "Not a recognised Skyrim/SSE/FO4 NIF (header parse failed)";
-        if (errorOut) *errorOut = m_lastError;
-        NIFLOG_WARN("NifDocument::load: FAILED - {}", m_lastError);
-        return false;
-    }
+        return FailLoad("Not a recognised Skyrim/SSE/FO4 NIF (header parse failed)", errorOut);
     NIFLOG_INFO("NifDocument::load: version='{}' bsVersion={} numBlocks={}",
         m_versionString, m_bsVersion, m_blocks.size());
 
@@ -227,10 +258,7 @@ bool NifDocument::loadFromMemory(std::span<const std::uint8_t> data, std::string
         m_nodes.size(), shapeNodeCount, m_geometries.size(), m_materials.size(), m_textureSets.size(), m_roots.size());
 
     m_valid = true;
-    // loadFromFile sets m_filePath itself after this returns; a direct
-    // loadFromMemory caller may name its source (e.g. an archive entry) here.
-    if (!sourcePath.empty())
-        m_filePath = sourcePath;
+    m_filePath = loadedPath;
     return true;
 }
 
