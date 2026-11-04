@@ -26,7 +26,7 @@ confirmed with an actual `cmake --build build --config Debug` run producing
 verification of loading NIF files into panes, dynamically adding/removing
 panes (up to 8, equal-width), and camera/lighting sync across panes.
 
-Third-party submodules (`FD2D`, `Floar`, `external/DirectXTex`,
+Third-party submodules (`FD2D`, `Floar`, `ImageCore`, `external/DirectXTex`,
 `external/spdlog`) are independent clones from their GitHub URLs, not
 references into the local `D:\Works\Ficture2` checkout - this repo owns its
 own copies.
@@ -628,10 +628,12 @@ What NIFDiff carries over from FICture2 directly:
 - **Floar** - VFS/BSA-BA2 archive support (FICture2 already browses `.ba2`
   archives for textures; NIFDiff needs the same search order for meshes).
 - **external/DirectXTex** - DDS decode + D3D11 SRV creation for
-  `render/TextureRepository.cpp` (material textures on NIF models). ImageCore
-  and the vendored `CommonUtil.h`/`AppLog.h` headers were carried over too
-  but removed in a later dependency cleanup once FD2D stopped requiring
-  them - see CMakeLists.txt's dependency notes.
+  `render/TextureRepository.cpp` (material textures on NIF models).
+- **ImageCore** - async image decode (WIC + DirectXTex) for the texture
+  view/compare in image panes. It was dropped in an early dependency cleanup
+  (along with the vendored `CommonUtil.h`/`AppLog.h` headers) and re-added
+  when FICture2's texture viewer was ported in - see CMakeLists.txt's
+  dependency notes.
 - Its **side-by-side compare composition pattern** - the planned NIF
   Compare view (see below) is meant to explicitly mirror FICture2's own
   `ImageBrowser`-pair-plus-controls layout (two panes + a shared bottom
@@ -754,8 +756,9 @@ schema_reference/  NOTES.md pointing at the upstream niftools/nifxml reference (
                    consulted upstream - deliberately not vendored into this MIT repo)
 test_assets/       local-only smoke-test .nif fixtures (gitignored - game-
                    derived meshes are not redistributed with this repo)
-third_party/       git submodules: FD2D, Floar, external/DirectXTex (DDS decode
-                   + D3D11 SRV creation), external/spdlog
+third_party/       git submodules: FD2D, Floar, ImageCore (async image decode for
+                   image panes), external/DirectXTex (DDS decode + D3D11 SRV
+                   creation), external/spdlog
 CMakeLists.txt     sets up third-party wiring + NIFDiff/NifValidate/ResourceResolveTest targets
 GenerateVS2026.ps1/.bat   configures a VS2026 solution under build/
 Release.ps1        release automation (-Plan / -Publish); see RELEASING.md
